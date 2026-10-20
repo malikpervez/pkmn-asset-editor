@@ -640,6 +640,12 @@ class DecompProject:
         return self._maps
 
     @property
+    def textsearch(self):
+        """Find and replace across dialogue, place names and trainer names (see textsearch.py)."""
+        from .textsearch import TextSearch
+        return TextSearch(self)
+
+    @property
     def textbox(self):
         """Dialogue previews in the game's font (see textbox.py)."""
         if not hasattr(self, "_textbox"):

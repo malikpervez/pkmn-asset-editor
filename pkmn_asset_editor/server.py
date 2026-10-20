@@ -100,8 +100,14 @@ def make_handler(state: _State):
                 return self._send((WEB / "help.html").read_bytes(), "text/html; charset=utf-8")
             if path in ("/story", "/story.html"):
                 return self._send((WEB / "story.html").read_bytes(), "text/html; charset=utf-8")
-            if path == "/history.js":
-                return self._send((WEB / "history.js").read_bytes(), "text/javascript; charset=utf-8")
+            if path in ("/history.js", "/findtext.js"):
+                return self._send((WEB / path[1:]).read_bytes(), "text/javascript; charset=utf-8")
+            if path == "/api/text/search":
+                if proj.kind != "decomp":
+                    raise ProjectError("finding text needs a pokeemerald-expansion source tree")
+                flag = lambda k, d="0": q.get(k, d) in ("1", "true")  # noqa: E731
+                return self._json(proj.textsearch.search(q.get("q", ""), flag("case"), flag("word"),
+                                                         flag("places", "1"), flag("trainers", "1")))
             if path == "/api/history":
                 h = self._history()
                 ok = h.available()
@@ -580,6 +586,12 @@ def make_handler(state: _State):
                 return self._play_post(path, q)
             if path.startswith("/api/data/"):
                 return self._data_post(path, q)
+            if path == "/api/text/replace":
+                body = json.loads(self._body() or b"{}")
+                return self._json(proj.textsearch.replace(
+                    body["query"], body["replacement"], bool(body.get("match_case")), bool(body.get("whole_word")),
+                    body.get("only"), bool(body.get("keep_case", True)), bool(body.get("dry_run")),
+                    bool(body.get("places", True)), bool(body.get("trainers", True))))
             if path == "/api/history/save":
                 body = json.loads(self._body() or b"{}")
                 return self._json(self._history().save(body.get("message", "")))

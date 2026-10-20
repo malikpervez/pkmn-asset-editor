@@ -270,6 +270,17 @@ def main(argv: list[str] | None = None) -> int:
     xsub = p.add_subparsers(dest="text_cmd", required=True)
     q = with_project(xsub.add_parser("check", help="check every text of a map (or of all maps)"))
     q.add_argument("map", nargs="?")
+    q = with_project(xsub.add_parser("find", help="find words in all dialogue, place names and trainer names"))
+    q.add_argument("query")
+    q.add_argument("--case", action="store_true", help="match upper/lower case")
+    q.add_argument("--word", action="store_true", help="whole words only")
+    q = with_project(xsub.add_parser("replace", help="replace words everywhere (UPPERCASE stays UPPERCASE; text that "
+                                                     "no longer fits is re-wrapped)"))
+    q.add_argument("query")
+    q.add_argument("replacement")
+    q.add_argument("--case", action="store_true", help="match upper/lower case")
+    q.add_argument("--word", action="store_true", help="whole words only")
+    q.add_argument("--dry-run", action="store_true", help="only show what would change")
     q = with_project(xsub.add_parser("preview", help="render a text label as it looks in game"))
     q.add_argument("map")
     q.add_argument("label")
@@ -748,6 +759,23 @@ def _run(args) -> int:
         if m is None:
             raise ProjectError("text checks need a pokeemerald-style source tree")
         tb = proj.textbox
+        if args.text_cmd == "find":
+            r = proj.textsearch.search(args.query, args.case, args.word)
+            for x in r["results"]:
+                print(f"{x['file']}{':' + str(x['line']) if x['line'] else ''}: {x['label']}: "
+                      + x["text"].replace("\n", " / "))
+            print(f"{r['total']} match(es) in {len(r['results'])} text(s)")
+            return 0
+        if args.text_cmd == "replace":
+            r = proj.textsearch.replace(args.query, args.replacement, args.case, args.word, dry_run=args.dry_run)
+            for c in r["changes"]:
+                print(f"{c['file']}: {c['label']}{' (re-wrapped)' if c['rewrapped'] else ''}")
+                print("   " + c["after"].replace("\n", " / "))
+                for p in c["problems"]:
+                    print(f"   ⚠ {p}")
+            verb = "would change" if args.dry_run else "changed"
+            print(f"{verb} {len(r['changes'])} text(s) in {len(r['files'])} file(s)")
+            return 0
         if args.text_cmd == "preview":
             name = m.resolve(args.map)
             hit = [t for t in tb.texts(m.read_script(name)) if t.label == args.label]

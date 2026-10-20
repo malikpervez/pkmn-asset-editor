@@ -188,6 +188,13 @@ TOOLS = [
     ("get_teachable", "Which TM/HM and tutor moves a Pokémon can learn (change with set_species "
      "{teachable: {MOVE_X: true}}); also its egg moves.", _schema({"id": S}, ["id"])),
     ("list_marts", "Every Poké Mart list (label, map, items).", _schema({})),
+    ("find_text", "Find words in all dialogue (every map and common script), place names and trainer names. "
+     "Matches can span line breaks.", _schema({"query": S, "match_case": B, "whole_word": B}, ["query"])),
+    ("replace_text", "Replace words in all dialogue, place names and trainer names (or only the result ids from "
+     "find_text in `only`). UPPERCASE matches stay uppercase; boxes that no longer fit are re-wrapped. Use "
+     "dry_run=true first to see every change.",
+     _schema({"query": S, "replacement": S, "match_case": B, "whole_word": B, "only": {"type": "array", "items": S},
+              "dry_run": B}, ["query", "replacement"])),
     ("difficulty_report", "Trainer levels (strongest Pokémon), bosses and wild grass/cave levels per story chapter, "
      "plus warnings: trainers stronger than the chapter's boss, level spikes, too-easy trainers, bosses weaker "
      "than the previous one, wild Pokémon above the boss.", _schema({})),
@@ -237,7 +244,7 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team",
              "list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species",
              "playtest_battle", "story_flag", "suggest_map_chapters", "list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
-             "get_teachable", "list_marts", "set_mart", "difficulty_report"}
+             "get_teachable", "list_marts", "set_mart", "difficulty_report", "find_text", "replace_text"}
 
 
 class Server:
@@ -481,6 +488,13 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
+        if name == "find_text":
+            return txt(self.proj.textsearch.search(args["query"], bool(args.get("match_case")),
+                                                   bool(args.get("whole_word")), limit=200))
+        if name == "replace_text":
+            return txt(self.proj.textsearch.replace(args["query"], args["replacement"], bool(args.get("match_case")),
+                                                    bool(args.get("whole_word")), args.get("only"),
+                                                    dry_run=bool(args.get("dry_run"))))
         if name in ("list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
                     "get_teachable", "list_marts", "set_mart", "difficulty_report"):
             gd = self.proj.gamedata
