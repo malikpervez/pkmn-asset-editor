@@ -98,6 +98,12 @@ class MapEditor:
         return self._tse
 
     @property
+    def world(self):
+        """All maps stitched by their connections, and the region map (see world.py)."""
+        from .world import World
+        return World(self)
+
+    @property
     def story(self):
         if not hasattr(self, "_story"):
             from .story import Story
@@ -628,6 +634,7 @@ class MapEditor:
             data["layout"] = lay["id"]
             self._save_layouts()
         _dump(ddir / "map.json", data)
+        self._include_scripts(src, new_name)
         self.groups_json[group].append(new_name)
         gpath = self.root / "data" / "maps" / "map_groups.json"
         self.dp._backup(str(gpath.relative_to(self.root)))
@@ -645,6 +652,26 @@ class MapEditor:
         return notes
 
     # ------------------------------------------------------------------ constants & validation
+    def _include_scripts(self, src: str, new_name: str) -> None:
+        """Map scripts are assembled through data/event_scripts.s (``.include "data/maps/X/scripts.inc"``), like
+        Porymap does it: the new map's line goes right after the one of the map it was copied from."""
+        es = self.root / "data" / "event_scripts.s"
+        if not es.exists() or not (self.root / "data" / "maps" / new_name / "scripts.inc").exists() and \
+                not (self.root / "data" / "maps" / new_name / "scripts.pory").exists():
+            return
+        text = es.read_text(errors="replace")
+        line = f'\t.include "data/maps/{new_name}/scripts.inc"'
+        if f"data/maps/{new_name}/scripts.inc" in text:
+            return
+        m = re.search(rf'^[ \t]*\.include "data/maps/{re.escape(src)}/scripts\.inc"[ \t]*$', text, re.M)
+        if m is None:
+            m = list(re.finditer(r'^[ \t]*\.include "data/maps/\w+/scripts\.inc"[ \t]*$', text, re.M))
+            m = m[-1] if m else None
+        if m is None:
+            return
+        self.dp._backup("data/event_scripts.s")
+        es.write_text(text[:m.end()] + "\n" + line + text[m.end():])
+
     def constants(self, prefix: str) -> list[str]:
         if prefix == "MAP_":
             return sorted(["MAP_NONE"] + list(self.map_by_id))

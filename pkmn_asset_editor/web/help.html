@@ -58,30 +58,43 @@
   <a href="/maps">🗺️ Maps</a>
   <a href="/data">🔴 Pokémon &amp; Trainers</a>
   <a href="/story">📖 Story</a>
+  <a href="/world">🌍 World</a>
+  <a href="/tests">🧪 Tests</a>
+  <a href="/release">📦 Release</a>
 </header>
 <div class="wrap">
 <nav>
   <b>Start here</b>
   <a href="#welcome">What is this?</a>
   <a href="#safe">You can't break anything</a>
+  <a href="#missions">🎯 Missions</a>
   <b>Guides</b>
   <a href="#sprite">Change a Pokémon's picture</a>
   <a href="#colours">Change colours</a>
   <a href="#paint">Paint a map</a>
   <a href="#house">Add a house you can walk into</a>
   <a href="#person">Add a person who talks</a>
+  <a href="#blocks">Build what happens from blocks</a>
   <a href="#sign">Add a sign or hidden item</a>
+  <a href="#world">Add a route, rename a town, fly spots</a>
   <a href="#test">Test your game</a>
+  <a href="#live">Play live, with sound</a>
   <a href="#later">Test later in the story</a>
   <a href="#team">Test a battle with your own team</a>
+  <a href="#tests">Replay tests: catch what broke</a>
   <a href="#animate">Make water and flowers move</a>
   <a href="#trainer">Change a trainer's team</a>
   <a href="#wild">Change the wild Pokémon</a>
   <a href="#species">Change a Pokémon's stats and moves</a>
+  <a href="#items">Items, moves, TMs and shops</a>
+  <a href="#difficulty">Check the difficulty</a>
+  <a href="#newmon">Make a new Pokémon</a>
+  <a href="#findtext">Find &amp; replace words</a>
   <a href="#dialogue">Make dialogue fit the text box</a>
   <a href="#story">Follow the story</a>
   <a href="#savepoints">Save points: go back in time</a>
   <a href="#build">Check and build your game</a>
+  <a href="#release">Share your game</a>
   <a href="#ai">Get help from an AI</a>
   <b>Reference</b>
   <a href="#words">Words you'll see</a>
@@ -113,6 +126,15 @@
     <li><span class="ui">Check for problems</span> tells you about mistakes (like a picture that's the wrong size)
       before they cause trouble in the game.</li>
   </ul>
+</section>
+
+<section id="missions">
+  <h2>🎯 Missions</h2>
+  <p>Not sure where to begin? Press <span class="ui">🎯 Missions</span> at the top of any page. It gives you one small
+    task at a time in your own game (change what someone says, play it, rename a town, change a trainer's team…), tells
+    you what to press, and ticks the task off by itself when it's done.</p>
+  <div class="tip">Only changes you make after the missions start count. <span class="ui">Start again</span> starts them
+    over; <span class="ui">Skip</span> moves on to the next one.</div>
 </section>
 
 <section id="sprite">
@@ -186,6 +208,20 @@
     <code>trainerbattle</code> line. Look at a trainer on a route to copy one.</div>
 </section>
 
+<section id="blocks">
+  <h2>Build what happens from blocks</h2>
+  <ol>
+    <li>Select a person, sign or step trigger on the map and press <span class="ui">🧩 Build what happens</span>.</li>
+    <li>Add steps with <span class="ui">+ add a step…</span>: <b>💬 Say something</b>, <b>❓ Ask yes or no</b> (each answer
+      gets its own steps), <b>🎁 Give an item</b>, <b>🔴 Give a Pokémon</b>, <b>⚔️ Battle</b>, <b>🚶 Move someone</b>,
+      <b>🔀 If a flag is on…</b> and more. The arrows move a step up or down.</li>
+    <li>The right side shows how each text box will look. Press <span class="ui">Save</span>, then
+      <span class="ui">▶ Test in game</span> and talk to them.</li>
+  </ol>
+  <div class="tip">To make someone walk a path: in the test window press <span class="ui">🎬 Record steps</span>, walk
+    the path with the arrow keys, then press <span class="ui">🎬 use my recorded steps</span> in a <b>🚶 Move someone</b> step.</div>
+</section>
+
 <section id="sign">
   <h2>Add a sign or hidden item</h2>
   <ol>
@@ -194,6 +230,19 @@
     <li>For a hidden item instead, set <b>Kind</b> to <code>hidden_item</code>, then pick the item and a flag
       (each hidden item needs its own flag, so it can only be found once).</li>
   </ol>
+</section>
+
+<section id="world">
+  <h2>Add a route, rename a town, fly spots</h2>
+  <ul>
+    <li><a href="/world">🌍 World</a> shows all your towns and routes joined together. Click a map, then under
+      <b>Add a new map next to it</b> pick a side and a map to copy, and press <span class="ui">+ Add the map</span>.
+      The two are joined both ways.</li>
+    <li><span class="ui">Town map &amp; flying</span>: click a square of the town map to see its place. Type a new name and
+      press <span class="ui">Rename</span>, paint squares to move a place, or add a new place for your new town.</li>
+    <li>Make a town a fly spot: pick where you land and (optionally) the flag that unlocks it, usually
+      <code>FLAG_VISITED_…</code>. The flag is turned on when you arrive there.</li>
+  </ul>
 </section>
 
 <section id="test">
@@ -205,6 +254,13 @@
     <li>Changed something? Press <span class="ui">Build &amp; play</span> again to see it.</li>
   </ol>
   <div class="tip">Building the first time can take a few minutes. After that, small changes build in seconds.</div>
+</section>
+
+<section id="live">
+  <h2>Play live, with sound</h2>
+  <p>With <span class="ui">⚡ Live</span> ticked, the game runs at full speed in the test window. Tick
+    <span class="ui">🔊 Sound</span> to hear it, press <span class="ui">⏩ Fast</span> (or hold <kbd>Space</kbd>) to go 4×
+    faster, and <span class="ui">⏸ Pause</span> to stop for a moment.</p>
 </section>
 
 <section id="later">
@@ -231,6 +287,20 @@
     <li>Tick <span class="ui">Replace my team</span> to use only these Pokémon.</li>
     <li>Press <span class="ui">Build &amp; play</span> and walk up to the trainer.</li>
   </ol>
+</section>
+
+<section id="tests">
+  <h2>Replay tests: catch what broke</h2>
+  <ol>
+    <li>Start a play-test and play something short: walk through a town, or start a battle and win it.</li>
+    <li>Press <span class="ui">🔴 Save as a test…</span> and give it a name. It can also check that a trainer was beaten.</li>
+    <li>After you change something, open <a href="/tests">🧪 Tests</a> and press
+      <span class="ui">▶ Build &amp; run all tests</span>. Each test presses exactly the same buttons again.</li>
+    <li>❌ means the game now ends differently: you see the screen it should show, the screen it shows now, and the
+      changed pixels in red. If you changed that on purpose, press <span class="ui">It's fine, keep the new result</span>.</li>
+  </ol>
+  <div class="tip">Tests are saved in the <code>pae_tests</code> folder of your game. <span class="ui">Set up GitHub
+    checks</span> makes GitHub build your game and run the tests every time you push.</div>
 </section>
 
 <section id="animate">
@@ -286,6 +356,47 @@
   </ol>
 </section>
 
+<section id="items">
+  <h2>Items, moves, TMs and shops</h2>
+  <ul>
+    <li><b>Items</b>: name, price, description and bag pocket. You also see which shops sell it.</li>
+    <li><b>Moves</b>: power, accuracy, PP, type and description, and which Pokémon learn it.</li>
+    <li><b>TMs</b>: which move each TM and HM teaches. The TM items are renamed for you.</li>
+    <li><b>Shops</b>: what each Poké Mart sells. <span class="ui">+ Add an item</span>, then <span class="ui">Save</span>.</li>
+  </ul>
+  <div class="tip">On the <b>Pokémon</b> tab you can also change a Pokémon's name, Pokédex text and which TMs and tutor
+    moves it can learn.</div>
+</section>
+
+<section id="difficulty">
+  <h2>Check the difficulty</h2>
+  <p><span class="ui">Difficulty</span> on <a href="/data?tab=difficulty">🔴 Pokémon &amp; Trainers</a> puts the level of
+    every trainer and wild Pokémon on one chart, chapter by chapter, with the gym leaders marked. Below it is a list
+    of the ones that look too strong for their chapter. Click one to open it.</p>
+</section>
+
+<section id="newmon">
+  <h2>Make a new Pokémon</h2>
+  <ol>
+    <li>On <a href="/data?tab=species">🔴 Pokémon &amp; Trainers → Pokémon</a>, press <span class="ui">✨ New Pokémon</span>.</li>
+    <li>Give it a name and pick a Pokémon to start from (it copies its moves, size and pictures).</li>
+    <li>Set its types, stats and Pokédex text, what it evolves from, and its pictures (front, back and icon).</li>
+    <li>Press <span class="ui">Make it</span>, then test a battle against it in the test window.</li>
+  </ol>
+  <div class="tip">To find it in the wild, add it to a route on the <b>Wild Pokémon</b> tab.</div>
+</section>
+
+<section id="findtext">
+  <h2>Find &amp; replace words</h2>
+  <ol>
+    <li>Press <span class="ui">🔎 Find text</span> at the top of a page and type a word, like a town's name.</li>
+    <li>Type what to replace it with and press <span class="ui">Preview replace</span>. You see every line before and after,
+      and can untick the ones to keep.</li>
+    <li>Press <span class="ui">Replace in selected</span>. <code>PETALBURG</code> becomes <code>SUNNYVALE</code>,
+      <code>Petalburg</code> becomes <code>Sunnyvale</code>, and text that no longer fits its box is re-wrapped.</li>
+  </ol>
+</section>
+
 <section id="dialogue">
   <h2>Make dialogue fit the text box</h2>
   <p>The game's text box is small: two lines of about 35 letters. Text that is too long gets cut off.</p>
@@ -333,6 +444,17 @@
     <li><span class="ui">Check for problems</span> looks for mistakes in everything you changed.</li>
     <li><span class="ui">Build game</span> makes the game file (<code>.gba</code>) you can play in any emulator.</li>
   </ul>
+</section>
+
+<section id="release">
+  <h2>Share your game</h2>
+  <ol>
+    <li>Open <a href="/release">📦 Release</a> and fill in your game's name, version and your name.</li>
+    <li>Pick your original game file (the one your hack is made from). It stays on your computer.</li>
+    <li>Press <span class="ui">📦 Build release</span> and share the zip: it has the patch and a README for players.</li>
+  </ol>
+  <div class="tip">You can't share the game file itself. Players put your patch on their own copy of the game, with a
+    patcher like <a href="https://www.marcrobledo.com/RomPatcher.js/" target="_blank">Rom Patcher JS</a>.</div>
 </section>
 
 <section id="ai">
@@ -383,6 +505,8 @@
     <dt><kbd>Ctrl</kbd>+<kbd>S</kbd></dt><dd>Save</dd>
     <dt><kbd>P</kbd> <kbd>F</kbd> <kbd>I</kbd> <kbd>C</kbd> <kbd>E</kbd></dt><dd>Map tools: Paint, Fill, Copy blocks, Walls, People &amp; signs</dd>
     <dt>Arrow keys, <kbd>Z</kbd>, <kbd>X</kbd>, <kbd>Enter</kbd></dt><dd>Play the game while testing (A, B, Start)</dd>
+    <dt>Hold <kbd>Space</kbd></dt><dd>Fast-forward while playing live</dd>
+    <dt><kbd>Esc</kbd></dt><dd>Close the Missions panel</dd>
   </dl>
 </section>
 </main>

@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>World Map</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%232f80d6'/><path d='M3 6c2-1 3 1 5 0s2-2 4-1v3c-2 1-3-1-5 0s-2 2-4 1z' fill='%233cae5c'/></svg>">
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --line: #dcdce2; --text: #1d1d24; --muted: #6b6b78;
+    --accent: #d23c3c; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b7791f; --chip: #ececf1; --sel: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+      --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+    --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  header a { color: var(--muted); }
+  button, select, input { font: inherit; color: var(--text); }
+  button { padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--chip); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.on { background: var(--sel); color: #fff; border-color: var(--sel); }
+  button:disabled { opacity: .45; cursor: default; }
+  input, select { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  .app { flex: 1; display: grid; grid-template-columns: 1fr 320px; min-height: 0; }
+  #view { overflow: auto; position: relative; background: #18181d; }
+  #stage { position: relative; transform-origin: 0 0; }
+  #stage img { display: block; image-rendering: pixelated; }
+  .mapbox { position: absolute; border: 1px solid rgba(255,255,255,.25); cursor: pointer; }
+  .mapbox:hover { border-color: #fff; background: rgba(255,255,255,.12); }
+  .mapbox.sel { border: 2px solid #ffd54a; background: rgba(255,213,74,.15); }
+  .mapbox span { position: absolute; left: 2px; top: 1px; font-size: 10px; color: #fff; text-shadow: 0 0 3px #000, 0 0 2px #000; white-space: nowrap; pointer-events: none; }
+  body.nolabels .mapbox span { display: none; }
+  .chapter { position: absolute; inset: 0; opacity: .32; pointer-events: none; }
+  body:not(.chapters) .chapter { display: none; }
+  aside { border-left: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 10px 12px; }
+  aside h2 { font-size: 15px; margin: 4px 0 6px; }
+  aside h3 { font-size: 13px; margin: 14px 0 4px; }
+  .muted { color: var(--muted); }
+  .hint { color: var(--muted); font-size: 11px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  .field { display: grid; grid-template-columns: 90px 1fr; gap: 6px; align-items: center; margin: 4px 0; }
+  .field input, .field select { width: 100%; }
+  .prob { font-size: 12px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+  .prob a, aside a { color: var(--sel); cursor: pointer; }
+  #region { position: relative; display: inline-block; margin: 16px; }
+  #region img { display: block; width: 720px; height: 480px; image-rendering: pixelated; }
+  .cell { position: absolute; width: 24px; height: 24px; cursor: crosshair; }
+  .cell:hover { outline: 2px solid #fff; z-index: 2; }
+  .cell.sel { outline: 2px solid #ffd54a; z-index: 3; }
+  .fly { position: absolute; font-size: 14px; pointer-events: none; text-shadow: 0 0 3px #000; z-index: 4; }
+  body.world-tab .region-only, body.region-tab .world-only { display: none; }
+  #toast { position: fixed; bottom: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 20; }
+  .msg { padding: 8px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); max-width: 420px; }
+  .msg.err { border-color: var(--accent); }
+</style>
+</head>
+<body class="world-tab chapters">
+<header>
+  <h1>🌍 World</h1>
+  <a href="/">🎨 Graphics</a>
+  <a href="/maps">🗺️ Maps</a>
+  <a href="/data">🔴 Pokémon &amp; Trainers</a>
+  <a href="/story">📖 Story</a>
+  <a href="/release">📦 Release</a>
+  <a href="/tests">🧪 Tests</a>
+  <a href="/help" target="_blank">❓ Help</a>
+  <button id="tab-world" class="on" title="all towns and routes joined together">Whole world</button>
+  <button id="tab-region" title="the town map you see in the game, and where you can fly">Town map &amp; flying</button>
+  <span class="world-only"><select id="area" title="parts of the world that aren't joined to each other"></select></span>
+  <label class="world-only muted"><input type="checkbox" id="opt-chapters" checked> colour by story chapter</label>
+  <label class="world-only muted"><input type="checkbox" id="opt-labels" checked> names</label>
+  <span class="world-only"><button id="zoom-out" title="zoom out">−</button><button id="zoom-in" title="zoom in">+</button></span>
+  <span style="flex:1"></span>
+</header>
+<div class="app">
+  <div id="view"><div id="stage" class="world-only"></div><div id="region" class="region-only"></div></div>
+  <aside id="side"></aside>
+</div>
+<div id="toast"></div>
+<datalist id="dl-maps"></datalist><datalist id="dl-sections"></datalist><datalist id="dl-flags"></datalist>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const api = async (path, body) => {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) });
+  const d = (r.headers.get('content-type') || '').includes('json') ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(d.error || d);
+  return d;
+};
+function toast(t, kind = 'ok', ms = 5000) { const m = document.createElement('div'); m.className = 'msg ' + kind; m.textContent = t; $('#toast').appendChild(m); setTimeout(() => m.remove(), ms); }
+const W = { layout: null, area: 0, zoom: 1, sel: null, region: null, selSec: null, paint: null, grid: null, dirty: false };
+const PX = 4;  // pixels per block in the world picture
+const hue = (i) => `hsl(${(i * 137.5) % 360} 70% 50%)`;
+
+// ------------------------------------------------------------------ whole world
+async function loadWorld() {
+  W.layout = await api('/api/world/layout');
+  $('#area').innerHTML = W.layout.areas.map((a, i) => `<option value="${i}">${esc(areaName(a))} (${a.maps.length} maps)</option>`).join('');
+  showArea(0);
+}
+const areaName = (a) => a.maps.some(m => m.name === 'LittlerootTown') ? 'Hoenn' : a.maps.some(m => m.name === 'PalletTown_Frlg') ? 'Kanto' : a.first.replace(/_/g, ' ');
+function showArea(i) {
+  W.area = i; const a = W.layout.areas[i];
+  const st = $('#stage');
+  st.style.width = a.w * PX + 'px'; st.style.height = a.h * PX + 'px';
+  st.innerHTML = `<img src="/api/world/area.png?i=${i}" width="${a.w * PX}" height="${a.h * PX}" alt="the world">` +
+    a.maps.map(m => `<div class="mapbox" data-map="${esc(m.name)}" style="left:${m.x * PX}px;top:${m.y * PX}px;width:${m.w * PX}px;height:${m.h * PX}px" title="${esc(m.name)}${m.chapter != null ? ' · chapter ' + (m.chapter + 1) : ''}">
+      ${m.chapter != null ? `<div class="chapter" style="background:${hue(m.chapter)}"></div>` : ''}<span>${esc(m.name)}${m.chapter != null ? ' · ' + (m.chapter + 1) : ''}</span></div>`).join('');
+  st.querySelectorAll('.mapbox').forEach(el => el.onclick = () => selectMap(el.dataset.map));
+  applyZoom(); sideWorld();
+}
+function applyZoom() { $('#stage').style.transform = `scale(${W.zoom})`; $('#stage').style.width = W.layout.areas[W.area].w * PX + 'px'; }
+$('#zoom-in').onclick = () => { W.zoom = Math.min(4, W.zoom * 1.5); applyZoom(); };
+$('#zoom-out').onclick = () => { W.zoom = Math.max(0.25, W.zoom / 1.5); applyZoom(); };
+$('#area').onchange = () => showArea(+$('#area').value);
+$('#opt-chapters').onchange = () => document.body.classList.toggle('chapters', $('#opt-chapters').checked);
+$('#opt-labels').onchange = () => document.body.classList.toggle('nolabels', !$('#opt-labels').checked);
+function sideWorld() {
+  const L = W.layout, here = new Set(L.areas[W.area].maps.map(m => m.name));
+  const probs = L.problems.filter(p => here.has(p.map)), notes = L.notes.filter(p => here.has(p.map));
+  $('#side').innerHTML = `<h2>${esc(areaName(L.areas[W.area]))}</h2>
+    <p class="muted">Towns and routes joined by their edges (connections). Click a map to see it, open it, or add a new map next to it. Coloured by story chapter.</p>
+    <h3>${probs.length ? '⚠ Connections to fix (' + probs.length + ')' : '✅ Every connection goes both ways'}</h3>
+    ${probs.map(p => `<div class="prob">⚠ <a data-goto="${esc(p.map)}">${esc(p.message)}</a></div>`).join('')}
+    ${notes.length ? `<details><summary class="muted">${notes.length} note(s)</summary>${notes.map(p => `<div class="prob muted">${esc(p.message)}</div>`).join('')}<p class="hint">The original games have a few of these too: the game only shows the maps next to the one you're on, so they never meet.</p></details>` : ''}
+    <h3>Story chapters</h3>${L.chapters.map((c, i) => `<div style="font-size:12px"><span style="display:inline-block;width:10px;height:10px;border-radius:3px;background:${hue(i)};margin-right:6px"></span>${i + 1}. ${esc(c)}</div>`).join('')}`;
+  $('#side').querySelectorAll('[data-goto]').forEach(a => a.onclick = () => selectMap(a.dataset.goto, true));
+}
+async function selectMap(name, scroll) {
+  W.sel = name;
+  document.querySelectorAll('.mapbox').forEach(el => el.classList.toggle('sel', el.dataset.map === name));
+  const m = W.layout.areas[W.area].maps.find(x => x.name === name);
+  if (!m) return;
+  if (scroll) { const v = $('#view'); v.scrollTo((m.x * PX) * W.zoom - v.clientWidth / 3, (m.y * PX) * W.zoom - v.clientHeight / 3); }
+  const info = await api('/api/map?name=' + encodeURIComponent(name));
+  const conns = (info.data.connections || []).map(c => `${esc(c.direction)}: ${esc(c.map)} (offset ${c.offset})`).join('<br>') || 'none';
+  $('#side').innerHTML = `<p><a id="back">← whole world</a></p><h2>${esc(name)}</h2>
+    <div class="muted">${m.w}×${m.h} blocks · ${esc(m.section || '')}${m.chapter != null ? ` · chapter ${m.chapter + 1}` : ''}</div>
+    <div class="row"><a href="/maps?map=${encodeURIComponent(name)}"><button class="primary">Open in the map editor</button></a></div>
+    <h3>Joined to</h3><div style="font-size:12px">${conns}</div>
+    <h3>Add a new map next to it</h3>
+    <p class="hint">A copy of a map you pick (like a route), joined to this side both ways. Paint it afterwards in the map editor.</p>
+    <div class="field"><label>side</label><select id="nm-side"><option value="up">above ▲</option><option value="down">below ▼</option><option value="left">left ◀</option><option value="right">right ▶</option></select></div>
+    <div class="field"><label>copy of</label><input id="nm-template" list="dl-maps" value="Route101"></div>
+    <div class="field"><label>name</label><input id="nm-name" placeholder="e.g. Route135"></div>
+    <div class="field"><label title="how far along the side it starts, in blocks">shift</label><input id="nm-offset" type="number" value="0"></div>
+    <div class="row"><button id="nm-go">+ Add the map</button><span id="nm-status" class="hint"></span></div>`;
+  $('#back').onclick = () => { W.sel = null; document.querySelectorAll('.mapbox.sel').forEach(e => e.classList.remove('sel')); sideWorld(); };
+  $('#nm-go').onclick = async () => {
+    try {
+      const r = await api('/api/world/attach', { existing: name, side: $('#nm-side').value, template: $('#nm-template').value.trim(), name: $('#nm-name').value.trim(), offset: +$('#nm-offset').value || 0 });
+      toast(`Added ${r.map} to the ${r.side} of ${name}.`);
+      await loadWorld(); const i = W.layout.areas.findIndex(a => a.maps.some(x => x.name === r.map)); if (i >= 0) { $('#area').value = i; showArea(i); selectMap(r.map, true); }
+    } catch (e) { $('#nm-status').textContent = e.message; }
+  };
+}
+
+// ------------------------------------------------------------------ region map
+async function loadRegion() {
+  W.region = await api('/api/world/region');
+  W.grid = W.region.grid.map(r => [...r]);
+  $('#dl-sections').innerHTML = W.region.sections.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
+  drawRegion(); sideRegion();
+}
+const secById = () => Object.fromEntries(W.region.sections.map(s => [s.id, s]));
+function drawRegion() {
+  const R = W.region, by = secById(), ids = [...new Set(R.sections.map(s => s.id))];
+  const col = (id) => id === 'MAPSEC_NONE' ? 'transparent' : hue(ids.indexOf(id));
+  let h = `<img src="/api/world/region.png" alt="the town map">`;
+  W.grid.forEach((row, y) => row.forEach((id, x) => {
+    h += `<div class="cell${W.selSec && id === W.selSec ? ' sel' : ''}" data-x="${x}" data-y="${y}" style="left:${(x + R.origin[0]) * 24}px;top:${(y + R.origin[1]) * 24}px;background:${col(id)};opacity:${id === 'MAPSEC_NONE' ? 1 : .45}" title="${esc((by[id] || {}).name || id)}"></div>`;
+  }));
+  for (const s of R.sections) {
+    if (!s.fly || !s.fly.flyable) continue;
+    const cells = []; W.grid.forEach((row, y) => row.forEach((id, x) => { if (id === s.id) cells.push([x, y]); }));
+    if (!cells.length) continue;
+    const [x, y] = cells[0];
+    h += `<div class="fly" style="left:${(x + R.origin[0]) * 24 + 4}px;top:${(y + R.origin[1]) * 24 + 2}px" title="you can fly here">✈️</div>`;
+  }
+  $('#region').innerHTML = h;
+  let down = false;
+  $('#region').onmousedown = (e) => { down = true; cellAct(e); };
+  $('#region').onmousemove = (e) => { if (down && W.paint) cellAct(e); };
+  window.onmouseup = () => { down = false; };
+}
+function cellAct(e) {
+  const c = e.target.closest('.cell'); if (!c) return;
+  const x = +c.dataset.x, y = +c.dataset.y;
+  if (W.paint) {
+    if (W.grid[y][x] === W.paint) return;
+    W.grid[y][x] = W.paint; W.dirty = true; drawRegion(); $('#rg-save').disabled = false; return;
+  }
+  W.selSec = W.grid[y][x]; drawRegion(); sideRegion();
+}
+function sideRegion() {
+  const R = W.region, by = secById();
+  const s = W.selSec && by[W.selSec];
+  const flyable = R.sections.filter(x => x.fly && x.fly.flyable);
+  let h = `<h2>Town map</h2><p class="muted">Each square of the town map belongs to a place (a map section). Click a square to see that place; paint squares to change the map. ✈️ = you can fly there.</p>
+    <h3>Paint</h3><div class="row"><input id="rg-paint" list="dl-sections" placeholder="pick a place, then click squares" style="flex:1" value="${esc(W.paint || '')}"><button id="rg-stop">${W.paint ? 'Stop' : 'Erase'}</button></div>
+    <div class="row"><button id="rg-save" class="primary" ${W.dirty ? '' : 'disabled'}>Save the town map</button></div>
+    <div class="row"><input id="rg-new" placeholder="a new place, e.g. Sunny Town" maxlength="18" style="flex:1"><button id="rg-add" title="add a place to the town map; then paint its squares and set it as a map's 'place on the town map'">+ Add</button></div>`;
+  if (s) {
+    h += `<h3>${esc(s.name)}</h3><div class="hint">${esc(s.id)}</div>
+      <div class="row"><input id="sec-name" value="${esc(s.name)}" maxlength="18" style="flex:1"><button id="sec-rename">Rename</button></div>
+      <div style="font-size:12px">Maps: ${s.maps.map(m => `<a href="/maps?map=${encodeURIComponent(m)}">${esc(m)}</a>`).join(', ') || '<span class="muted">none</span>'}</div>
+      <h3>Flying here</h3>
+      ${s.fly && s.fly.flyable ? `<div style="font-size:12px">✈️ You land on <b>${esc(s.fly.map)}</b> (${esc(s.fly.heal_location)})${s.fly.flag ? `, once <code>${esc(s.fly.flag)}</code> is on` : ', always'}.</div>` : '<div class="muted" style="font-size:12px">You can\'t fly here yet.</div>'}
+      <div class="field"><label>land on map</label><input id="fly-map" list="dl-maps" value="${esc((s.fly && s.fly.map_name) || s.maps[0] || '')}"></div>
+      <div class="field"><label>at x, y</label><div class="row" style="margin:0"><input id="fly-x" type="number" value="${s.fly && s.fly.x != null ? s.fly.x : 10}" style="width:64px"><input id="fly-y" type="number" value="${s.fly && s.fly.y != null ? s.fly.y : 10}" style="width:64px"></div></div>
+      <div class="field"><label title="you can fly here once this flag is on (the map turns it on when you arrive). Empty = always.">after flag</label><input id="fly-flag" list="dl-flags" placeholder="e.g. FLAG_VISITED_MY_TOWN" value="${esc((s.fly && s.fly.flag) || '')}"></div>
+      <div class="row"><button id="fly-go">✈️ ${s.fly && s.fly.flyable ? 'Change' : 'Make it a fly spot'}</button><span id="fly-status" class="hint"></span></div>`;
+  }
+  h += `<h3>Fly spots (${flyable.length})</h3>${flyable.map(x => `<div style="font-size:12px"><a data-sec="${esc(x.id)}">${esc(x.name)}</a> <span class="muted">→ ${esc(x.fly.map)}</span></div>`).join('')}`;
+  $('#side').innerHTML = h;
+  $('#rg-paint').onchange = () => { const v = $('#rg-paint').value.trim(); W.paint = v || null; sideRegion(); };
+  $('#rg-stop').onclick = () => { if (W.paint) W.paint = null; else W.paint = 'MAPSEC_NONE'; sideRegion(); };
+  $('#rg-save').onclick = async () => {
+    try { W.region = await api('/api/world/region_grid', { grid: W.grid }); W.dirty = false; toast('Saved the town map.'); sideRegion(); }
+    catch (e) { toast(e.message, 'err', 8000); }
+  };
+  $('#rg-add').onclick = async () => {
+    try {
+      const r = await api('/api/world/section_add', { name: $('#rg-new').value });
+      toast(`Added ${r.name}. Paint its squares, then pick it as the place of your maps (Map settings).`);
+      W.paint = r.id; const keep = W.grid; await loadRegion(); W.grid = keep; drawRegion(); sideRegion();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  $('#side').querySelectorAll('[data-sec]').forEach(a => a.onclick = () => { W.selSec = a.dataset.sec; drawRegion(); sideRegion(); });
+  if (s) {
+    $('#sec-rename').onclick = async () => { try { await api('/api/world/section_name', { section: s.id, name: $('#sec-name').value }); toast('Renamed.'); loadRegion(); } catch (e) { toast(e.message, 'err'); } };
+    $('#fly-go').onclick = async () => {
+      try {
+        await api('/api/world/fly', { section: s.id, map: $('#fly-map').value.trim(), x: +$('#fly-x').value, y: +$('#fly-y').value, flag: $('#fly-flag').value.trim() || null });
+        toast(`You can fly to ${s.name} now. Build the game to try it.`); loadRegion();
+      } catch (e) { $('#fly-status').textContent = e.message; }
+    };
+  }
+}
+
+// ------------------------------------------------------------------ tabs and start
+function setTab(t) {
+  document.body.classList.toggle('world-tab', t === 'world'); document.body.classList.toggle('region-tab', t === 'region');
+  $('#tab-world').classList.toggle('on', t === 'world'); $('#tab-region').classList.toggle('on', t === 'region');
+  if (t === 'region') { if (!W.region) loadRegion(); else sideRegion(); } else if (W.layout) sideWorld();
+  history.replaceState(null, '', t === 'region' ? '?tab=region' : '?');
+}
+$('#tab-world').onclick = () => setTab('world');
+$('#tab-region').onclick = () => setTab('region');
+(async () => {
+  try {
+    const m = await api('/api/maps');
+    $('#dl-maps').innerHTML = m.maps.map(x => `<option value="${esc(x.name)}">`).join('');
+    api('/api/constants?prefix=FLAG_VISITED').then(f => { $('#dl-flags').innerHTML = f.map(x => `<option value="${esc(x)}">`).join(''); }).catch(() => {});
+    await loadWorld();
+    if (new URLSearchParams(location.search).get('tab') === 'region') setTab('region');
+  } catch (e) { $('#side').innerHTML = `<p>${esc(e.message)}</p>`; }
+})();
+</script>
+<script src="/history.js"></script>
+<script src="/missions.js"></script>
+<script src="/findtext.js"></script>
+</body>
+</html>

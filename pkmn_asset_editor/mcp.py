@@ -160,12 +160,46 @@ TOOLS = [
      "(get_wild shows how many). Empty mons removes that kind.",
      _schema({"map": S, "kind": S, "encounter_rate": I, "mons": {"type": "array", "items": {"type": "object"}}},
              ["map", "kind"])),
-    ("get_species", "A Pokémon's data: base stats, types, abilities, catch rate, EXP, evolutions and level-up moves.",
+    ("get_species", "A Pokémon's data: name, base stats, types, abilities, catch rate, EXP, evolutions, level-up "
+     "moves and its Pokédex entry (category, height, weight, description).",
      _schema({"id": S}, ["id"])),
     ("set_species", "Change a Pokémon: baseHP/baseAttack/baseDefense/baseSpAttack/baseSpDefense/baseSpeed, "
      "catchRate, expYield, types [TYPE_X, TYPE_Y], abilities [3], evolutions [{method, param, target}], "
-     "learnset [{level, move}] (replaces the level-up moves).",
+     "learnset [{level, move}] (replaces the level-up moves), name, category, height, weight, description "
+     "(Pokédex), teachable {MOVE_X: true/false} (TM/HM/tutor moves), egg_moves [MOVE_X].",
      _schema({"id": S, "changes": {"type": "object"}}, ["id", "changes"])),
+    ("list_items", "Items (id, name), optionally filtered by text.", _schema({"query": S})),
+    ("get_item", "One item: name, price, description, pocket, hold effect, its icon and the shops that sell it.",
+     _schema({"item": S}, ["item"])),
+    ("set_item", "Change an item: name, price, description (real newlines; keep to the lines and width other "
+     "descriptions use), pocket (POCKET_X), holdEffectParam.", _schema({"item": S, "changes": {"type": "object"}},
+                                                                     ["item", "changes"])),
+    ("list_moves", "Moves (id, name), optionally filtered by text.", _schema({"query": S})),
+    ("get_move", "One move: name, description, power, accuracy, pp, priority, type, category, effect, target, "
+     "its TM/HM number and which Pokémon learn it by level.", _schema({"move": S}, ["move"])),
+    ("set_move", "Change a move: name, description, power, accuracy, pp, priority, type (TYPE_X), category "
+     "(DAMAGE_CATEGORY_X), effect (EFFECT_X), target, makesContact.",
+     _schema({"move": S, "changes": {"type": "object"}}, ["move", "changes"])),
+    ("get_tms", "Which move each TM and HM teaches, the move tutors in scripts, and how many TM/HM items exist.",
+     _schema({})),
+    ("set_tms", "Replace the TM list and/or the HM list (moves in order: the first is TM01). TM items, item balls "
+     "and shops that use them are renamed to match.", _schema({"tms": {"type": "array", "items": S},
+                                                              "hms": {"type": "array", "items": S}})),
+    ("get_teachable", "Which TM/HM and tutor moves a Pokémon can learn (change with set_species "
+     "{teachable: {MOVE_X: true}}); also its egg moves.", _schema({"id": S}, ["id"])),
+    ("list_marts", "Every Poké Mart list (label, map, items).", _schema({})),
+    ("find_text", "Find words in all dialogue (every map and common script), place names and trainer names. "
+     "Matches can span line breaks.", _schema({"query": S, "match_case": B, "whole_word": B}, ["query"])),
+    ("replace_text", "Replace words in all dialogue, place names and trainer names (or only the result ids from "
+     "find_text in `only`). UPPERCASE matches stay uppercase; boxes that no longer fit are re-wrapped. Use "
+     "dry_run=true first to see every change.",
+     _schema({"query": S, "replacement": S, "match_case": B, "whole_word": B, "only": {"type": "array", "items": S},
+              "dry_run": B}, ["query", "replacement"])),
+    ("difficulty_report", "Trainer levels (strongest Pokémon), bosses and wild grass/cave levels per story chapter, "
+     "plus warnings: trainers stronger than the chapter's boss, level spikes, too-easy trainers, bosses weaker "
+     "than the previous one, wild Pokémon above the boss.", _schema({})),
+    ("set_mart", "Set what a Poké Mart list sells (items in order).",
+     _schema({"label": S, "items": {"type": "array", "items": S}}, ["label", "items"])),
     ("playtest_battle", "In the running play-test, start a battle now: against `trainer` (TRAINER_X) or a wild "
      "`species` at `level`, with the current team. Returns the screen; continue with playtest_press.",
      _schema({"trainer": S, "species": S, "level": I}, [])),
@@ -190,6 +224,50 @@ TOOLS = [
      _schema({"map": S, "name": S, "tile": I, "count": I, "frames": I, "speed": I}, ["map", "name", "tile", "count"])),
     ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
      "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
+    ("build_script", "Write an event script from blocks (see eventbuilder.py): [{type: say, text}, {type: ask, text, "
+     "yes: [...], no: [...]}, {type: give_item, item, amount}, {type: give_mon, species, level}, {type: trainer, "
+     "trainer, intro, defeat}, {type: wild, species, level}, {type: flag, flag, on}, {type: var, var, value}, "
+     "{type: if_flag, flag, on, then, else}, {type: if_var, var, value, then, else}, {type: move, who, steps: "
+     "[up, down, left, right, run_up, face_up, face_player, jump_down, '!', '?', wait]}, {type: hide|show, who}, "
+     "{type: heal}, {type: sound, se}, {type: music, bgm}, {type: wait, frames}, {type: fade, out}, {type: warp, map, "
+     "x, y}, {type: custom, line}]. kind: npc (lock/faceplayer), sign or trigger. Texts are wrapped to fit the box. "
+     "Point an event's script at the label with edit_map. get_blocks_script reads a script back as blocks.",
+     _schema({"map": S, "label": S, "kind": S, "blocks": {"type": "array", "items": {"type": "object"}}},
+             ["map", "label", "blocks"])),
+    ("get_blocks_script", "A script as blocks (the builder's own, or read back from a hand-written one).",
+     _schema({"map": S, "label": S}, ["map", "label"])),
+    ("view_world", "A picture of a whole area of the world (all maps joined by their connections; area 0 is the "
+     "biggest), with each map's position and size in blocks, and connection problems.",
+     _schema({"area": I, "scale": {"type": "number"}})),
+    ("region_map", "The town map: its picture, which place (MAPSEC) each square is, the places with their maps, and "
+     "the fly spots.", _schema({})),
+    ("attach_map", "Add a new map (a copy of `template`) next to `existing` on `side` (up/down/left/right), joined "
+     "both ways; `offset` moves it along that side in blocks.",
+     _schema({"existing": S, "side": S, "template": S, "name": S, "offset": I}, ["existing", "side", "template", "name"])),
+    ("set_fly_spot", "Make a town map place (MAPSEC_X) a fly spot landing on `map` at (x, y); with `flag` you can "
+     "fly there once it's on (the map's arrival script turns it on). `add_place` first adds a new place.",
+     _schema({"section": S, "map": S, "x": I, "y": I, "flag": S, "add_place": S}, ["map", "x", "y"])),
+    ("create_pokemon", "Add a brand-new Pokémon by copying `template` (e.g. SPECIES_PICHU): species and Pokédex "
+     "constants, its species entry, graphics folder and INCGFX lines, follower sprite, learnsets, TM/tutor moves. "
+     "`changes` are set_species fields (stats, types, abilities, category, height, weight, description, learnset); "
+     "`evolves_from` = {species, method, param}. Replace its pictures afterwards with import_image.",
+     _schema({"name": S, "template": S, "changes": {"type": "object"}, "evolves_from": {"type": "object"}},
+             ["name", "template"])),
+    ("make_release", "Build a release (make release: no debug menus or Quickstart) and make BPS and UPS patches "
+     "against the original ROM (`base_rom`, remembered), a README and a zip in .pae/releases. Only when the user "
+     "asks for a release.", _schema({"name": S, "version": S, "author": S, "description": S, "base_rom": S,
+                                     "notes": S}, [])),
+    ("save_replay_test", "Save the running play-test (everything since playtest_start: presses, battles, scripts) as "
+     "a replay test in pae_tests/. What the game shows now (screen, map, position, in battle, and the watched "
+     "`trainers` beaten / `flags` / `vars`) is what every replay must show.",
+     _schema({"name": S, "note": S, "trainers": {"type": "array", "items": S}, "flags": {"type": "array", "items": S},
+              "vars": {"type": "array", "items": S}, "overwrite": {"type": "boolean"}}, ["name"])),
+    ("run_replay_tests", "Build (unless build=false) and replay the tests in pae_tests/ (all, or `names`); says per "
+     "test what changed (map, position, battle, trainers, flags, vars, screen) and returns the difference pictures "
+     "of failed tests (expected | now | changed pixels in red).",
+     _schema({"names": {"type": "array", "items": S}, "build": {"type": "boolean"}}, [])),
+    ("accept_replay_test", "The change a replay test found was intended: replay it and keep what the game shows now "
+     "as its new expectation. Only when the user agrees the change is fine.", _schema({"name": S}, ["name"])),
     ("list_save_points", "Save points (git commits) of the game folder, newest first, and the files changed since "
      "the last one.", _schema({})),
     ("make_save_point", "Commit every change as a save point with a plain-language message. Only when the user asks "
@@ -209,7 +287,9 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "view_tileset_anim", "edit_tileset_anim", "set_anim_frame", "add_anim_frame", "remove_anim_frame",
              "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team",
              "list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species",
-             "playtest_battle", "story_flag", "suggest_map_chapters"}
+             "playtest_battle", "story_flag", "suggest_map_chapters", "list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
+             "get_teachable", "list_marts", "set_mart", "difficulty_report", "find_text", "replace_text", "make_release", "create_pokemon", "view_world", "region_map", "attach_map",
+             "set_fly_spot", "build_script", "get_blocks_script"}
 
 
 class Server:
@@ -217,6 +297,29 @@ class Server:
         self.proj = proj
 
     # ------------------------------------------------------------------ tools
+    def replay_call(self, name, args, txt):
+        if self.proj.kind != "decomp":
+            raise ProjectError("replay tests need a source tree")
+        t = self.proj.tests
+        if name == "save_replay_test":
+            with self.proj.play.lock:
+                r = t.record(self.proj.play, args["name"], args.get("note", ""), args.get("flags") or [],
+                             args.get("vars") or [], args.get("trainers") or [], overwrite=bool(args.get("overwrite")))
+            return txt({"saved": args["name"], "expect": r["expect"], "steps": len(r["steps"])})
+        if name == "accept_replay_test":
+            return txt({"accepted": args["name"], "expect": t.accept(args["name"])["expect"]})
+        if args.get("build", True):
+            rep = self.proj.build_rom()
+            if rep.returncode != 0:
+                return txt({"ok": False, "error": "make failed", "output": rep.output[-3000:]})
+        results = t.run_all(args.get("names") or None)
+        content = [{"type": "text", "text": json.dumps(results, indent=1)}]
+        for r in results:
+            f = t.results_dir / f"{r['name']}.diff.png"
+            if not r.get("ok") and f.exists():
+                content.append(self._png(Image.open(f)))
+        return content
+
     def _png(self, im: Image.Image) -> dict:
         buf = io.BytesIO()
         im.save(buf, "PNG")
@@ -453,6 +556,80 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
+        if name in ("build_script", "get_blocks_script"):
+            from . import eventbuilder as eb
+            m = self.proj.maps
+            if name == "get_blocks_script":
+                return txt(eb.parse(m.read_script(m.resolve(args["map"])), args["label"]))
+            r = eb.save(m, args["map"], args["label"], args.get("kind") or "npc", args["blocks"])
+            return txt({"label": r["label"], "problems": r["problems"], "script": r["script"]})
+        if name in ("view_world", "region_map", "attach_map", "set_fly_spot"):
+            w = self.proj.maps.world
+            if name == "view_world":
+                L = w.layout()
+                if not L["areas"]:
+                    return txt("no maps are connected to each other")
+                area = L["areas"][int(args.get("area") or 0)]
+                im = w.render_area(area, float(args.get("scale") or 0.125))
+                return [self._png(im), *txt({"maps": area["maps"], "problems": L["problems"],
+                                             "areas": [(a["first"], len(a["maps"])) for a in L["areas"]]})]
+            if name == "region_map":
+                rm = w.region_map()
+                im = w.region_map_image()
+                out = txt({k: rm[k] for k in ("grid", "origin", "sections")})
+                return ([self._png(im.resize((480, 320), Image.NEAREST))] if im else []) + out
+            if name == "attach_map":
+                return txt(w.attach_map(args["existing"], args["side"], args["template"], args["name"],
+                                        int(args.get("offset") or 0)))
+            section = args.get("section")
+            if args.get("add_place"):
+                section = w.add_section(args["add_place"])["id"]
+            return txt(w.set_fly_spot(section, args["map"], int(args["x"]), int(args["y"]), args.get("flag")))
+        if name == "create_pokemon":
+            return txt(self.proj.newmon.create(args["name"], args["template"], args.get("changes") or {},
+                                               args.get("evolves_from")))
+        if name in ("save_replay_test", "run_replay_tests", "accept_replay_test"):
+            return self.replay_call(name, args, txt)
+        if name == "make_release":
+            settings = {k: args[k] for k in ("name", "version", "author", "description", "base_rom") if args.get(k)}
+            r = self.proj.release.build(notes=args.get("notes"), **settings)
+            return txt({k: v for k, v in r.items() if k != "build_log"})
+        if name == "find_text":
+            return txt(self.proj.textsearch.search(args["query"], bool(args.get("match_case")),
+                                                   bool(args.get("whole_word")), limit=200))
+        if name == "replace_text":
+            return txt(self.proj.textsearch.replace(args["query"], args["replacement"], bool(args.get("match_case")),
+                                                    bool(args.get("whole_word")), args.get("only"),
+                                                    dry_run=bool(args.get("dry_run"))))
+        if name in ("list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
+                    "get_teachable", "list_marts", "set_mart", "difficulty_report"):
+            gd = self.proj.gamedata
+            if name == "list_items":
+                return txt(gd.items(args.get("query", ""))[:400])
+            if name == "get_item":
+                return txt(gd.get_item(args["item"]))
+            if name == "set_item":
+                return txt(gd.set_item(args["item"], args["changes"]))
+            if name == "list_moves":
+                return txt(gd.moves(args.get("query", ""))[:400])
+            if name == "get_move":
+                return txt(gd.get_move(args["move"]))
+            if name == "set_move":
+                return txt(gd.set_move(args["move"], args["changes"]))
+            if name == "get_tms":
+                return txt(dict(gd.tms(), tutors=gd.tutors()))
+            if name == "set_tms":
+                return txt(gd.set_tms(args.get("tms"), args.get("hms")))
+            if name == "get_teachable":
+                return txt(dict(gd.teachable(args["id"]), egg_moves=gd.egg_moves(args["id"])))
+            if name == "list_marts":
+                return txt({"marts": gd.marts()})
+            if name == "difficulty_report":
+                d = gd.difficulty()
+                for c in d["chapters"]:  # keep it short: the strongest few per chapter
+                    c["trainers"] = sorted(c["trainers"], key=lambda t: -t["ace"])[:8]
+                return txt(d)
+            return txt(gd.set_mart(args["label"], args["items"]))
         if name in ("list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species"):
             gd = self.proj.gamedata
             if name == "list_trainers":

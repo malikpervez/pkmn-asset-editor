@@ -105,6 +105,7 @@
     .app { grid-template-columns: 1fr; grid-template-rows: 160px 60vh auto; overflow: visible; }
     #maplist, #side { border: 0; }
   }
+  #live-fast.on { background: var(--sel); color: #fff; border-color: var(--sel); }
 </style>
 </head>
 <body>
@@ -113,6 +114,9 @@
   <a href="/">🎨 Graphics</a>
   <a href="/data" title="trainer teams, wild Pokémon and Pokémon stats">🔴 Pokémon &amp; Trainers</a>
   <a href="/story" title="which events turn which flags on, chapter by chapter">📖 Story</a>
+  <a href="/world" title="all your towns and routes joined together, the town map and fly spots">🌍 World</a>
+  <a href="/release" title="make a patch of your game to share">📦 Release</a>
+  <a href="/tests" title="replay what you played after every change">🧪 Tests</a>
   <a href="/help" target="_blank" title="step-by-step guides and what all the words mean">❓ Help</a>
   <span class="muted" id="mapname">no map open</span>
   <span style="flex:1"></span>
@@ -259,14 +263,23 @@
       <div class="row">script on arrival <input id="play-script" list="dl-labels" style="flex:1" placeholder="e.g. PetalburgCity_EventScript_WallyTutorial"></div>
     </details>
     <div class="row"><button id="play-start" class="primary" title="build your game with your latest changes, then start">▶ Build &amp; play</button><button id="play-restart" title="start again without building (faster)">Play again</button>
-      <span style="flex:1"></span><button id="play-ckpt" title="save the game right here, so you can start from this spot next time">Save checkpoint…</button></div>
+      <span style="flex:1"></span><button id="play-ckpt" title="save the game right here, so you can start from this spot next time">Save checkpoint…</button>
+      <button id="play-test" title="save everything you did since ▶ as a replay test: after each change, 🧪 Tests replays it and tells you if the game now ends differently">🔴 Save as a test…</button></div>
     <div id="play-status" class="muted">Pick where to start, then press ▶ Build &amp; play. The first build can take a few minutes.</div>
     <img id="play-screen" alt="game screen" width="480" height="320">
+    <canvas id="play-live" width="480" height="320" hidden style="image-rendering:pixelated;background:#000;display:block;margin:8px 0"></canvas>
+    <div class="row" style="font-size:12px">
+      <label title="play at full speed: hold the buttons like a real Game Boy"><input type="checkbox" id="live-on" checked> ⚡ Live</label>
+      <label title="hear the game's music and sounds"><input type="checkbox" id="live-sound"> 🔊 Sound</label>
+      <button id="live-fast" title="run 4× faster (hold Space)">⏩ Fast</button><button id="live-pause" title="stop the game for a moment">⏸ Pause</button>
+      <span id="live-status" class="muted"></span>
+    </div>
     <div class="row pad">
       <div class="dpad"><button data-k="UP">▲</button><button data-k="LEFT">◀</button><button data-k="RIGHT">▶</button><button data-k="DOWN">▼</button></div>
       <div class="col"><button data-k="A" class="ab">A</button><button data-k="B" class="ab">B</button></div>
       <div class="col"><button data-k="L">L</button><button data-k="R">R</button><button data-k="START">Start</button><button data-k="SELECT">Select</button></div>
       <div class="col"><label>walk steps <input id="play-steps" type="number" value="1" min="1" style="width:52px"></label>
+        <button id="play-rec" title="walk the path you want with the arrows; then use it in a 🚶 Move block of 🧩 Build what happens">🎬 Record steps</button>
         <button id="play-wait">wait 1s</button><input id="play-custom" placeholder="e.g. UP*32, A, wait 60" style="width:180px"><button id="play-run">Run inputs</button>
         <span class="adv"><input id="play-runscript" list="dl-labels" placeholder="script label" style="width:180px"><button id="play-runscript-go">Run script now</button></span></div>
     </div>
@@ -283,6 +296,7 @@
 <div id="modal"><div class="box"><div id="modal-body"></div><div class="row"><button id="modal-close">Close</button></div></div></div>
 <datalist id="dl-labels"></datalist>
 
+<script src="/live.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -716,7 +730,7 @@ async function renderEventForm() {
     h += `<div class="field${lab.hidden ? ' adv' : ''}"><label title="${esc(lab.title)}">${esc(lab.text)}</label><input data-k="${esc(k)}" data-num="${type === 'number'}" type="${type}" value="${esc(v)}" ${list ? `list="${list}"` : ''} title="${esc(lab.title)}"></div>`;
   }
   h += '<div class="row">';
-  if ('script' in ev) h += `<button id="ev-newscript" title="write what happens, and the tool makes the script">${kind === 'coord_events' ? 'Write what happens…' : 'Write what they say…'}</button><button id="ev-openscript" title="open the script in the Scripts tab">Open script</button>`;
+  if ('script' in ev) h += `<button id="ev-blocks" class="primary" title="make what happens from blocks: say, ask, give, battle, move…">🧩 Build what happens</button><button id="ev-newscript" title="write what happens, and the tool makes the script">${kind === 'coord_events' ? 'Write what happens…' : 'Write what they say…'}</button><button id="ev-openscript" title="open the script in the Scripts tab">Open script</button>`;
   if (kind === 'warp_events') h += `<button id="ev-link" title="make the door on the other map lead back here too">Make two-way</button><button id="ev-goto">Go to that map</button>`;
   h += `<button id="ev-dup">Duplicate</button><button id="ev-del">Delete</button></div>`;
   host.innerHTML = h;
@@ -736,6 +750,28 @@ async function renderEventForm() {
   on('ev-del', deleteEvent);
   on('ev-dup', () => { snapshot(); const c = JSON.parse(JSON.stringify(ev)); c.x = Math.min(c.x + 1, S.cur.layout.width - 1); delete c.local_id; S.cur.data[kind].push(c); S.sel = { kind, i: S.cur.data[kind].length - 1 }; S.dirtyData = true; renderEvents(); drawOver(); updateButtons(); });
   on('ev-openscript', () => openLabel(ev.script));
+  on('ev-blocks', async () => {
+    if (dirty() && !(await saveAll(true))) return;
+    const kindName = { object_events: 'npc', bg_events: 'sign', coord_events: 'trigger' }[kind] || 'npc';
+    const has = ev.script && ev.script !== '0' && !/^0x/.test(ev.script);
+    const word = { npc: 'Person', sign: 'Sign', trigger: 'Trigger' }[kindName];
+    let label = ev.script;
+    if (!has) {
+      const used = new Set((S.cur.data.object_events || []).concat(S.cur.data.bg_events || [], S.cur.data.coord_events || []).map(e => e.script));
+      let n = i + 1; label = `${S.cur.name}_EventScript_${word}${n}`;
+      while (used.has(label)) label = `${S.cur.name}_EventScript_${word}${++n}`;
+    }
+    openBlockBuilder({
+      map: S.cur.name, label, kind: kindName,
+      localIds: (S.cur.data.object_events || []).map(e => e.local_id).filter(Boolean),
+      onSaved: async (lbl, test, r) => {
+        ev.script = lbl; S.dirtyData = true; await saveAll(true); await loadScript();
+        toast(`Saved ${lbl}` + (r.problems.length ? ` (⚠ ${r.problems.length} text problem(s))` : ''));
+        renderEventForm();
+        if (test) $('#play').click();
+      },
+    });
+  });
   on('ev-newscript', async () => {
     const text = prompt('What should this ' + KIND_LABEL[kind] + ' say?', 'Hello there!');
     if (text === null) return;
@@ -1241,6 +1277,19 @@ $('#play-ckpt').onclick = async () => {
   if (!r.ok) return toast(r.error, 'err', 6000);
   await loadCheckpoints(); toast(`Saved checkpoint ${name} at ${r.checkpoint.map} (${r.checkpoint.x}, ${r.checkpoint.y})`);
 };
+let lastTrainer = '';
+$('#play-test').onclick = async () => {
+  if (!$('#play-screen').src) return toast('Start the game and play what the test should check first', 'warn');
+  const name = prompt('Name for this test (e.g. beat roxanne)', lastTrainer ? 'beat ' + lastTrainer.replace(/^TRAINER_/, '').replace(/_\d+$/, '').toLowerCase() : '');
+  if (!name) return;
+  const trainers = prompt('Also check that these trainers are beaten (optional, separated by spaces)', lastTrainer);
+  if (trainers === null) return;
+  let r = await api('/api/tests/record', { name, trainers });
+  if (!r.ok && /already a test/.test(r.error || '') && confirm(r.error + '. Replace it?')) r = await api('/api/tests/record', { name, trainers, overwrite: true });
+  if (!r.ok) return toast(r.error, 'err', 6000);
+  const e = r.test.expect;
+  toast(`Saved test “${name}”: it must end on ${e.map} (${e.x}, ${e.y})${e.in_battle ? ' in a battle' : ''}. Run it on 🧪 Tests.`, 'ok', 6000);
+};
 $('#play-runscript-go').onclick = async () => {
   const label = $('#play-runscript').value.trim(); if (!label) return;
   const r = await api('/api/play/script', { label });
@@ -1259,7 +1308,36 @@ $('#play').onclick = () => {
   loadPlayStory();
   $('#playbox').classList.add('open');
 };
-$('#play-close').onclick = () => { $('#playbox').classList.remove('open'); api('/api/play/stop', {}).catch(() => {}); };
+$('#play-close').onclick = () => { live.stop(); $('#playbox').classList.remove('open'); api('/api/play/stop', {}).catch(() => {}); };
+// ⚡ live play: real time, buttons held while you hold the keys, sound, fast-forward
+let liveFast = false, livePaused = false, liveHeld = {};
+const live = PaeLive.attach($('#play-live'), {
+  onStatus: (s) => { $('#live-status').textContent = s.paused ? 'paused' : s.speed > 1 ? `${s.speed}× speed` : ''; },
+  onClose: () => { if ($('#live-on').checked && $('#playbox').classList.contains('open') && $('#play-screen').src) setTimeout(liveSync, 1500); },
+});
+function liveOn() { return $('#live-on').checked && !!$('#play-screen').src; }
+function liveSync() {
+  const on = liveOn();
+  $('#play-live').hidden = !on; $('#play-screen').style.display = on ? 'none' : '';
+  if (on) { live.start(); live.sound($('#live-sound').checked); } else live.stop();
+}
+$('#live-on').onchange = liveSync;
+$('#live-sound').onchange = () => live.sound($('#live-sound').checked);
+$('#live-fast').onclick = () => { liveFast = !liveFast; live.speed(liveFast ? 4 : 1); $('#live-fast').classList.toggle('on', liveFast); };
+$('#live-pause').onclick = () => { livePaused = !livePaused; live.pause(livePaused); $('#live-pause').textContent = livePaused ? '▶ Go on' : '⏸ Pause'; };
+function liveKey(k, down) {
+  if (down && liveHeld[k] !== undefined) return;
+  if (down) liveHeld[k] = live.frames;
+  else if (liveHeld[k] !== undefined) {
+    if (recording && ['UP', 'DOWN', 'LEFT', 'RIGHT'].includes(k)) {  // 🎬 held for 16 frames = one step
+      const steps = Math.max(1, Math.round((live.frames - liveHeld[k]) / 16));
+      for (let i = 0; i < steps; i++) recording.push(k.toLowerCase());
+      $('#play-rec').textContent = `⏹ Stop recording (${recording.length})`;
+    }
+    delete liveHeld[k];
+  }
+  live.key(k, down);
+}
 async function playStart(build) {
   if (playBusy) return;
   if (dirty() && !(await saveAll(true))) return;
@@ -1279,6 +1357,7 @@ async function playStart(build) {
     if (r.build) { $('#play-build').textContent = r.build.output; }
     if (!r.ok) { $('#play-status').textContent = friendlyError(r.error); $('#play-build').hidden = !r.build; return; }
     $('#play-screen').src = r.image;
+    liveSync();
     $('#play-status').textContent = `Playing ${r.where.map} (${r.where.x}, ${r.where.y})` + (r.where.checkpoint ? ` from checkpoint ${r.where.checkpoint}` : ' (new game)') +
       summarizeState(r.where.state || []) + (r.where.script ? ` · ran ${r.where.script}` : '') + (r.build ? ` · built in ${r.build.seconds}s` : '');
   } catch (e) { $('#play-status').textContent = e.message; }
@@ -1358,7 +1437,7 @@ $('#play-battle').onclick = async () => {
   playBusy = true;
   try {
     const r = await api('/api/play/battle', trainer ? { trainer } : { species: constName('SPECIES_', wild), level: +$('#play-wildlv').value || 5 });
-    if (r.ok) { $('#play-screen').src = r.image; $('#play-status').textContent = 'Battling ' + r.where.battle; }
+    if (r.ok) { $('#play-screen').src = r.image; $('#play-status').textContent = 'Battling ' + r.where.battle; if (trainer) lastTrainer = r.where.battle; }
     else $('#play-status').textContent = friendlyError(r.error);
   } catch (e) { $('#play-status').textContent = e.message; }
   finally { playBusy = false; }
@@ -1376,18 +1455,46 @@ async function playPress(inputs) {
   } catch (e) { $('#play-status').textContent = e.message; }
   finally { playBusy = false; }
 }
+// 🎬 the cutscene recorder: direction presses while recording become movement steps for the block builder
+let recording = null;
+$('#play-rec').onclick = () => {
+  if (recording) {
+    window.paeRecordedSteps = recording; recording = null;
+    $('#play-rec').textContent = '🎬 Record steps';
+    toast(`Recorded ${window.paeRecordedSteps.length} step(s). Use them in a 🚶 Move block (🧩 Build what happens).`, 'ok', 7000);
+  } else { recording = []; $('#play-rec').textContent = '⏹ Stop recording (0)'; }
+};
+function recordKey(k) {
+  if (!recording || !['UP', 'DOWN', 'LEFT', 'RIGHT'].includes(k)) return;
+  const n = Math.max(1, +$('#play-steps').value || 1);
+  for (let i = 0; i < n; i++) recording.push(k.toLowerCase());
+  $('#play-rec').textContent = `⏹ Stop recording (${recording.length})`;
+}
 function keyInput(k) {
+  recordKey(k);
   const dirs = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
   return dirs.includes(k) ? `${k}*${16 * Math.max(1, +$('#play-steps').value || 1)}, wait 4` : `${k}, wait 45`;
 }
-document.querySelectorAll('#playbox [data-k]').forEach(b => b.onclick = () => playPress(keyInput(b.dataset.k)));
+document.querySelectorAll('#playbox [data-k]').forEach(b => {
+  b.onclick = () => { if (!liveOn()) playPress(keyInput(b.dataset.k)); };
+  b.onpointerdown = () => { if (liveOn()) liveKey(b.dataset.k, true); };
+  b.onpointerup = b.onpointerleave = () => { if (liveOn()) liveKey(b.dataset.k, false); };
+});
 $('#play-wait').onclick = () => playPress('wait 60');
 $('#play-run').onclick = () => playPress($('#play-custom').value);
 document.addEventListener('keydown', (e) => {
   if (!playOpen() || e.target.matches('input, textarea, select')) return;
   const k = { ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT', z: 'A', x: 'B', Enter: 'START', Backspace: 'SELECT', a: 'L', s: 'R' }[e.key];
-  if (k) { e.preventDefault(); e.stopPropagation(); playPress(keyInput(k)); }
+  if (e.key === ' ' && liveOn()) { e.preventDefault(); if (!e.repeat) live.speed(4); return; }
+  if (k) { e.preventDefault(); e.stopPropagation(); if (liveOn()) liveKey(k, true); else playPress(keyInput(k)); }
 }, true);
+document.addEventListener('keyup', (e) => {
+  if (!playOpen() || !liveOn() || e.target.matches('input, textarea, select')) return;
+  const k = { ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT', z: 'A', x: 'B', Enter: 'START', Backspace: 'SELECT', a: 'L', s: 'R' }[e.key];
+  if (e.key === ' ') { live.speed(liveFast ? 4 : 1); return; }
+  if (k) { e.preventDefault(); liveKey(k, false); }
+}, true);
+window.addEventListener('blur', () => { liveHeld = {}; live.release(); });
 
 try { if (localStorage.getItem('pae-expert') === '1') { document.body.classList.add('expert'); $('#expert').checked = true; } } catch (e) { /* no storage */ }
 $('#expert').onchange = () => {
@@ -1401,5 +1508,8 @@ loadMaps().then(() => {
 }).catch(e => toast(e.message, 'err', 10000));
 </script>
 <script src="/history.js"></script>
+<script src="/missions.js"></script>
+<script src="/blocks.js"></script>
+<script src="/findtext.js"></script>
 </body>
 </html>

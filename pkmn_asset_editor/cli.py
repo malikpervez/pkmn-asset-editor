@@ -79,6 +79,124 @@ def _print_report(rep, as_json: bool) -> None:
             print(f"wrote {p}")
 
 
+def _run_tests(proj, args, decomp) -> int:
+    from .playtest import PlaytestError
+    from .replay import write_workflow
+    if not decomp:
+        raise ProjectError("replay tests need a source tree (they play the ROM that `make` builds)")
+    if args.cmd == "ci":
+        path = write_workflow(proj.root, args.force)
+        print(f"wrote {path.relative_to(proj.root)}: commit and push it, and GitHub builds the game, runs "
+              "`pae check` and replays pae_tests/ on every push and pull request")
+        return 0
+    tests = proj.tests
+
+    def build() -> bool:
+        if getattr(args, "no_build", True):
+            return True
+        rep = proj.build_rom()
+        if rep.returncode != 0:
+            print("\n".join(rep.output.rstrip().splitlines()[-25:]))
+            print(f"make failed (exit {rep.returncode})")
+            return False
+        print(f"built in {rep.seconds:.0f}s")
+        return True
+    try:
+        if args.test_cmd == "list":
+            items = tests.list()
+            if not items:
+                print("no tests yet: record one with `pae test record NAME MAP --inputs ...` or in the test window")
+            for t in items:
+                last = t["last"] or {}
+                mark = "  " if not last else ("ok" if last.get("ok") else "!!")
+                where = t["start"].get("map") or f"checkpoint {t['start'].get('from_checkpoint') or t['start'].get('save')}"
+                print(f"{mark} {t['name']:<28} {where:<24} {t['frames']:>6} frames  {last.get('summary', 'not run yet')}")
+            return 0
+        if args.test_cmd == "delete":
+            tests.delete(args.name)
+            print(f"deleted {args.name}")
+            return 0
+        if not build():
+            return 1
+        if args.test_cmd == "record":
+            _start_play(proj, args)
+            if args.inputs:
+                proj.play.press(args.inputs)
+            t = tests.record(proj.play, args.name, args.note, args.watch_flag, args.watch_var, args.watch_trainer,
+                             args.threshold, overwrite=args.force)
+            e = t["expect"]
+            print(f"saved test {args.name}: ends on {e['map']} ({e['x']}, {e['y']})"
+                  + (", in a battle" if e["in_battle"] else ""))
+            for kind in ("flags", "vars", "trainers"):
+                for k, v in (e.get(kind) or {}).items():
+                    print(f"  {k} = {v}")
+            proj.play.close()
+            return 0
+        if args.test_cmd == "accept":
+            for n in args.names:
+                tests.accept(n)
+                print(f"{n}: now expects what the game shows")
+            return 0
+        results = tests.run_all(args.names or None)
+        if not results:
+            print("no tests in pae_tests/")
+        for r in results:
+            print(f"{'ok' if r.get('ok') else 'FAILED'}  {r['name']}: {r.get('summary')}")
+            if not r.get("ok") and (tests.results_dir / f"{r['name']}.diff.png").exists():
+                print(f"     see {(tests.results_dir / (r['name'] + '.diff.png')).relative_to(proj.root)} "
+                      "(expected | got | changed pixels in red)")
+        if args.summary:
+            with open(args.summary, "a") as f:
+                f.write(tests.report(results))
+        failed = [r for r in results if not r.get("ok")]
+        if failed:
+            print(f"{len(failed)} of {len(results)} tests changed. If that was on purpose: pae test accept "
+                  + " ".join(f'"{r["name"]}"' if " " in r["name"] else r["name"] for r in failed))
+        return 1 if failed else 0
+    except PlaytestError as e:
+        raise ProjectError(str(e))
+
+
+def _start_play(proj, args):
+    """Start a play-test from `pae play`-style arguments; returns the first screen."""
+    name = (proj.maps.resolve(args.map) if proj.maps else args.map) if args.map else None
+    state = args.state
+    if proj.maps and (args.chapter is not None or args.team):
+        state = proj.maps.story.play_state(args.chapter - 1 if args.chapter else None, args.extras,
+                                           team=args.team, clear_team=args.clear_team, state=args.state)
+    first = proj.play.start(name, args.x, args.y, checkpoint=args.checkpoint, state=state,
+                            script=args.script)
+    for line in proj.play.where.get("state") or []:
+        print(f"state: {line}")
+    if args.battle or args.wild:
+        sp, _, lv = (args.wild or "").partition(":")
+        first = proj.play.start_battle(trainer=args.battle, species=sp or None, level=int(lv or 5))
+        print(f"battle: {proj.play.where.get('battle')}")
+    return first
+
+
+def add_play_args(p):
+    """Where a play-test starts and what it does (shared by `pae play` and `pae test record`)."""
+    p.add_argument("map", nargs="?", help="map name, e.g. PetalburgCity (optional with --from)")
+    p.add_argument("--from", dest="checkpoint", help="continue from a saved checkpoint (story progress, party…)")
+    p.add_argument("--state", action="append", default=[],
+                   help="story state before arriving: FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5 (repeatable)")
+    p.add_argument("--script", help="start this script label on arrival (e.g. a cutscene)")
+    p.add_argument("--chapter", type=int, help="start as if you had played up to the end of this story chapter "
+                                               "(see `pae story list`): gives the needed items and badges")
+    p.add_argument("--extras", action="store_true", help="with --chapter: also give the extra items (item balls, "
+                                                         "hidden items, gifts)")
+    p.add_argument("--team", action="append", default=[],
+                   help="add a Pokémon: 'SPECIES_MUDKIP lv20 ITEM_ORAN_BERRY MOVE_TACKLE' (repeatable)")
+    p.add_argument("--clear-team", action="store_true", help="empty the team before adding --team Pokémon")
+    p.add_argument("--battle", help="start a battle against this trainer (TRAINER_X) on arrival")
+    p.add_argument("--wild", help="start a wild battle on arrival: SPECIES_X or SPECIES_X:level")
+    p.add_argument("--save-as", help="after the inputs, save the game as a checkpoint with this name")
+    p.add_argument("--x", type=int)
+    p.add_argument("--y", type=int)
+    p.add_argument("--inputs", default="", help="e.g. 'UP, wait 10, A, wait 60' (KEY*N holds N frames)")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="pae", description="Extract, organise, edit and re-insert Gen 3 Pokémon ROM graphics.")
     ap.add_argument("--version", action="version", version=__version__)
@@ -120,7 +238,7 @@ def main(argv: list[str] | None = None) -> int:
     p = with_project(sub.add_parser("build", help="write the edited ROM (ROM project) or run make (source tree)"))
     p.add_argument("--make", help="source tree: build command (default: make -jN; saved in .pae/config.json)")
     p.add_argument("-o", "--output", help="output ROM path (default: build/rom.gba)")
-    p.add_argument("--patch", action="append", choices=["ups", "ips"], help="patch format(s) to write")
+    p.add_argument("--patch", action="append", choices=["bps", "ups", "ips"], help="patch format(s) to write")
     p.add_argument("--no-patch", action="store_true")
     p.add_argument("--json", action="store_true")
 
@@ -238,28 +356,43 @@ def main(argv: list[str] | None = None) -> int:
 
     p = with_project(sub.add_parser("play", help="source tree: build, then play-test a map headlessly and save "
                                                   "screenshots (needs libmgba)"))
-    p.add_argument("map", nargs="?", help="map name, e.g. PetalburgCity (optional with --from)")
-    p.add_argument("--from", dest="checkpoint", help="continue from a saved checkpoint (story progress, party…)")
-    p.add_argument("--state", action="append", default=[],
-                   help="story state before arriving: FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5 (repeatable)")
-    p.add_argument("--script", help="start this script label on arrival (e.g. a cutscene)")
-    p.add_argument("--chapter", type=int, help="start as if you had played up to the end of this story chapter "
-                                               "(see `pae story list`): gives the needed items and badges")
-    p.add_argument("--extras", action="store_true", help="with --chapter: also give the extra items (item balls, "
-                                                         "hidden items, gifts)")
-    p.add_argument("--team", action="append", default=[],
-                   help="add a Pokémon: 'SPECIES_MUDKIP lv20 ITEM_ORAN_BERRY MOVE_TACKLE' (repeatable)")
-    p.add_argument("--clear-team", action="store_true", help="empty the team before adding --team Pokémon")
-    p.add_argument("--battle", help="start a battle against this trainer (TRAINER_X) on arrival")
-    p.add_argument("--wild", help="start a wild battle on arrival: SPECIES_X or SPECIES_X:level")
-    p.add_argument("--save-as", help="after the inputs, save the game as a checkpoint with this name")
-    p.add_argument("--x", type=int)
-    p.add_argument("--y", type=int)
-    p.add_argument("--inputs", default="", help="e.g. 'UP, wait 10, A, wait 60' (KEY*N holds N frames)")
+    add_play_args(p)
     p.add_argument("-o", "--out", default="playtest.png", help="final screenshot (.png)")
     p.add_argument("--gif", help="also record the inputs as an animated GIF")
     p.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
     p.add_argument("--scale", type=int, default=2)
+
+    p = sub.add_parser("test", help="source tree: replay tests - play something once, replay it after every change")
+    tsub = p.add_subparsers(dest="test_cmd", required=True)
+    q = with_project(tsub.add_parser("list", help="list the tests in pae_tests/ and how they did last time"))
+    q = with_project(tsub.add_parser("run", help="build, replay every test (or the ones named) and compare"))
+    q.add_argument("names", nargs="*")
+    q.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
+    q.add_argument("--summary", help="also write a Markdown summary here (e.g. $GITHUB_STEP_SUMMARY)")
+    q = with_project(tsub.add_parser("record", help="play like `pae play`, then save it as a test"))
+    q.add_argument("name")
+    add_play_args(q)
+    q.add_argument("--note", default="")
+    q.add_argument("--watch-flag", action="append", default=[], help="a flag whose value must stay the same")
+    q.add_argument("--watch-var", action="append", default=[], help="a variable whose value must stay the same")
+    q.add_argument("--watch-trainer", action="append", default=[], help="a trainer whose beaten/not beaten must stay")
+    q.add_argument("--threshold", type=float, default=0.01, help="share of screen pixels allowed to change")
+    q.add_argument("--force", action="store_true", help="replace a test with the same name")
+    q.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
+    q = with_project(tsub.add_parser("accept", help="the change was on purpose: keep what the game shows now"))
+    q.add_argument("names", nargs="+")
+    q.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
+    q = with_project(tsub.add_parser("delete", help="delete a test"))
+    q.add_argument("name")
+
+    p = with_project(sub.add_parser("missions", help="guided missions for beginners: small real tasks in your game, "
+                                                      "ticked off by themselves"))
+    p.add_argument("--reset", action="store_true", help="start the missions again")
+
+    p = sub.add_parser("ci", help="source tree: check every push on GitHub (build, `pae check`, replay tests)")
+    csub = p.add_subparsers(dest="ci_cmd", required=True)
+    q = with_project(csub.add_parser("init", help="write .github/workflows/pae.yml"))
+    q.add_argument("--force", action="store_true", help="replace an existing pae.yml")
 
     p = with_project(sub.add_parser("savepoint", help="source tree: remember everything as it is now (a git commit)"))
     p.add_argument("message", nargs="*", help="what you changed")
@@ -270,6 +403,17 @@ def main(argv: list[str] | None = None) -> int:
     xsub = p.add_subparsers(dest="text_cmd", required=True)
     q = with_project(xsub.add_parser("check", help="check every text of a map (or of all maps)"))
     q.add_argument("map", nargs="?")
+    q = with_project(xsub.add_parser("find", help="find words in all dialogue, place names and trainer names"))
+    q.add_argument("query")
+    q.add_argument("--case", action="store_true", help="match upper/lower case")
+    q.add_argument("--word", action="store_true", help="whole words only")
+    q = with_project(xsub.add_parser("replace", help="replace words everywhere (UPPERCASE stays UPPERCASE; text that "
+                                                     "no longer fits is re-wrapped)"))
+    q.add_argument("query")
+    q.add_argument("replacement")
+    q.add_argument("--case", action="store_true", help="match upper/lower case")
+    q.add_argument("--word", action="store_true", help="whole words only")
+    q.add_argument("--dry-run", action="store_true", help="only show what would change")
     q = with_project(xsub.add_parser("preview", help="render a text label as it looks in game"))
     q.add_argument("map")
     q.add_argument("label")
@@ -308,6 +452,93 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--abilities", help="up to 3, e.g. ABILITY_TORRENT,,ABILITY_DAMP")
     q.add_argument("--learn", action="append", help="replace the level-up moves: '1:Tackle' (repeatable)")
 
+    p = sub.add_parser("item", help="source tree: items (name, price, description, pocket)")
+    isub = p.add_subparsers(dest="item_cmd", required=True)
+    q = with_project(isub.add_parser("list", help="list items"))
+    q.add_argument("query", nargs="?", default="")
+    q = with_project(isub.add_parser("show", help="show an item"))
+    q.add_argument("id")
+    q = with_project(isub.add_parser("set", help="change an item"))
+    q.add_argument("id")
+    q.add_argument("--name")
+    q.add_argument("--price", type=int)
+    q.add_argument("--description", help="use \\n for a new line")
+    q.add_argument("--pocket", help="e.g. POCKET_ITEMS")
+    p = sub.add_parser("move", help="source tree: moves (power, accuracy, PP, type, description)")
+    vsub = p.add_subparsers(dest="move_cmd", required=True)
+    q = with_project(vsub.add_parser("list", help="list moves"))
+    q.add_argument("query", nargs="?", default="")
+    q = with_project(vsub.add_parser("show", help="show a move"))
+    q.add_argument("id")
+    q = with_project(vsub.add_parser("set", help="change a move"))
+    q.add_argument("id")
+    q.add_argument("--name")
+    for k in ("power", "accuracy", "pp", "priority"):
+        q.add_argument(f"--{k}", type=int)
+    q.add_argument("--type", help="e.g. TYPE_FIRE")
+    q.add_argument("--category", help="DAMAGE_CATEGORY_PHYSICAL, _SPECIAL or _STATUS")
+    q.add_argument("--description", help="use \\n for a new line")
+    p = sub.add_parser("tm", help="source tree: which move each TM and HM teaches")
+    msub = p.add_subparsers(dest="tm_cmd", required=True)
+    with_project(msub.add_parser("list", help="list TMs, HMs and move tutors"))
+    q = with_project(msub.add_parser("set", help="set TM NUMBER (or HM NUMBER) to teach a move"))
+    q.add_argument("kind", choices=["tm", "hm"])
+    q.add_argument("number", type=int)
+    q.add_argument("move")
+    p = sub.add_parser("mart", help="source tree: what Poké Marts sell")
+    ksub = p.add_subparsers(dest="mart_cmd", required=True)
+    with_project(ksub.add_parser("list", help="list the shops and what they sell"))
+    q = with_project(ksub.add_parser("set", help="set what a shop list sells"))
+    q.add_argument("label", help="the list's label, e.g. OldaleTown_Mart_Pokemart_Basic")
+    q.add_argument("items", nargs="+")
+
+    with_project(sub.add_parser("difficulty", help="source tree: trainer and wild levels per story chapter, and "
+                                                   "what looks too hard or too easy"))
+    p = with_project(sub.add_parser("release", help="source tree: build a release and make BPS/UPS patches, a README "
+                                                    "and a zip to share"))
+    p.add_argument("--name")
+    p.add_argument("--version")
+    p.add_argument("--author")
+    p.add_argument("--description")
+    p.add_argument("--base", help="the original .gba the patch is for (remembered for next time)")
+    p.add_argument("--notes", help="what's new, one item per line (default: your save points since the last release)")
+    p.add_argument("--no-build", action="store_true", help="use the release ROM already built")
+    p.add_argument("--force", action="store_true", help="make it even if Check for problems found errors")
+    p.add_argument("--ups", action="store_true", help="also make a .ups patch (much bigger than the .bps)")
+    p = with_project(sub.add_parser("new-pokemon", help="source tree: add a new Pokémon, copied from one you pick "
+                                                        "(constants, Pokédex, graphics, learnsets, everything)"))
+    p.add_argument("name", help="its name, e.g. Sparkit")
+    p.add_argument("--from", dest="template", required=True, help="the Pokémon to copy, e.g. pichu")
+    p.add_argument("--types", help="e.g. TYPE_ELECTRIC,TYPE_FAIRY")
+    p.add_argument("--stats", help="HP,Atk,Def,SpA,SpD,Spe, e.g. 35,45,30,55,40,70")
+    p.add_argument("--category", help="Pokédex category, e.g. Spark")
+    p.add_argument("--description", help="Pokédex text (\\n for a new line)")
+    p.add_argument("--evolves-from", help="SPECIES:LEVEL, e.g. pichu:12 (adds an EVO_LEVEL evolution)")
+    for k in ("front", "back", "icon"):
+        p.add_argument(f"--{k}", help=f"a picture for its {k} sprite (any PNG; fitted and recoloured)")
+    p = sub.add_parser("world", help="source tree: all maps joined by their connections, the town map and fly spots")
+    wsub2 = p.add_subparsers(dest="world_cmd")
+    with_project(p)
+    q = with_project(wsub2.add_parser("render", help="a picture of a whole area (Hoenn, Kanto…)"))
+    q.add_argument("--area", type=int, default=0, help="0 = the biggest")
+    q.add_argument("--scale", type=float, default=0.25, help="0.25 = 4 pixels per block")
+    q.add_argument("-o", "--out", required=True)
+    q = with_project(wsub2.add_parser("region", help="the town map picture"))
+    q.add_argument("-o", "--out", required=True)
+    q = with_project(wsub2.add_parser("attach", help="add a new map next to one, joined both ways"))
+    q.add_argument("existing")
+    q.add_argument("side", choices=["up", "down", "left", "right"])
+    q.add_argument("template", help="the map to copy, e.g. Route101")
+    q.add_argument("name", help="the new map's name, e.g. Route135")
+    q.add_argument("--offset", type=int, default=0, help="how far along the side it starts, in blocks")
+    q = with_project(wsub2.add_parser("fly", help="make a town map place a fly spot"))
+    q.add_argument("section", help="e.g. MAPSEC_SUNNY_TOWN")
+    q.add_argument("map")
+    q.add_argument("x", type=int)
+    q.add_argument("y", type=int)
+    q.add_argument("--flag", help="you can fly there once this flag is on (the map turns it on when you arrive)")
+    q = with_project(wsub2.add_parser("add-place", help="add a place to the town map"))
+    q.add_argument("name")
     p = sub.add_parser("story", help="source tree: story chapters, for play-tests that start later in the game")
     ssub = p.add_subparsers(dest="story_cmd", required=True)
     with_project(ssub.add_parser("list", help="list the chapters and their maps"))
@@ -425,7 +656,8 @@ def _run(args) -> int:
         from . import patch
         src = Path(args.rom).read_bytes()
         data = Path(args.patch).read_bytes()
-        out = patch.apply_ups(src, data) if data[:4] == b"UPS1" else patch.apply_ips(src, data)
+        out = patch.apply_bps(src, data) if data[:4] == b"BPS1" else patch.apply_ups(src, data) \
+            if data[:4] == b"UPS1" else patch.apply_ips(src, data)
         Path(args.out).write_bytes(out)
         print(f"wrote {args.out}")
         return 0
@@ -594,19 +826,7 @@ def _run(args) -> int:
                 return 1
             print(f"built in {rep.seconds:.0f}s")
         try:
-            name = (proj.maps.resolve(args.map) if proj.maps else args.map) if args.map else None
-            state = args.state
-            if proj.maps and (args.chapter is not None or args.team):
-                state = proj.maps.story.play_state(args.chapter - 1 if args.chapter else None, args.extras,
-                                                   team=args.team, clear_team=args.clear_team, state=args.state)
-            first = proj.play.start(name, args.x, args.y, checkpoint=args.checkpoint, state=state,
-                                    script=args.script)
-            for line in proj.play.where.get("state") or []:
-                print(f"state: {line}")
-            if args.battle or args.wild:
-                sp, _, lv = (args.wild or "").partition(":")
-                first = proj.play.start_battle(trainer=args.battle, species=sp or None, level=int(lv or 5))
-                print(f"battle: {proj.play.where.get('battle')}")
+            first = _start_play(proj, args)
             final, frames = proj.play.press(args.inputs, record_every=4 if args.gif else 0) if args.inputs else (first, [])
             if args.save_as:
                 print(f"saved checkpoint {proj.play.save_checkpoint(args.save_as)['name']}")
@@ -674,6 +894,21 @@ def _run(args) -> int:
             m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
             print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")
         return 0
+    if args.cmd == "missions":
+        from .missions import Missions
+        m = Missions(proj)
+        r = m.reset() if args.reset else m.status()
+        print(f"{r['done']} of {r['total']} missions done")
+        for x in r["missions"]:
+            mark = "✅" if x["done"] else ("⏭ " if x["skipped"] else ("👉" if x["id"] == r["current"] else "  "))
+            print(f"{mark} {x['title']}")
+            if x["id"] == r["current"]:
+                for i, step in enumerate(x["steps"], 1):
+                    print(f"     {i}. {step.replace('**', '')}")
+        print("(the missions are also in the browser: 🎯 at the top of every page of `pae serve`)")
+        return 0
+    if args.cmd in ("test", "ci"):
+        return _run_tests(proj, args, decomp)
     if args.cmd in ("savepoint", "history"):
         from .history import History
         if not decomp:
@@ -706,6 +941,23 @@ def _run(args) -> int:
         if m is None:
             raise ProjectError("text checks need a pokeemerald-style source tree")
         tb = proj.textbox
+        if args.text_cmd == "find":
+            r = proj.textsearch.search(args.query, args.case, args.word)
+            for x in r["results"]:
+                print(f"{x['file']}{':' + str(x['line']) if x['line'] else ''}: {x['label']}: "
+                      + x["text"].replace("\n", " / "))
+            print(f"{r['total']} match(es) in {len(r['results'])} text(s)")
+            return 0
+        if args.text_cmd == "replace":
+            r = proj.textsearch.replace(args.query, args.replacement, args.case, args.word, dry_run=args.dry_run)
+            for c in r["changes"]:
+                print(f"{c['file']}: {c['label']}{' (re-wrapped)' if c['rewrapped'] else ''}")
+                print("   " + c["after"].replace("\n", " / "))
+                for p in c["problems"]:
+                    print(f"   ⚠ {p}")
+            verb = "would change" if args.dry_run else "changed"
+            print(f"{verb} {len(r['changes'])} text(s) in {len(r['files'])} file(s)")
+            return 0
         if args.text_cmd == "preview":
             name = m.resolve(args.map)
             hit = [t for t in tb.texts(m.read_script(name)) if t.label == args.label]
@@ -729,6 +981,167 @@ def _run(args) -> int:
                     print(f"{m.script_path(name).relative_to(proj.root)}:{t.line}: {t.label}: {msg}")
         print(f"{count} problem(s)" if count else "every text fits its box")
         return 1 if count else 0
+    if args.cmd == "world":
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("the world view needs a pokeemerald-style source tree")
+        w = m.world
+        cmd = args.world_cmd
+        if cmd == "render":
+            area = w.layout()["areas"][args.area]
+            w.render_area(area, args.scale).save(args.out)
+            print(f"wrote {args.out} ({len(area['maps'])} maps)")
+            return 0
+        if cmd == "region":
+            im = w.region_map_image()
+            if im is None:
+                raise ProjectError("no town map picture (graphics/pokenav/region_map/map.png)")
+            im.save(args.out)
+            print(f"wrote {args.out}")
+            return 0
+        if cmd == "attach":
+            r = w.attach_map(args.existing, args.side, args.template, args.name, args.offset)
+            print(f"added {r['map']} to the {r['side']} of {r['connected_to']}")
+            return 0
+        if cmd == "fly":
+            r = w.set_fly_spot(args.section, args.map, args.x, args.y, args.flag)
+            print(f"{r['section']} is a fly spot: you land on {r['map']} ({args.x}, {args.y})"
+                  + (f" once {args.flag} is on" if args.flag else ""))
+            return 0
+        if cmd == "add-place":
+            print(w.add_section(args.name)["id"])
+            return 0
+        L = w.layout()
+        for i, a in enumerate(L["areas"]):
+            print(f"{i}. {a['first']}: {len(a['maps'])} maps, {a['w']}x{a['h']} blocks")
+        for p in L["problems"]:
+            print("⚠ " + p["message"])
+        rm = w.region_map()
+        fly = [s for s in rm["sections"] if s["fly"] and s["fly"]["flyable"]]
+        print(f"town map: {len(rm['sections'])} places, fly spots: " + ", ".join(s["name"] for s in fly))
+        return 0
+    if args.cmd == "new-pokemon":
+        if not decomp:
+            raise ProjectError("adding Pokémon needs a pokeemerald-expansion source tree")
+        ch = {}
+        if args.types:
+            ch["types"] = [t.strip() for t in args.types.split(",") if t.strip()]
+        if args.stats:
+            vals = [int(x) for x in args.stats.split(",")]
+            ch.update(dict(zip(("baseHP", "baseAttack", "baseDefense", "baseSpAttack", "baseSpDefense", "baseSpeed"),
+                               vals)))
+        if args.category:
+            ch["category"] = args.category
+        if args.description:
+            ch["description"] = args.description.replace("\\n", "\n")
+        evo = None
+        if args.evolves_from:
+            sp, _, lv = args.evolves_from.partition(":")
+            evo = {"species": sp, "method": "EVO_LEVEL", "param": int(lv or 16)}
+        images = {k: Path(getattr(args, k)).read_bytes() for k in ("front", "back", "icon") if getattr(args, k)}
+        r = proj.newmon.create(args.name, args.template, ch, evo, images)
+        for w in r["warnings"]:
+            print("⚠ " + w)
+        print(f"added {r['name']} ({r['species']}), made from {r['template']}; graphics in {r['graphics']}/")
+        print(f"changed {len(r['files'])} file(s); build the game to meet it")
+        return 0
+    if args.cmd == "release":
+        if not decomp:
+            raise ProjectError("releases are made from a pokeemerald-expansion source tree (ROM projects: pae build)")
+        rel = proj.release
+        settings = {k: getattr(args, k) for k in ("name", "version", "author", "description") if getattr(args, k)}
+        if args.base:
+            settings["base_rom"] = str(Path(args.base).resolve())
+        if settings:
+            rel.save_settings(settings)
+        for c in rel.checks():
+            print(("⛔ " if c["level"] == "error" else "⚠ ") + c["message"])
+        print(f"building with: {' '.join(rel.make_command())}" if not args.no_build else "using the built release ROM")
+        r = rel.build(notes=args.notes.replace("\\n", "\n") if args.notes else None, build=not args.no_build,
+                      force=args.force, formats=("bps", "ups") if args.ups else ("bps",))
+        print(f"made {r['zip']} ({r['zip_size'] // 1024} KB) in {r['seconds']}s")
+        for f in r["files"]:
+            print(f"  {f} ({r['sizes'][f] // 1024} KB)")
+        return 0
+    if args.cmd == "difficulty":
+        if not decomp:
+            raise ProjectError("the difficulty curve needs a pokeemerald-expansion source tree")
+        d = proj.gamedata.difficulty()
+        for c in d["chapters"]:
+            boss = f"{c['boss']['name']} lv {c['boss']['ace']}" if c["boss"] else "-"
+            wild = f"lv {c['wild']['min']}-{c['wild']['max']}" if c["wild"] else "-"
+            print(f"{c['index'] + 1:>2}. {c['name'][:44]:44}  trainers {len(c['trainers']):>3}  typical lv "
+                  f"{c['median'] if c['median'] is not None else '-':>3}  boss {boss:18}  wild {wild}")
+        if d["flags"]:
+            print(f"\n{len(d['flags'])} thing(s) worth a look:")
+            for f in d["flags"]:
+                print(f"  chapter {f['chapter'] + 1}: {f['message']}")
+        return 0
+    if args.cmd in ("item", "move", "tm", "mart"):
+        if not decomp:
+            raise ProjectError("game data editing needs a pokeemerald-expansion source tree")
+        gd = proj.gamedata
+        if args.cmd == "item":
+            if args.item_cmd == "list":
+                for it in gd.items(args.query):
+                    print(f"{it['id']:32} {it['name']}")
+                return 0
+            if args.item_cmd == "set":
+                ch = {k: getattr(args, k) for k in ("name", "price", "pocket") if getattr(args, k) is not None}
+                if args.description is not None:
+                    ch["description"] = args.description.replace("\\n", "\n")
+                gd.set_item(args.id, ch)
+            d = gd.get_item(args.id)
+            print(f"{d['name']} ({d['id']})  price {d['price']}  {d['pocket']}")
+            print("  " + d["description"].replace("\n", "\n  "))
+            if d["sold_in"]:
+                print("  sold in: " + ", ".join(sorted({m['map'] for m in d['sold_in']})))
+            return 0
+        if args.cmd == "move":
+            if args.move_cmd == "list":
+                for mv in gd.moves(args.query):
+                    print(f"{mv['id']:32} {mv['name']}")
+                return 0
+            if args.move_cmd == "set":
+                ch = {k: getattr(args, k) for k in ("name", "power", "accuracy", "pp", "priority", "type", "category")
+                      if getattr(args, k) is not None}
+                if args.description is not None:
+                    ch["description"] = args.description.replace("\\n", "\n")
+                gd.set_move(args.id, ch)
+            d = gd.get_move(args.id)
+            print(f"{d['name']} ({d['id']})  {d['type'].replace('TYPE_', '').title()}  "
+                  f"{d['category'].replace('DAMAGE_CATEGORY_', '').title()}{'  ' + d['tm'] if d['tm'] else ''}")
+            print(f"  power {d['power']}  accuracy {d['accuracy']}  PP {d['pp']}  priority {d['priority']}")
+            print("  " + d["description"].replace("\n", "\n  "))
+            if d["learned_by"]:
+                print("  learned by: " + ", ".join(f"{x['name']} (lv {x['level']})" for x in d["learned_by"][:20]))
+            return 0
+        if args.cmd == "tm":
+            t = gd.tms()
+            if args.tm_cmd == "set":
+                key = args.kind + "s"
+                moves = [x["move"] for x in t[key]]
+                i = args.number - 1
+                if not 0 <= i <= len(moves):
+                    raise ProjectError(f"{args.kind.upper()}{args.number:02d}: there are {len(moves)}; "
+                                       f"use {len(moves) + 1} to add one")
+                from .gamedata import const_of
+                moves[i:i + 1] = [const_of("MOVE", args.move)]
+                t = gd.set_tms(**{key: moves})
+            for kind in ("tms", "hms"):
+                for i, x in enumerate(t[kind], 1):
+                    print(f"{kind[:2].upper()}{i:02d}  {x['name']}")
+            tut = gd.tutors()
+            if tut:
+                print("tutors: " + ", ".join(f"{x['name']} ({x['map'] or 'extra'})" for x in tut))
+            return 0
+        if args.mart_cmd == "set":
+            gd.set_mart(args.label, args.items)
+        for m in gd.marts():
+            if args.mart_cmd == "set" and m["label"] != args.label:
+                continue
+            print(f"{m['label']} ({m['map']}): " + ", ".join(gd.display(i) for i in m["items"]))
+        return 0
     if args.cmd in ("trainer", "wild", "species"):
         if not decomp:
             raise ProjectError("game data editing needs a pokeemerald-expansion source tree")

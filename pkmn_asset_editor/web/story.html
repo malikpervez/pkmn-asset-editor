@@ -62,6 +62,9 @@
   <a href="/">🎨 Graphics</a>
   <a href="/maps">🗺️ Maps</a>
   <a href="/data">🔴 Pokémon &amp; Trainers</a>
+  <a href="/world" title="all your towns and routes joined together, the town map and fly spots">🌍 World</a>
+  <a href="/release" title="make a patch of your game to share">📦 Release</a>
+  <a href="/tests" title="replay what you played after every change">🧪 Tests</a>
   <a href="/help" target="_blank">❓ Help</a>
   <input type="search" id="find" placeholder="Find a flag or variable, e.g. BADGE01" style="width:280px" title="show only events that use it">
   <label class="muted"><input type="checkbox" id="quiet"> also show maps with no story events</label>
@@ -166,5 +169,7 @@ $('#find').oninput = applyFind;
 load().catch(e => { $('#main').textContent = e.message; });
 </script>
 <script src="/history.js"></script>
+<script src="/missions.js"></script>
+<script src="/findtext.js"></script>
 </body>
 </html>

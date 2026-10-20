@@ -313,4 +313,28 @@ team=["SPECIES_MARSHTOMP lv28 ITEM_MYSTIC_WATER MOVE_MUD_SHOT"], clear_team=True
 and the needed items of the story so far (`list_story_chapters`, `story_items`); put new maps in a chapter with
 `set_map_chapter`. `playtest_team` shows the team.
 Always look at the result before telling the user an edit works.
+
+## Events from blocks, game data, the world
+
+* `build_script(map, label, kind, blocks)` writes a script (kind: npc, sign or trigger) from blocks (`say`, `ask` with `yes`/`no`,
+  `give_item`, `give_mon`, `trainer`, `wild`, `flag`, `var`, `if_flag`, `if_var`, `move`, `hide`/`show`, `heal`,
+  `sound`/`music`, `wait`, `fade`, `warp`, `custom`); texts are wrapped to fit the box. `get_blocks_script` reads one back.
+* Items, moves, TMs/HMs, tutors, shops: `pae item/move/tm/mart` (`set_item`, `set_move`, `set_tms`, `set_mart`).
+  Changing a TM's move renames its `ITEM_TM_*` item everywhere. `difficulty_report` lists levels per chapter.
+* New species: `pae new-pokemon NAME --from SPECIES_X` (`create_pokemon`) copies a species with all its files.
+* World: `pae world render` (`view_world`), `attach_map` (a new map connected both ways), `region_map`,
+  `set_fly_spot`. Rename places with `pae text replace` (`replace_text`), which also covers all dialogue.
+
+## Replay tests
+
+`pae_tests/` holds replay tests: a play-test recorded once (start, inputs, battles) with the expected end
+(screen, map, position, beaten trainers, flags, vars). After changing the game, run them:
+
+```
+pae test run                     # build, replay, exit 1 if something changed; pictures in .pae/test-results/
+pae test accept NAME             # only when the user agrees the change is intended
+```
+MCP: `save_replay_test` (after `playtest_start` + inputs), `run_replay_tests`, `accept_replay_test`.
+Run the tests after gameplay changes and tell the user which ones changed. A strong team in a test needs badges
+in expansion (`B_OBEDIENCE_MECHANICS`): add `FLAG_BADGE08_GET` to the state.
 """

@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import tempfile
 import threading
 from http import HTTPStatus
@@ -26,7 +27,16 @@ class _State:
     def __init__(self, proj):
         self.proj = proj
         self.lock = threading.RLock()
+        self.live = None
         self._sha: dict[str, tuple[float, int, str]] = {}
+
+    def live_runner(self):
+        """The thread that runs the play-test in real time for live viewers (started on first use)."""
+        if self.live is None or not self.live.is_alive():
+            from .live import LiveRunner
+            self.live = LiveRunner(self.proj.play)
+            self.live.start()
+        return self.live
 
     def modified(self, asset) -> bool:
         if self.proj.kind == "decomp":
@@ -83,6 +93,11 @@ def make_handler(state: _State):
         # -------------------------------------------------------------- GET
         def do_GET(self):
             path, q = self._q()
+            if path == "/api/play/live" and self.headers.get("Upgrade", "").lower() == "websocket":
+                if proj.kind != "decomp":
+                    return self._error("play-testing needs a source tree")
+                from .live import serve_viewer
+                return serve_viewer(self, state.live_runner())  # long-lived: not under the request lock
             try:
                 with state.lock:
                     self._get(path, q)
@@ -100,8 +115,67 @@ def make_handler(state: _State):
                 return self._send((WEB / "help.html").read_bytes(), "text/html; charset=utf-8")
             if path in ("/story", "/story.html"):
                 return self._send((WEB / "story.html").read_bytes(), "text/html; charset=utf-8")
-            if path == "/history.js":
-                return self._send((WEB / "history.js").read_bytes(), "text/javascript; charset=utf-8")
+            if path in ("/world", "/world.html"):
+                return self._send((WEB / "world.html").read_bytes(), "text/html; charset=utf-8")
+            if path.startswith("/api/world/"):
+                w = self._maps().world
+                if path == "/api/world/layout":
+                    return self._json(w.layout())
+                if path == "/api/world/area.png":
+                    area = w.layout()["areas"][int(q.get("i", 0))]
+                    im = w.render_area(area, float(q.get("scale", 0.25)))
+                    return self._send(self._maps().png_bytes(im), "image/png", headers={"Cache-Control": "max-age=30"})
+                if path == "/api/world/region":
+                    return self._json(w.region_map())
+                if path == "/api/world/region.png":
+                    im = w.region_map_image()
+                    if im is None:
+                        return self._error("no region map picture", HTTPStatus.NOT_FOUND)
+                    im = im.resize((im.width * 3, im.height * 3), Image.NEAREST)
+                    return self._send(self._maps().png_bytes(im), "image/png")
+            if path in ("/tests", "/tests.html"):
+                return self._send((WEB / "tests.html").read_bytes(), "text/html; charset=utf-8")
+            if path == "/api/tests":
+                t = self._tests()
+                return self._json({"tests": t.list(), "ci": (proj.root / ".github" / "workflows" / "pae.yml").exists(),
+                                   "recording": proj.play.started is not None and proj.play.game is not None})
+            if path == "/api/tests/image":
+                t = self._tests()
+                name, kind = q.get("name", ""), q.get("kind", "expected")
+                f = t._path(name, ".png") if kind == "expected" else t.results_dir / f"{name}.{'got' if kind == 'got' else 'diff'}.png"
+                if not f.is_file():
+                    return self._error("not found", HTTPStatus.NOT_FOUND)
+                return self._send(f.read_bytes(), "image/png", headers={"Cache-Control": "no-store"})
+            if path == "/api/tests/result":
+                t = self._tests()
+                f = t.results_dir / f"{q.get('name', '')}.json"
+                t._path(q.get("name", ""))  # checks the name
+                return self._json(json.loads(f.read_text()) if f.is_file() else None)
+            if path in ("/release", "/release.html"):
+                return self._send((WEB / "release.html").read_bytes(), "text/html; charset=utf-8")
+            if path == "/api/release":
+                rel = self._release()
+                return self._json({"settings": rel.settings(), "base": rel.base_info(), "checks": rel.checks(),
+                                   "changelog": rel.changelog(), "command": " ".join(rel.make_command())})
+            if path == "/api/release/file":
+                rel = self._release()
+                f = (rel.out_dir / q.get("name", "")).resolve()
+                if rel.out_dir.resolve() not in f.parents or not f.is_file():
+                    return self._error("not found", HTTPStatus.NOT_FOUND)
+                ctype = "text/plain; charset=utf-8" if f.suffix == ".txt" else "application/octet-stream"
+                hdr = {} if f.suffix == ".txt" else {"Content-Disposition": f'attachment; filename="{f.name}"'}
+                return self._send(f.read_bytes(), ctype, headers=hdr)
+            if path == "/api/missions":
+                from .missions import Missions
+                return self._json(Missions(proj).status())
+            if path in ("/history.js", "/findtext.js", "/blocks.js", "/live.js", "/missions.js"):
+                return self._send((WEB / path[1:]).read_bytes(), "text/javascript; charset=utf-8")
+            if path == "/api/text/search":
+                if proj.kind != "decomp":
+                    raise ProjectError("finding text needs a pokeemerald-expansion source tree")
+                flag = lambda k, d="0": q.get(k, d) in ("1", "true")  # noqa: E731
+                return self._json(proj.textsearch.search(q.get("q", ""), flag("case"), flag("word"),
+                                                         flag("places", "1"), flag("trainers", "1")))
             if path == "/api/history":
                 h = self._history()
                 ok = h.available()
@@ -214,6 +288,17 @@ def make_handler(state: _State):
                 raise ProjectError("save points need a source tree (a git repository)")
             return History(proj)
 
+        def _tests(self):
+            if proj.kind != "decomp":
+                raise ProjectError("replay tests need a source tree (they play the ROM that `make` builds)")
+            return proj.tests
+
+        def _release(self):
+            if proj.kind != "decomp":
+                raise ProjectError("releases are made from a pokeemerald-expansion source tree (ROM projects: use "
+                                   "Build ROM, which also writes patches)")
+            return proj.release
+
         def _gamedata(self):
             if proj.kind != "decomp":
                 raise ProjectError("trainers and Pokémon data need a pokeemerald-expansion source tree")
@@ -246,6 +331,22 @@ def make_handler(state: _State):
                 return self._send(buf.getvalue(), "image/png", headers={"Cache-Control": "max-age=300"})
             if path == "/api/data/trainer_battles":
                 return self._json(gd.trainer_maps(q["id"]))
+            if path == "/api/data/items":
+                return self._json(gd.items(q.get("q", "")))
+            if path == "/api/data/item":
+                return self._json(gd.get_item(q["id"]))
+            if path == "/api/data/moves":
+                return self._json(gd.moves(q.get("q", "")))
+            if path == "/api/data/move":
+                return self._json(gd.get_move(q["id"]))
+            if path == "/api/data/tms":
+                return self._json(dict(gd.tms(), tutors=gd.tutors()))
+            if path == "/api/data/marts":
+                return self._json(gd.marts())
+            if path == "/api/data/difficulty":
+                return self._json(gd.difficulty())
+            if path == "/api/data/teachable":
+                return self._json(dict(gd.teachable(q["id"]), egg_moves=gd.egg_moves(q["id"])))
             return self._error("not found", HTTPStatus.NOT_FOUND)
 
         def _data_post(self, path, q):
@@ -258,6 +359,22 @@ def make_handler(state: _State):
                                               body.get("mons") or [], int(body.get("entry") or 0)))
             if path == "/api/data/species":
                 return self._json(gd.set_species(q["id"], body))
+            if path == "/api/data/new_species":
+                import base64
+                images = {k: base64.b64decode(v.split(",", 1)[-1]) for k, v in (body.get("images") or {}).items() if v}
+                r = proj.newmon.create(body["name"], body["template"], body.get("changes") or {},
+                                       body.get("evolves_from"), images)
+                return self._json(r)
+            if path == "/api/data/new_species_check":
+                return self._json(proj.newmon.check(body.get("name", ""), body.get("template", "")))
+            if path == "/api/data/item":
+                return self._json(gd.set_item(q["id"], body))
+            if path == "/api/data/move":
+                return self._json(gd.set_move(q["id"], body))
+            if path == "/api/data/tms":
+                return self._json(gd.set_tms(body.get("tms"), body.get("hms")))
+            if path == "/api/data/mart":
+                return self._json(gd.set_mart(q["label"], body.get("items") or []))
             return self._error("not found", HTTPStatus.NOT_FOUND)
 
         def _maps(self):
@@ -285,6 +402,13 @@ def make_handler(state: _State):
                                   "behaviors": atlas.behaviors},
                     "script_file": str(script.relative_to(proj.root)),
                     "shared_layout": [n for n, x in m.maps.items() if x["layout"] == lay["id"] and n != name]})
+            if path == "/api/map/event_blocks":
+                from . import eventbuilder as eb
+                name = m.resolve(q["name"])
+                try:
+                    return self._json(eb.parse(m.read_script(name), q["label"]))
+                except DecompError:
+                    return self._json({"blocks": [], "kind": q.get("kind", "npc"), "built": False, "new": True})
             if path == "/api/map/atlas":
                 im = Image.fromarray(m.layout_atlas(m.layout_of(q["name"])).image, "RGBA")
                 return self._send(m.png_bytes(im), "image/png")
@@ -369,6 +493,22 @@ def make_handler(state: _State):
                 finally:
                     os.unlink(tmp.name)
                 return self._json(r)
+            if path in ("/api/map/event_blocks", "/api/map/event_blocks_preview"):
+                import base64
+                from . import eventbuilder as eb
+                body = json.loads(self._body() or b"{}")
+                if path == "/api/map/event_blocks":
+                    r = eb.save(m, q["name"], body["label"], body.get("kind", "npc"), body.get("blocks") or [])
+                else:
+                    r = {"script": eb.generate(body.get("label") or "Preview", body.get("kind", "npc"),
+                                               body.get("blocks") or [], proj.textbox.wrap)}
+                tb = proj.textbox
+                shots = []
+                for t in tb.texts(r["script"]):
+                    buf = io.BytesIO()
+                    tb.render(t, scale=1).save(buf, "PNG")
+                    shots.append(dict(t.as_dict(), image="data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()))
+                return self._json(dict(r, texts=shots))
             if path == "/api/map/text_preview":
                 import base64
                 body = json.loads(self._body() or b"{}")
@@ -476,7 +616,52 @@ def make_handler(state: _State):
                 return self._json({"ok": True})
             return self._error("not found", HTTPStatus.NOT_FOUND)
 
+        def _tests_post(self, path):
+            from .playtest import PlaytestError
+            from .replay import write_workflow
+            t = self._tests()
+            body = json.loads(self._body() or b"{}")
+            words = lambda v: [x for x in re.split(r"[\s,]+", v) if x] if isinstance(v, str) else list(v or [])
+            try:
+                if path == "/api/tests/record":
+                    with proj.play.lock:
+                        test = t.record(proj.play, body.get("name", "").strip(), body.get("note", ""),
+                                        words(body.get("flags")), words(body.get("vars")), words(body.get("trainers")),
+                                        float(body.get("threshold") or 0.01), bool(body.get("overwrite")))
+                    return self._json({"ok": True, "test": {k: test[k] for k in ("name", "expect", "watch")}})
+                if path == "/api/tests/run":
+                    build = None
+                    if body.get("build", True):
+                        rep = proj.build_rom()
+                        build = {"returncode": rep.returncode, "seconds": round(rep.seconds, 1),
+                                 "output": "\n".join(rep.output.rstrip().splitlines()[-40:])}
+                        if rep.returncode != 0:
+                            return self._json({"ok": False, "build": build, "error": "make failed"})
+                    return self._json({"ok": True, "build": build, "results": t.run_all(body.get("names") or None)})
+                if path == "/api/tests/accept":
+                    t.accept(body["name"])
+                    return self._json({"ok": True})
+                if path == "/api/tests/watch":
+                    t.set_watch(body["name"], words(body.get("flags")), words(body.get("vars")),
+                                words(body.get("trainers")), body.get("threshold"))
+                    return self._json({"ok": True})
+                if path == "/api/tests/delete":
+                    t.delete(body["name"])
+                    return self._json({"ok": True})
+                if path == "/api/tests/ci":
+                    p = write_workflow(proj.root, bool(body.get("force")))
+                    return self._json({"ok": True, "path": str(p.relative_to(proj.root))})
+            except PlaytestError as e:
+                return self._json({"ok": False, "error": str(e)})
+            return self._error("not found", HTTPStatus.NOT_FOUND)
+
         def _play_post(self, path, q):
+            if proj.kind != "decomp":
+                raise ProjectError("play-testing needs a source tree")
+            with proj.play.lock:  # between two frames of live play
+                return self._play_post_locked(path, q)
+
+        def _play_post_locked(self, path, q):
             import base64
             from .playtest import PlaytestError
             if proj.kind != "decomp":
@@ -556,6 +741,46 @@ def make_handler(state: _State):
                 return self._play_post(path, q)
             if path.startswith("/api/data/"):
                 return self._data_post(path, q)
+            if path.startswith("/api/world/"):
+                w = self._maps().world
+                body = json.loads(self._body() or b"{}")
+                if path == "/api/world/attach":
+                    return self._json(w.attach_map(body["existing"], body["side"], body["template"], body["name"],
+                                                   int(body.get("offset") or 0)))
+                if path == "/api/world/region_grid":
+                    return self._json(w.set_region_grid(body["grid"]))
+                if path == "/api/world/section_name":
+                    return self._json(w.rename_section(body["section"], body["name"]))
+                if path == "/api/world/section_add":
+                    return self._json(w.add_section(body["name"]))
+                if path == "/api/world/fly":
+                    return self._json(w.set_fly_spot(body["section"], body["map"], int(body["x"]), int(body["y"]),
+                                                     body.get("flag")))
+            if path.startswith("/api/tests/"):
+                return self._tests_post(path)
+            if path in ("/api/missions/reset", "/api/missions/skip"):
+                from .missions import Missions
+                body = json.loads(self._body() or b"{}")
+                m = Missions(proj)
+                return self._json(m.reset() if path.endswith("reset") else m.skip(body["id"], bool(body.get("skip", True))))
+            if path.startswith("/api/release/"):
+                rel = self._release()
+                if path == "/api/release/base":
+                    rel.upload_base(self._body())
+                    return self._json({"base": rel.base_info(), "checks": rel.checks()})
+                body = json.loads(self._body() or b"{}")
+                if path == "/api/release/settings":
+                    rel.save_settings(body)
+                    return self._json({"settings": rel.settings(), "base": rel.base_info(), "checks": rel.checks()})
+                if path == "/api/release/build":
+                    return self._json(rel.build(notes=body.get("notes"), force=bool(body.get("force")),
+                                                formats=("bps", "ups") if body.get("ups") else ("bps",)))
+            if path == "/api/text/replace":
+                body = json.loads(self._body() or b"{}")
+                return self._json(proj.textsearch.replace(
+                    body["query"], body["replacement"], bool(body.get("match_case")), bool(body.get("whole_word")),
+                    body.get("only"), bool(body.get("keep_case", True)), bool(body.get("dry_run")),
+                    bool(body.get("places", True)), bool(body.get("trainers", True))))
             if path == "/api/history/save":
                 body = json.loads(self._body() or b"{}")
                 return self._json(self._history().save(body.get("message", "")))

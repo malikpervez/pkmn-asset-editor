@@ -143,7 +143,7 @@ class Project:
                      "version": rom.info.version, "family": rom.info.family},
             "rom": {"file": "original.gba", "sha1": sha1(rom.data), "size": len(rom.data)},
             "build": {"output": "build/rom.gba", "free_space_start": None, "allow_expand": True,
-                      "patches": ["ups", "ips"]},
+                      "patches": ["bps", "ups", "ips"]},
             "notes": disc.notes + warnings,
         }
         (root / PROJECT_FILE).write_text(json.dumps(config, indent=2))
@@ -585,7 +585,9 @@ class Project:
         report.output = str(target)
         for kind in patches if patches is not None else cfg.get("patches", []):
             try:
-                if kind == "ups":
+                if kind == "bps":
+                    data = patch.make_bps(bytes(rom.data), bytes(out))
+                elif kind == "ups":
                     data = patch.make_ups(bytes(rom.data), bytes(out))
                 elif kind == "ips":
                     data = patch.make_ips(bytes(rom.data), bytes(out))
