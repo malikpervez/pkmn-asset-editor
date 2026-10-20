@@ -22,6 +22,22 @@ from pathlib import Path
 
 from .decomp import DecompError, strip_comments
 
+# Games that name maps with a suffix (PalletTown_Frlg, PalletTown_PlayersHouse_1F_Frlg; GoldenrodCity_hns...)
+SUFFIXES = ("_Frlg", "_hns", "_Hns", "_frlg")
+
+
+def covers(chapter_map: str, map_name: str) -> bool:
+    """A chapter's map covers itself and its sub-maps: RustboroCity covers RustboroCity_Gym, and PalletTown_Frlg
+    covers PalletTown_PlayersHouse_1F_Frlg (the same suffix, at the end)."""
+    if map_name == chapter_map or map_name.startswith(chapter_map + "_"):
+        return True
+    for s in SUFFIXES:
+        if chapter_map.endswith(s) and map_name.endswith(s):
+            base, name = chapter_map[: -len(s)], map_name[: -len(s)]
+            return name == base or name.startswith(base + "_")
+    return False
+
+
 # Emerald's story, in the order a player meets it. Each entry's maps also cover their sub-maps (name + "_...").
 EMERALD_CHAPTERS = [
     {"name": "Littleroot Town & Route 101 (get your first Pokémon)", "maps": ["InsideOfTruck", "LittlerootTown", "Route101"]},
@@ -118,7 +134,7 @@ class Story:
             for m in c["maps"]:
                 if map_name != m and map_name.endswith("_Frlg") and not m.endswith("_Frlg"):
                     continue  # Kanto's VictoryRoad_1F_Frlg is not part of Hoenn's VictoryRoad
-                if (map_name == m or map_name.startswith(m + "_")) and len(m) > best_len:
+                if covers(m, map_name) and len(m) > best_len:
                     best, best_len = i, len(m)
         return best
 

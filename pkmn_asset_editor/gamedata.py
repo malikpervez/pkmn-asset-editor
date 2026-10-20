@@ -352,7 +352,9 @@ class GameData:
         maps_dir = self.root / "data" / "maps"
         for f in sorted(maps_dir.glob("*/scripts.inc")):
             text = f.read_text(errors="replace")
-            for m in re.finditer(rf"\btrainerbattle\w*\s+{re.escape(tid)}\b", text):
+            from .playtest import game_trainer
+            ids = "|".join(re.escape(x) for x in {tid, game_trainer(self.root, tid)})
+            for m in re.finditer(rf"\btrainerbattle\w*\s+(?:{ids})\b", text):
                 label = None
                 for lm in re.finditer(r"^(\w+)::?", text[:m.start()], re.M):
                     label = lm.group(1)
@@ -1354,9 +1356,13 @@ class GameData:
             text = f.read_text(errors="replace")
             for line in re.findall(r"^\s*trainerbattle\w*\s+([^\n]*)", text, re.M):
                 for tid in re.findall(r"\bTRAINER_\w+", line):
-                    maps = out.setdefault(tid, [])
-                    if f.parent.name not in maps:
-                        maps.append(f.parent.name)
+                    # a second region's trainers are battled under their game ID (TRAINER_JOHTO_AL_HNS) but written
+                    # in their .party file as TRAINER_AL_HNS (see playtest.game_trainer)
+                    names = [tid] + (["TRAINER_" + tid[len("TRAINER_JOHTO_"):]] if tid.startswith("TRAINER_JOHTO_") else [])
+                    for n in names:
+                        maps = out.setdefault(n, [])
+                        if f.parent.name not in maps:
+                            maps.append(f.parent.name)
         return out
 
     @staticmethod
