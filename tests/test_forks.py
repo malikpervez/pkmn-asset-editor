@@ -114,3 +114,26 @@ def test_removed_layouts_and_maps_are_skipped(tmp_path):
     m = DecompProject(root).maps
     assert list(m.maps) == ["Town"] and m.maps["Town"]["region"] == "REGION_JOHTO"
     assert list(m.layouts) == ["LAYOUT_TOWN"]
+
+
+def test_chapters_cover_suffix_named_sub_maps():
+    from pkmn_asset_editor.story import covers
+    assert covers("PalletTown_Frlg", "PalletTown_PlayersHouse_1F_Frlg")
+    assert covers("GoldenrodCity_hns", "GoldenrodCity_GameCorner_hns")
+    assert covers("RustboroCity", "RustboroCity_Gym")
+    assert not covers("PalletTown_Frlg", "PalletTown_hns")
+    assert not covers("Route2_Frlg", "Route22_Frlg")
+
+
+def test_difficulty_finds_second_region_trainers(tmp_path):
+    from pkmn_asset_editor.gamedata import GameData
+
+    class G(GameData):
+        def __init__(self, root):
+            self.root = root
+
+    d = tmp_path / "data" / "maps" / "AzaleaTown_Gym_hns"
+    d.mkdir(parents=True)
+    (d / "scripts.inc").write_text("X::\n\ttrainerbattle_single TRAINER_JOHTO_AL_HNS, A, B\n")
+    idx = G(tmp_path).trainer_map_index()
+    assert idx["TRAINER_AL_HNS"] == ["AzaleaTown_Gym_hns"]
