@@ -56,11 +56,52 @@ TOOLS = [
     ("set_palette", "Overwrite a palette. colors: list of '#rrggbb' strings or [r,g,b] (must match the palette size).",
      _schema({"id": S, "colors": {"type": "array"}}, ["id", "colors"])),
     ("revert_asset", "Restore an asset to the original ROM contents.", _schema({"id": S}, ["id"])),
+    # ---- maps, events and scripts (source trees)
+    ("list_maps", "List maps (name, id, group, layout). Optional text query.", _schema({"query": S})),
+    ("view_map", "Image of a map with its events drawn (NPC sprites; W=warp, T=trigger, S=sign + index). "
+     "One block = 16px.", _schema({"name": S, "scale": I, "events": B}, ["name"])),
+    ("get_map", "A map's map.json (header, connections, object/warp/coord/bg events) plus layout size and tilesets.",
+     _schema({"name": S}, ["name"])),
+    ("view_metatiles", "Image of every metatile this map can use, 8 per row, rows labelled with the hex id of "
+     "their first metatile. Use the ids with set_blocks.", _schema({"name": S, "scale": I}, ["name"])),
+    ("get_blocks", "Read blocks as text rows. Each block is 'mmmCE': metatile id (3 hex digits), collision "
+     "(0 passable, 1 blocked), elevation (hex). Optional region.", _schema({"name": S, "x": I, "y": I, "w": I, "h": I},
+                                                                            ["name"])),
+    ("set_blocks", "Write blocks. rows: strings of space-separated cells, 'mmm' (metatile only) or 'mmmCE' "
+     "(metatile+collision+elevation); '.' leaves a block unchanged. Placed with the top-left at x,y.",
+     _schema({"name": S, "x": I, "y": I, "rows": {"type": "array", "items": S}}, ["name", "rows"])),
+    ("copy_blocks", "Copy a rectangle of blocks (e.g. a house) from one map to another (or the same) map.",
+     _schema({"source": S, "x": I, "y": I, "w": I, "h": I, "dest": S, "dx": I, "dy": I},
+             ["source", "x", "y", "w", "h", "dest", "dx", "dy"])),
+    ("edit_map", "Change a map: set header fields (music, weather, map_type, …), and add/update/delete events. "
+     "events: [{op:'add'|'update'|'delete', kind:'object_events'|'warp_events'|'coord_events'|'bg_events', "
+     "index (update/delete), fields:{...}}]. Returns validation warnings.",
+     _schema({"name": S, "header": {"type": "object"}, "events": {"type": "array", "items": {"type": "object"}}},
+             ["name"])),
+    ("get_script", "The map's scripts file (scripts.inc or scripts.pory) as text.", _schema({"name": S}, ["name"])),
+    ("write_script", "Replace the map's scripts file. Keep existing labels that events or other maps use.",
+     _schema({"name": S, "text": S}, ["name", "text"])),
+    ("new_script", "Append a ready-made script (npc / sign / trigger) that shows a message; returns its label "
+     "to put in an event's 'script' field.", _schema({"name": S, "kind": S, "text": S}, ["name"])),
+    ("duplicate_map", "Create a new map as a copy of an existing one (e.g. copy a house interior to add a new "
+     "house). Scripts and local ids are renamed; copy_layout (default true) gives it its own blocks.",
+     _schema({"source": S, "new_name": S, "group": S, "copy_layout": B, "map_id": S}, ["source", "new_name"])),
+    ("link_warps", "Connect warp `warp` of `map` with warp `dest_warp` of `dest_map` in both directions.",
+     _schema({"map": S, "warp": I, "dest_map": S, "dest_warp": I}, ["map", "warp", "dest_map", "dest_warp"])),
+    ("resize_map", "Change a map layout's width/height (new area filled with the border block).",
+     _schema({"name": S, "width": I, "height": I}, ["name", "width", "height"])),
+    ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
+     "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
     ("status", "List assets that were edited.", _schema({})),
     ("validate", "Check every edit (sizes, colours, conflicts, tile limits) without writing a ROM.", _schema({})),
     ("build_rom", "ROM project: write the edited ROM and UPS/IPS patches. Source tree: check the edits, then run "
      "`make` and return its output.", _schema({"output": S})),
 ]
+
+
+MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks", "set_blocks", "copy_blocks", "edit_map",
+             "get_script", "write_script", "new_script", "duplicate_map", "link_warps", "resize_map",
+             "find_constants"}
 
 
 class Server:
@@ -165,6 +206,11 @@ class Server:
                 else:
                     cols.append(tuple(int(v) for v in c[:3]))
             return txt({"ok": True, "recoloured": proj.set_palette(proj.get(args["id"]).id, cols)})
+        if name in MAP_TOOLS:
+            m = getattr(proj, "maps", None)
+            if m is None:
+                raise ProjectError("map tools need a pokeemerald-style source tree")
+            return self.map_call(m, name, args, txt)
         if name == "revert_asset":
             proj.revert(proj.get(args["id"]))
             return txt("reverted")
@@ -174,6 +220,82 @@ class Server:
             return txt(proj.build(dry_run=True).to_dict())
         if name == "build_rom":
             return txt(proj.build(args.get("output")).to_dict())
+        raise ProjectError(f"unknown tool {name}")
+
+    def map_call(self, m, name: str, args: dict, txt) -> list[dict]:
+        if name == "list_maps":
+            q = (args.get("query") or "").lower()
+            return txt([x for x in m.list_maps() if not q or q in (x["name"] + x["id"]).lower()])
+        if name == "view_map":
+            scale = max(1, min(int(args.get("scale") or 1), 4))
+            im = m.render(args["name"], events=args.get("events", True), scale=scale)
+            lay = m.layout_of(args["name"])
+            return [self._png(im), *txt(f"{m.resolve(args['name'])}: {lay['width']}x{lay['height']} blocks, "
+                                        f"{16 * scale}px per block")]
+        if name == "get_map":
+            lay = m.layout_of(args["name"])
+            return txt({"map": m.get_map(args["name"]),
+                        "layout": {k: lay.get(k) for k in ("id", "width", "height", "primary_tileset",
+                                                           "secondary_tileset", "layout_version")},
+                        "scripts_file": str(m.script_path(args["name"]).relative_to(m.root))})
+        if name == "view_metatiles":
+            return [self._png(m.metatile_sheet(args["name"], int(args.get("scale") or 2))),
+                    *txt("metatile id = row label + column (0-7)")]
+        if name == "get_blocks":
+            return txt(m.blocks_text(args["name"], args.get("x", 0), args.get("y", 0), args.get("w"), args.get("h")))
+        if name == "set_blocks":
+            n = m.apply_blocks(args["name"], args.get("x", 0), args.get("y", 0), args["rows"])
+            return txt(f"updated {n} block(s)")
+        if name == "copy_blocks":
+            notes = m.copy_blocks(args["source"], args["x"], args["y"], args["w"], args["h"], args["dest"],
+                                  args["dx"], args["dy"])
+            return txt({"ok": True, "notes": notes})
+        if name == "edit_map":
+            data = m.get_map(args["name"])
+            for k, v in (args.get("header") or {}).items():
+                if k in ("id", "name") or isinstance(data.get(k), list):
+                    raise ProjectError(f"header field {k} cannot be changed here")
+                data[k] = v
+            from .maps import DEFAULT_EVENTS
+            for op in args.get("events") or []:
+                kind = op.get("kind")
+                if kind not in DEFAULT_EVENTS:
+                    raise ProjectError(f"unknown event kind {kind}")
+                lst = data.setdefault(kind, [])
+                if op.get("op") == "add":
+                    lst.append({**DEFAULT_EVENTS[kind], **(op.get("fields") or {})})
+                elif op.get("op") in ("update", "delete"):
+                    i = int(op.get("index", -1))
+                    if not 0 <= i < len(lst):
+                        raise ProjectError(f"{kind} has no index {i}")
+                    if op["op"] == "update":
+                        lst[i].update(op.get("fields") or {})
+                    else:
+                        lst.pop(i)
+                else:
+                    raise ProjectError("op must be add, update or delete")
+            return txt({"ok": True, "warnings": m.save_map(args["name"], data),
+                        "counts": {k: len(data.get(k, [])) for k in DEFAULT_EVENTS}})
+        if name == "get_script":
+            return txt(m.read_script(args["name"]))
+        if name == "write_script":
+            m.write_script(args["name"], args["text"])
+            return txt("saved")
+        if name == "new_script":
+            return txt({"label": m.new_script(args["name"], args.get("kind", "npc"), args.get("text", "Hello!"))})
+        if name == "duplicate_map":
+            notes = m.duplicate_map(args["source"], args["new_name"], args.get("group"), args.get("copy_layout", True),
+                                    args.get("map_id"))
+            return txt({"ok": True, "map": args["new_name"], "id": m.get_map(args["new_name"])["id"], "notes": notes})
+        if name == "link_warps":
+            m.link_warps(args["map"], int(args["warp"]), args["dest_map"], int(args["dest_warp"]))
+            return txt("linked")
+        if name == "resize_map":
+            return txt({"ok": True, "notes": m.resize(args["name"], int(args["width"]), int(args["height"]))})
+        if name == "find_constants":
+            q = (args.get("query") or "").upper()
+            hits = [c for c in m.constants(args["prefix"]) if q in c]
+            return txt({"total": len(hits), "constants": hits[:300]})
         raise ProjectError(f"unknown tool {name}")
 
     # ------------------------------------------------------------------ protocol

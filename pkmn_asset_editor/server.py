@@ -12,6 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from PIL import Image
+
 from .decomp import DecompError
 from .project import ProjectError, file_sha1
 
@@ -90,6 +92,10 @@ def make_handler(state: _State):
         def _get(self, path, q):
             if path in ("/", "/index.html"):
                 return self._send((WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
+            if path in ("/maps", "/maps.html"):
+                return self._send((WEB / "maps.html").read_bytes(), "text/html; charset=utf-8")
+            if path.startswith("/api/map") or path in ("/api/constants", "/api/labels"):
+                return self._map_get(path, q)
             if path == "/api/summary":
                 return self._json({"game": proj.config["game"], "categories": proj.summary(),
                                    "notes": proj.config.get("notes", []), "mode": proj.kind})
@@ -152,7 +158,97 @@ def make_handler(state: _State):
             except Exception as e:  # noqa: BLE001
                 self._error(f"{type(e).__name__}: {e}", HTTPStatus.INTERNAL_SERVER_ERROR)
 
+        def _maps(self):
+            m = getattr(proj, "maps", None)
+            if m is None:
+                raise ProjectError("map editing needs a pokeemerald-style source tree with data/maps")
+            return m
+
+        def _map_get(self, path, q):
+            m = self._maps()
+            if path == "/api/maps":
+                return self._json({"groups": m.group_order, "maps": m.list_maps()})
+            if path == "/api/map":
+                name = m.resolve(q["name"])
+                data = m.get_map(name)
+                lay = m.layout_of(name)
+                atlas = m.layout_atlas(lay)
+                script = m.script_path(name)
+                return self._json({
+                    "name": name, "group": m.maps[name]["group"], "data": data,
+                    "layout": {k: lay.get(k) for k in ("id", "width", "height", "primary_tileset", "secondary_tileset",
+                                                         "layout_version", "blockdata_filepath")},
+                    "blocks": m.read_blocks(lay).ravel().tolist(),
+                    "metatiles": {"count": atlas.count, "num_primary": atlas.num_primary,
+                                  "behaviors": atlas.behaviors},
+                    "script_file": str(script.relative_to(proj.root)),
+                    "shared_layout": [n for n, x in m.maps.items() if x["layout"] == lay["id"] and n != name]})
+            if path == "/api/map/atlas":
+                im = Image.fromarray(m.layout_atlas(m.layout_of(q["name"])).image, "RGBA")
+                return self._send(m.png_bytes(im), "image/png")
+            if path == "/api/map/render":
+                im = m.render(q["name"], events=q.get("events", "1") == "1", scale=int(q.get("scale", 1)))
+                return self._send(m.png_bytes(im), "image/png")
+            if path == "/api/map/sprite":
+                spr = m.object_sprite(q.get("gfx", ""))
+                if spr is None:
+                    return self._error("no sprite", HTTPStatus.NOT_FOUND)
+                return self._send(m.png_bytes(spr), "image/png")
+            if path == "/api/map/script":
+                name = m.resolve(q["name"])
+                return self._json({"file": str(m.script_path(name).relative_to(proj.root)), "text": m.read_script(name)})
+            if path == "/api/constants":
+                return self._json(m.constants(q.get("prefix", "")))
+            if path == "/api/labels":
+                needle = (q.get("q") or "").lower()
+                labels = m.labels()
+                hits = [k for k in labels if needle in k.lower()][:300]
+                return self._json([{"label": k, "file": labels[k]} for k in sorted(hits)])
+            return self._error("not found", HTTPStatus.NOT_FOUND)
+
+        def _map_post(self, path, q):
+            m = self._maps()
+            body = json.loads(self._body() or b"{}")
+            if path == "/api/map/blocks":
+                import numpy as np
+                name = m.resolve(q["name"])
+                lay = m.layout_of(name)
+                arr = np.array(body["blocks"], dtype=np.int32).reshape(lay["height"], lay["width"])
+                m.write_blocks(name, arr)
+                return self._json({"ok": True})
+            if path == "/api/map/save":
+                return self._json({"ok": True, "warnings": m.save_map(q["name"], body)})
+            if path == "/api/map/resize":
+                return self._json({"ok": True, "notes": m.resize(q["name"], int(body["width"]), int(body["height"]))})
+            if path == "/api/map/script":
+                m.write_script(q["name"], body["text"])
+                return self._json({"ok": True})
+            if path == "/api/map/new_script":
+                return self._json({"label": m.new_script(q["name"], body.get("kind", "npc"), body.get("text", "Hello!"))})
+            if path == "/api/map/duplicate":
+                notes = m.duplicate_map(body["source"], body["new_name"], body.get("group") or None,
+                                        bool(body.get("copy_layout", True)), body.get("map_id") or None)
+                return self._json({"ok": True, "name": body["new_name"], "id": m.get_map(body["new_name"])["id"],
+                                   "notes": notes})
+            if path == "/api/map/link_warp":
+                m.link_warps(body["map"], int(body["warp"]), body["dest_map"], int(body["dest_warp"]))
+                return self._json({"ok": True})
+            if path == "/api/map/revert":
+                name = m.resolve(q["name"])
+                lay = m.layout_of(name)
+                files = [f"data/maps/{name}/map.json", str(m.script_path(name).relative_to(proj.root)),
+                         lay["blockdata_filepath"], lay["border_filepath"], "data/layouts/layouts.json"]
+                changed = proj.changed_files()
+                for f in files:
+                    if f in changed:
+                        proj.revert_file(f)
+                m.reload()
+                return self._json({"ok": True})
+            return self._error("not found", HTTPStatus.NOT_FOUND)
+
         def _post(self, path, q):
+            if path.startswith("/api/map"):
+                return self._map_post(path, q)
             if path == "/api/upload":
                 a = proj.get(q["id"])
                 with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
@@ -169,6 +265,9 @@ def make_handler(state: _State):
             if path == "/api/revert":
                 proj.revert(proj.get(q["id"]))
                 return self._json({"ok": True})
+            if path == "/api/check":
+                rep = proj.check() if proj.kind == "decomp" else proj.build(dry_run=True)
+                return self._json(rep.to_dict())
             if path == "/api/build":
                 rep = proj.build(dry_run=q.get("dry") == "1")
                 return self._json(rep.to_dict())

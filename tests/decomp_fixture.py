@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -122,7 +123,8 @@ def build(root: Path) -> Path:
         "    overworld_ascending_frames(gObjectEventPic_HeroNormal, 2, 4),\n};\n")
     (root / "src/data/object_events/object_event_graphics_info.h").write_text(
         "const struct ObjectEventGraphicsInfo gObjectEventGraphicsInfo_HeroNormal = {\n"
-        "    .paletteTag = OBJ_EVENT_PAL_TAG_HERO,\n    .images = sPicTable_HeroNormal,\n};\n")
+        "    .paletteTag = OBJ_EVENT_PAL_TAG_HERO,\n    .width = 16,\n    .height = 32,\n"
+        "    .images = sPicTable_HeroNormal,\n};\n")
     (root / "src/event_object_movement.c").write_text("    {gObjectEventPal_Hero, OBJ_EVENT_PAL_TAG_HERO},\n")
 
     # tilesets: primary + secondary paired by a layout
@@ -146,11 +148,74 @@ def build(root: Path) -> Path:
         ts_lines += [f'    INCGFX_U16("data/tilesets/{kind}/{name}/palettes/{b:02d}.pal", ".gbapal"),' for b in range(16)]
         ts_lines.append("};")
     (root / "src/data/tilesets/graphics.h").write_text("\n".join(ts_lines) + "\n")
-    (root / "src/data/tilesets/headers.h").write_text(
-        "const struct Tileset gTileset_General =\n{\n    .tiles = gTilesetTiles_General,\n};\n"
-        "const struct Tileset gTileset_Town =\n{\n    .tiles = gTilesetTiles_Town,\n};\n")
-    (root / "data/layouts/layouts.json").write_text(
-        '{"layouts": [{"primary_tileset": "gTileset_General", "secondary_tileset": "gTileset_Town"}]}')
+    headers, mt = [], []
+    for kind, name, sym in (("primary", "general", "General"), ("secondary", "town", "Town")):
+        d = f"data/tilesets/{kind}/{name}"
+        (root / d / "metatile_attributes.bin").write_bytes(bytes(2 * 32))
+        headers.append(f"const struct Tileset gTileset_{sym} =\n{{\n    .isCompressed = TRUE,\n"
+                       f"    .isSecondary = {'TRUE' if kind == 'secondary' else 'FALSE'},\n"
+                       f"    .tiles = gTilesetTiles_{sym},\n    .palettes = gTilesetPalettes_{sym},\n"
+                       f"    .metatiles = gMetatiles_{sym},\n    .metatileAttributes = gMetatileAttributes_{sym},\n}};\n")
+        mt.append(f'const u16 gMetatiles_{sym}[] = INCBIN_U16("{d}/metatiles.bin");')
+        mt.append(f'const u16 gMetatileAttributes_{sym}[] = INCBIN_U16("{d}/metatile_attributes.bin");')
+    (root / "src/data/tilesets/headers.h").write_text("".join(headers))
+    (root / "src/data/tilesets/metatiles.h").write_text("\n".join(mt) + "\n")
+
+    # maps: a town (using a secondary metatile) and a house interior
+    (root / "data/maps/Town").mkdir(parents=True)
+    (root / "data/maps/Town_House1").mkdir(parents=True)
+    for lname, w, h in (("Town", 10, 8), ("House1", 6, 5)):
+        ld = root / "data/layouts" / lname
+        ld.mkdir(parents=True)
+        blocks = np.full((h, w), 1 | (3 << 12), dtype="<u2")
+        blocks[0, :] = 2 | (1 << 10) | (3 << 12)
+        blocks[2, 3] = 512 + 5 | (3 << 12)
+        (ld / "map.bin").write_bytes(blocks.tobytes())
+        (ld / "border.bin").write_bytes(np.full(4, 1, dtype="<u2").tobytes())
+    layouts = {"layouts_table_label": "gMapLayouts", "layouts": [
+        {"id": "LAYOUT_TOWN", "name": "Town_Layout", "width": 10, "height": 8, "primary_tileset": "gTileset_General",
+         "secondary_tileset": "gTileset_Town", "border_filepath": "data/layouts/Town/border.bin",
+         "blockdata_filepath": "data/layouts/Town/map.bin", "layout_version": "emerald"},
+        {"id": "LAYOUT_HOUSE1", "name": "House1_Layout", "width": 6, "height": 5, "primary_tileset": "gTileset_General",
+         "secondary_tileset": "gTileset_Town", "border_filepath": "data/layouts/House1/border.bin",
+         "blockdata_filepath": "data/layouts/House1/map.bin", "layout_version": "emerald"}]}
+    (root / "data/layouts/layouts.json").write_text(json.dumps(layouts, indent=2) + "\n")
+    (root / "data/maps/map_groups.json").write_text(json.dumps(
+        {"group_order": ["gMapGroup_Towns", "gMapGroup_Indoor"], "gMapGroup_Towns": ["Town"],
+         "gMapGroup_Indoor": ["Town_House1"]}, indent=2) + "\n")
+    town = {"id": "MAP_TOWN", "name": "Town", "layout": "LAYOUT_TOWN", "music": "MUS_TOWN", "weather": "WEATHER_SUNNY",
+            "map_type": "MAP_TYPE_TOWN", "allow_cycling": True, "connections": [],
+            "object_events": [{"local_id": "LOCALID_TOWN_HERO", "graphics_id": "OBJ_EVENT_GFX_HERO", "x": 4, "y": 4,
+                               "elevation": 3, "movement_type": "MOVEMENT_TYPE_FACE_DOWN", "movement_range_x": 0,
+                               "movement_range_y": 0, "trainer_type": "TRAINER_TYPE_NONE",
+                               "trainer_sight_or_berry_tree_id": "0", "script": "Town_EventScript_Hero",
+                               "flag": "FLAG_HIDE_HERO"}],
+            "warp_events": [{"x": 2, "y": 2, "elevation": 0, "dest_map": "MAP_TOWN_HOUSE1", "dest_warp_id": "0"}],
+            "coord_events": [], "bg_events": []}
+    house = {"id": "MAP_TOWN_HOUSE1", "name": "Town_House1", "layout": "LAYOUT_HOUSE1", "music": "MUS_TOWN",
+             "weather": "WEATHER_NONE", "map_type": "MAP_TYPE_INDOOR", "allow_cycling": False, "connections": None,
+             "object_events": [{"local_id": "LOCALID_HOUSE_MOM", "graphics_id": "OBJ_EVENT_GFX_HERO", "x": 2, "y": 1,
+                                "elevation": 3, "movement_type": "MOVEMENT_TYPE_FACE_DOWN", "movement_range_x": 0,
+                                "movement_range_y": 0, "trainer_type": "TRAINER_TYPE_NONE",
+                                "trainer_sight_or_berry_tree_id": "0", "script": "Town_House1_EventScript_Mom",
+                                "flag": "0"}],
+             "warp_events": [{"x": 2, "y": 4, "elevation": 0, "dest_map": "MAP_TOWN", "dest_warp_id": "0"}],
+             "coord_events": [], "bg_events": []}
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town, indent=2) + "\n")
+    (root / "data/maps/Town_House1/map.json").write_text(json.dumps(house, indent=2) + "\n")
+    (root / "data/maps/Town/scripts.inc").write_text(
+        "Town_MapScripts::\n\t.byte 0\n\nTown_EventScript_Hero::\n\tmsgbox Town_Text_Hero, MSGBOX_NPC\n\tend\n\n"
+        "Town_Text_Hero:\n\t.string \"Hi!$\"\n")
+    (root / "data/maps/Town_House1/scripts.inc").write_text(
+        "Town_House1_MapScripts::\n\t.byte 0\n\nTown_House1_EventScript_Mom::\n\tapplymovement LOCALID_HOUSE_MOM, "
+        "Common_Movement_FacePlayer\n\tmsgbox Town_House1_Text_Mom, MSGBOX_NPC\n\tend\n\n"
+        "Town_House1_Text_Mom:\n\t.string \"Welcome home!$\"\n")
+    (root / "data/scripts").mkdir(parents=True)
+    (root / "data/scripts/common.inc").write_text("Common_Movement_FacePlayer::\n\tstep_end\n")
+    (root / "include/constants").mkdir(parents=True, exist_ok=True)
+    (root / "include/constants/flags.h").write_text("#define FLAG_HIDE_HERO 0x20\n#define FLAG_TEST 0x21\n")
+    (root / "src/data/object_events/object_event_graphics_info_pointers.h").write_text(
+        "    [OBJ_EVENT_GFX_HERO] = &gObjectEventGraphicsInfo_HeroNormal,\n")
 
     for cmd in (["git", "init", "-q"], ["git", "add", "-A"],
                 ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "init"]):

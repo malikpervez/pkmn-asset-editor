@@ -628,6 +628,39 @@ class DecompProject:
                                      {"tiles_file": tiles[0].file, "map_file": m.file, "virtual": True,
                                       "compressed_map": ".smolTM" in m.fmt or ".lz" in m.fmt}, [], "", path=tiles[0].file)
 
+    @property
+    def maps(self):
+        """Map/event/script editor for this tree (None if the tree has no map data)."""
+        if not hasattr(self, "_maps"):
+            from .maps import MapEditor
+            try:
+                self._maps = MapEditor(self)
+            except (DecompError, OSError, ValueError, KeyError):
+                self._maps = None
+        return self._maps
+
+    def revert_file(self, rel: str) -> None:
+        """Restore one file (any file under the tracked folders), or delete it if it is new."""
+        state = self.changed_files().get(rel)
+        if state == "new":
+            (self.root / rel).unlink(missing_ok=True)
+            d = (self.root / rel).parent
+            while d != self.root and d.exists() and not any(d.iterdir()):
+                d.rmdir()
+                d = d.parent
+        elif self._run_git("rev-parse", "--is-inside-work-tree") is not None:
+            r = self._run_git("checkout", "HEAD", "--", rel)
+            if r is None or r.returncode != 0:
+                raise DecompError(f"could not restore {rel}")
+        else:
+            b = self.state_dir / "originals" / rel
+            if not b.exists():
+                raise DecompError(f"no original copy of {rel}")
+            (self.root / rel).write_bytes(b.read_bytes())
+        self._changed = None
+        if hasattr(self, "_maps") and self._maps is not None and rel.startswith(("data/maps", "data/layouts")):
+            self._maps.reload()
+
     # ------------------------------------------------------------------ basic API (shared with the ROM project)
     @property
     def title(self) -> str:
@@ -696,7 +729,8 @@ class DecompProject:
         return out
 
     def _changed_files(self) -> dict[str, str]:
-        r = self._run_git("status", "--porcelain", "-uall", "--", "graphics", "data/tilesets")
+        r = self._run_git("status", "--porcelain", "-uall", "--", "graphics", "data/tilesets", "data/maps",
+                          "data/layouts")
         out = {}
         if r is not None and r.returncode == 0:
             for line in r.stdout.decode(errors="replace").splitlines():
@@ -745,18 +779,10 @@ class DecompProject:
         return [{"id": f, "state": s, "file": f} for f, s in sorted(changed.items())]
 
     def revert(self, asset: Asset) -> None:
+        changed = self.changed_files()
         for f in self._files_of(asset):
-            if self._run_git("rev-parse", "--is-inside-work-tree") is not None:
-                r = self._run_git("checkout", "HEAD", "--", f)
-                if r is None or r.returncode != 0:
-                    raise DecompError(f"could not restore {f}: {r.stderr.decode(errors='replace') if r else 'git error'}")
-                self._changed = None
-            else:
-                b = self.state_dir / "originals" / f
-                if not b.exists():
-                    raise DecompError(f"no original copy of {f} (use git to be able to revert any edit)")
-                (self.root / f).write_bytes(b.read_bytes())
-                self._changed = None
+            if f in changed:
+                self.revert_file(f)
 
     # ------------------------------------------------------------------ pixels
     def _png(self, rel: str) -> LoadedImage:
@@ -1077,7 +1103,7 @@ class DecompProject:
                     rep.issues.append(Issue("warning", f, "referenced in source but the file does not exist"))
         for f in sorted(files):
             p = self.root / f
-            if not p.exists() or f.endswith(".bin"):
+            if not p.exists() or not f.endswith((".png", ".pal")):
                 continue
             rep.checked += 1
             a = self.assets.get(f)
@@ -1097,6 +1123,12 @@ class DecompProject:
                         pass
                 continue
             self._check_png(f, a, rep)
+        if any(f.startswith(("data/maps/", "data/layouts/")) for f in changed) and self.maps is not None:
+            self.maps.reload()
+            for level, f, msg in self.maps.check_changed(changed):
+                rep.issues.append(Issue(level, f, msg))
+                rep.checked += 0
+            rep.checked += sum(1 for f in changed if f.startswith(("data/maps/", "data/layouts/")))
         return rep
 
     def _check_png(self, f: str, a: Asset | None, rep: CheckReport) -> None:

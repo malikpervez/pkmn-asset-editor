@@ -71,6 +71,60 @@ pae revert --all                      # undo (git checkout of the edited files)
 pae guide > GRAPHICS_AGENTS.md        # instructions for AI agents working in your repo
 ```
 
+### Maps, events and story scripts
+
+`pae serve` also has a **map editor** at `/maps` ("Maps & events" in the
+header). It edits the same files as Porymap (`map.json`, `layouts.json`,
+`map_groups.json`, `map.bin`, `scripts.inc`), so `make` picks the changes up
+like any other edit.
+
+* **View any map** (Emerald and FRLG layouts) rendered from its real tilesets,
+  with NPCs drawn using their overworld sprites, plus warps, triggers and signs.
+  There are optional grid and collision/elevation overlays.
+* **Paint the map.** Pick a metatile, or drag out a multi-block stamp (a whole
+  house, a fence, a patch of grass) from the metatile panel. Use *Copy* to
+  grab blocks already on any map and paste them elsewhere. Flood fill,
+  collision/elevation painting, and undo/redo are available.
+* **Events.** Add, drag, duplicate and delete NPCs, warps, triggers and signs.
+  Their fields autocomplete from your constants (`OBJ_EVENT_GFX_*`,
+  `MOVEMENT_TYPE_*`, `FLAG_*`, `VAR_*`, `MAP_*`, …) and from every script
+  label in the project. *Make two-way* links a warp and its destination.
+  *New script…* writes a ready-to-edit message script and hooks it up.
+* **Story scripts.** Edit the map's `scripts.inc` (or `scripts.pory`) with a
+  label jump list. "Open script" on an event goes straight to its code.
+* **Map header.** Music, weather, map type, flags, connections, and layout
+  resize.
+* **New maps (e.g. a new house).** *New map…* copies an existing map, such as
+  a house interior, under a new name. Its scripts and `LOCALID_*`s are renamed,
+  it gets its own copy of the layout, and it is registered in
+  `map_groups.json`/`layouts.json`. Then add a warp on a door and click
+  *Make two-way*.
+* **Check** validates the edited maps:
+  * warps to missing maps or warp ids
+  * scripts that aren't defined anywhere
+  * unknown graphics ids
+  * duplicate local ids
+  * events outside the map
+  * block data that doesn't match the layout size
+  * metatile ids the tilesets don't have
+
+The same operations exist on the command line and as MCP tools, so an AI can
+build maps and story too:
+
+```bash
+pae map list petalburg
+pae map render PetalburgCity -o petalburg.png --scale 2
+pae map metatiles PetalburgCity -o metatiles.png           # ids to paint with
+pae map events PetalburgCity
+pae map new PetalburgCity_House1 PetalburgCity_House3       # new house interior
+pae map link PetalburgCity 6 PetalburgCity_House3 0         # door <-> house, both ways
+```
+
+MCP map tools: `list_maps`, `view_map`, `get_map`, `view_metatiles`,
+`get_blocks`/`set_blocks` (blocks as text), `copy_blocks`, `edit_map`
+(header + add/update/delete events), `get_script`/`write_script`/`new_script`,
+`duplicate_map`, `link_warps`, `resize_map`, `find_constants`.
+
 `pae` never commits, and writes nothing outside the files you edit and its own
 `.pae/` folder. `.pae/` is excluded via `.git/info/exclude`, so your `.gitignore`
 is not touched.
@@ -281,8 +335,12 @@ by the shape of its entries:
   calls your `make`, so your normal toolchain must be installed.
 * Uncompressed graphics outside the tables above are not found
   automatically.
-* Map layouts, metatile arrangements, animation scripts and text are not
-  edited. Only graphics and palettes are.
+* ROM mode edits graphics and palettes only. Maps, events and scripts are
+  edited in source-tree mode.
+* The map editor edits maps, events, headers and scripts, but not metatile
+  definitions (which 8x8 tiles make up a metatile) or tileset animations.
+  Use Porymap's tileset editor for those. Map edits are validated statically;
+  play-test the built ROM to check scripted behaviour.
 * Relocation updates every aligned word in the ROM that equals the old
   address. This is the standard approach in ROM-hacking tools. A random data
   word that happens to equal the address would also be changed, but this is

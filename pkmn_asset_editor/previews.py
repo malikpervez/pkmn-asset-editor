@@ -239,4 +239,31 @@ pae status / pae revert <file> / pae revert --all   # uses git
 pae build                                  # check, then make (pae build --make "make -j8 ...")
 pae serve                                  # web editor;  pae mcp  # MCP server for AI assistants
 ```
+
+## Maps, events and scripts
+
+Maps live in `data/maps/<Map>/map.json` (header + events) and `scripts.inc`;
+blocks in `data/layouts/<Layout>/map.bin`. Each block is a metatile id
+(0-511 primary, 512+ secondary; FRLG layouts: 640) plus collision (0 = walkable)
+and elevation (3 = normal ground).
+
+```
+pae map list petalburg / pae map events PetalburgCity
+pae map render PetalburgCity -o map.png      # look before and after editing
+pae map metatiles PetalburgCity -o tiles.png # which metatile ids exist
+pae map new PetalburgCity_House1 PetalburgCity_House3   # new map copied from an existing one
+pae map link PetalburgCity 6 PetalburgCity_House3 0     # connect a door warp both ways
+pae check                                     # validates edited maps, events and scripts
+```
+
+Rules:
+* Several maps can share one layout (most house interiors do); editing its
+  blocks changes all of them. `pae map new` gives a new map its own layout.
+* Every `script` must be a label defined in some `.inc`; new scripts go in the
+  map's `scripts.inc` (`<Map>_EventScript_<Name>::` … `end`, text as
+  `<Map>_Text_<Name>:` with `.string "…$"`).
+* Use `FLAG_*`/`VAR_*` constants from `include/constants/flags.h`/`vars.h`
+  for story state; reuse an existing unused flag, or add one there.
+* Keep warps paired: a door warp's `dest_map`/`dest_warp_id` must point at a
+  warp that leads back.
 """

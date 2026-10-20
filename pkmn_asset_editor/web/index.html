@@ -154,7 +154,10 @@ window.addEventListener('resize', syncHeader);
 async function init() {
   syncHeader();
   const s = await api('/api/summary');
-  if (s.mode === 'decomp') { $('#btn-build').textContent = 'Check & make'; $('#btn-validate').textContent = 'Check edits'; }
+  if (s.mode === 'decomp') {
+    $('#btn-build').textContent = 'Check & make'; $('#btn-validate').textContent = 'Check edits';
+    $('#btn-status').insertAdjacentHTML('beforebegin', '<a class="btn" href="/maps">Maps &amp; events</a>');
+  }
   $('#game').textContent = `${s.game.name} · ${s.game.code}`;
   const cats = Object.entries(s.categories).sort();
   const nav = $('#cats');

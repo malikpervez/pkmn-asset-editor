@@ -154,6 +154,33 @@ def main(argv: list[str] | None = None) -> int:
                                                                "file the game uses for it"))
     p.add_argument("images", nargs="+")
 
+    p = with_project(sub.add_parser("map", help="source tree: maps, events and scripts (see `pae map -h`)"))
+    msub = p.add_subparsers(dest="map_cmd", required=True)
+    q = msub.add_parser("list", help="list maps")
+    q.add_argument("query", nargs="?", default="")
+    q = msub.add_parser("render", help="render a map (with events) to a PNG")
+    q.add_argument("name")
+    q.add_argument("-o", "--out", required=True)
+    q.add_argument("--scale", type=int, default=1)
+    q.add_argument("--no-events", action="store_true")
+    q.add_argument("--grid", action="store_true")
+    q = msub.add_parser("metatiles", help="render the metatiles a map can use (with ids)")
+    q.add_argument("name")
+    q.add_argument("-o", "--out", required=True)
+    q = msub.add_parser("events", help="print a map's events")
+    q.add_argument("name")
+    q = msub.add_parser("new", help="create a new map as a copy of an existing one (e.g. a new house)")
+    q.add_argument("source")
+    q.add_argument("new_name")
+    q.add_argument("--group")
+    q.add_argument("--share-layout", action="store_true", help="reuse the source's blocks instead of copying them")
+    q.add_argument("--id", help="map id constant (default derived from the name)")
+    q = msub.add_parser("link", help="connect two warps in both directions")
+    q.add_argument("map")
+    q.add_argument("warp", type=int)
+    q.add_argument("dest_map")
+    q.add_argument("dest_warp", type=int)
+
     with_project(sub.add_parser("guide", help="print editing instructions for AI agents (AGENTS.md style)"))
 
     p = with_project(sub.add_parser("sheet", help="render many assets onto one contact sheet"))
@@ -311,13 +338,25 @@ def _run(args) -> int:
         print(f"imported {n} file(s); run `pae validate` then `pae build`")
         return 0
     if args.cmd == "revert":
-        if decomp and args.all:
-            targets = [proj.get(f) for f in proj.changed_files() if f in proj.assets]
-        else:
-            targets = list(proj.assets.values()) if args.all else [proj.get(a) for a in args.assets]
+        if decomp:
+            # any file under graphics/, data/tilesets, data/maps, data/layouts; new files are deleted
+            changed = proj.changed_files()
+            files = list(changed) if args.all else []
+            for ident in args.assets:
+                rel = ident.removeprefix(str(proj.root) + "/")
+                if rel in changed:
+                    files.append(rel)
+                else:
+                    files.extend(proj._files_of(proj.get(ident)))
+            for f in dict.fromkeys(files):
+                if f in changed:
+                    proj.revert_file(f)
+            print(f"reverted {len(set(files) & set(changed))} file(s)")
+            return 0
+        targets = list(proj.assets.values()) if args.all else [proj.get(a) for a in args.assets]
         n = 0
         for a in targets:
-            if args.all and not decomp and not proj.is_touched(a) and proj.path(a).exists():
+            if args.all and not proj.is_touched(a) and proj.path(a).exists():
                 continue
             proj.revert(a)
             n += 1
@@ -349,6 +388,35 @@ def _run(args) -> int:
             raise ProjectError("in a ROM project, PNG palette edits are picked up by `pae build` automatically")
         for f in args.images:
             print(f"updated {proj.palette_from_png(proj.get(f))}")
+        return 0
+    if args.cmd == "map":
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("map commands need a pokeemerald-style source tree with data/maps")
+        if args.map_cmd == "list":
+            for x in m.list_maps():
+                if args.query.lower() in (x["name"] + x["id"]).lower():
+                    print(f"{x['name']:<44} {x['id']:<48} {x['group'].replace('gMapGroup_', '')}")
+        elif args.map_cmd == "render":
+            m.render(args.name, events=not args.no_events, grid=args.grid, scale=args.scale).save(args.out)
+            print(f"wrote {args.out}")
+        elif args.map_cmd == "metatiles":
+            m.metatile_sheet(args.name, 2).save(args.out)
+            print(f"wrote {args.out}")
+        elif args.map_cmd == "events":
+            data = m.get_map(args.name)
+            for kind in ("object_events", "warp_events", "coord_events", "bg_events"):
+                for i, e in enumerate(data.get(kind, [])):
+                    what = e.get("graphics_id") or e.get("dest_map") or e.get("type", "")
+                    extra = e.get("script") or e.get("dest_warp_id", "")
+                    print(f"{kind[:-7]:<7} {i:>3}  ({e.get('x')},{e.get('y')})  {what}  {extra}")
+        elif args.map_cmd == "new":
+            for n in m.duplicate_map(args.source, args.new_name, args.group, not args.share_layout, args.id):
+                print(f"note: {n}")
+            print(f"created {args.new_name} ({m.get_map(args.new_name)['id']})")
+        elif args.map_cmd == "link":
+            m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
+            print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")
         return 0
     if args.cmd == "guide":
         from .previews import agents_guide, decomp_guide
