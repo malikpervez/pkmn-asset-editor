@@ -188,6 +188,9 @@ TOOLS = [
     ("get_teachable", "Which TM/HM and tutor moves a Pokémon can learn (change with set_species "
      "{teachable: {MOVE_X: true}}); also its egg moves.", _schema({"id": S}, ["id"])),
     ("list_marts", "Every Poké Mart list (label, map, items).", _schema({})),
+    ("difficulty_report", "Trainer levels (strongest Pokémon), bosses and wild grass/cave levels per story chapter, "
+     "plus warnings: trainers stronger than the chapter's boss, level spikes, too-easy trainers, bosses weaker "
+     "than the previous one, wild Pokémon above the boss.", _schema({})),
     ("set_mart", "Set what a Poké Mart list sells (items in order).",
      _schema({"label": S, "items": {"type": "array", "items": S}}, ["label", "items"])),
     ("playtest_battle", "In the running play-test, start a battle now: against `trainer` (TRAINER_X) or a wild "
@@ -234,7 +237,7 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team",
              "list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species",
              "playtest_battle", "story_flag", "suggest_map_chapters", "list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
-             "get_teachable", "list_marts", "set_mart"}
+             "get_teachable", "list_marts", "set_mart", "difficulty_report"}
 
 
 class Server:
@@ -479,7 +482,7 @@ class Server:
                                         for y in range(r["h"])]
             return txt(r)
         if name in ("list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
-                    "get_teachable", "list_marts", "set_mart"):
+                    "get_teachable", "list_marts", "set_mart", "difficulty_report"):
             gd = self.proj.gamedata
             if name == "list_items":
                 return txt(gd.items(args.get("query", ""))[:400])
@@ -501,6 +504,11 @@ class Server:
                 return txt(dict(gd.teachable(args["id"]), egg_moves=gd.egg_moves(args["id"])))
             if name == "list_marts":
                 return txt({"marts": gd.marts()})
+            if name == "difficulty_report":
+                d = gd.difficulty()
+                for c in d["chapters"]:  # keep it short: the strongest few per chapter
+                    c["trainers"] = sorted(c["trainers"], key=lambda t: -t["ace"])[:8]
+                return txt(d)
             return txt(gd.set_mart(args["label"], args["items"]))
         if name in ("list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species"):
             gd = self.proj.gamedata

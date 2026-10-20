@@ -1274,6 +1274,107 @@ class GameData:
         self.dp._changed = None
         return next(m for m in self.marts() if m["label"] == label)
 
+    # ------------------------------------------------------------------ difficulty curve
+    def trainer_map_index(self) -> dict[str, list[str]]:
+        """TRAINER_X -> maps whose scripts battle them (one pass over every map script)."""
+        out: dict[str, list[str]] = {}
+        for f in sorted((self.root / "data" / "maps").glob("*/scripts.inc")):
+            text = f.read_text(errors="replace")
+            for line in re.findall(r"^\s*trainerbattle\w*\s+([^\n]*)", text, re.M):
+                for tid in re.findall(r"\bTRAINER_\w+", line):
+                    maps = out.setdefault(tid, [])
+                    if f.parent.name not in maps:
+                        maps.append(f.parent.name)
+        return out
+
+    @staticmethod
+    def is_boss(trainer_class: str) -> bool:
+        c = trainer_class.lower()
+        return "leader" in c or "elite" in c or "champion" in c
+
+    def difficulty(self) -> dict:
+        """Trainer and wild Pokémon levels per story chapter, and the spots where the curve looks wrong."""
+        story = self.dp.maps.story
+        chapters = story.chapters()
+        where = self.trainer_map_index()
+        rows = [dict(c, trainers=[], wild=None, index=i) for i, c in enumerate(chapters)]
+        unplaced = 0
+        for t in self.trainers():
+            levels = [lv for lv in t["levels"] if lv]
+            if not levels or t["id"] not in where:
+                continue
+            maps = where[t["id"]]
+            ch = next((story.chapter_of(m, chapters) for m in maps if story.chapter_of(m, chapters) is not None), None)
+            if ch is None:
+                unplaced += 1
+                continue
+            rows[ch]["trainers"].append({"id": t["id"], "name": t["name"] or t["id"], "class": t["class"],
+                                         "map": maps[0], "ace": max(levels), "avg": round(sum(levels) / len(levels), 1),
+                                         "team": len(levels), "boss": self.is_boss(t["class"])})
+        try:
+            data = self._wild_json()
+        except DecompError:
+            data = {"wild_encounter_groups": []}
+        by_id = self.dp.maps.map_by_id
+        for g in data.get("wild_encounter_groups", []):
+            if not g.get("for_maps"):
+                continue
+            for e in g.get("encounters", []):
+                name = by_id.get(e.get("map"))
+                ch = story.chapter_of(name, chapters) if name else None
+                if ch is None:
+                    continue
+                # grass and caves only: surfing, fishing and Rock Smash need HMs and items from later chapters
+                lv = [(x["min_level"], x["max_level"]) for x in e.get("land_mons", {}).get("mons", [])]
+                if not lv:
+                    continue
+                w = rows[ch]["wild"] or {"min": 999, "max": 0, "maps": []}
+                w["min"], w["max"] = min(w["min"], min(a for a, _ in lv)), max(w["max"], max(b for _, b in lv))
+                w["maps"].append(name)
+                rows[ch]["wild"] = w
+        flags = []
+        prev_boss = prev_median = None
+        for r in rows:
+            ts = sorted(r["trainers"], key=lambda t: t["ace"])
+            normal = [t for t in ts if not t["boss"]]
+            aces = sorted(t["ace"] for t in (normal or ts))
+            r["median"] = aces[len(aces) // 2] if aces else None
+            bosses = [t for t in ts if t["boss"]]
+            r["boss"] = max(bosses, key=lambda t: t["ace"]) if bosses else None
+            boss_ace = r["boss"]["ace"] if r["boss"] else None
+            label = f"{r['index'] + 1}. {r['name']}"
+
+            def flag(kind, msg, t=None):
+                flags.append({"chapter": r["index"], "kind": kind, "message": msg,
+                              "trainer": t["id"] if t else None, "map": t["map"] if t else None})
+            for t in normal:
+                if boss_ace is not None and t["ace"] > boss_ace + 2:
+                    flag("stronger than the boss", f"{t['name']} ({t['class']}, lv {t['ace']}) in {t['map']} is "
+                         f"stronger than this chapter's boss {r['boss']['name']} (lv {boss_ace})", t)
+                elif r["median"] and t["ace"] >= r["median"] + max(6, r["median"] * 35 // 100):
+                    flag("spike", f"{t['name']} ({t['class']}, lv {t['ace']}) in {t['map']} is much stronger than "
+                         f"the other trainers of chapter {label} (about lv {r['median']})", t)
+                if prev_median and t["ace"] <= prev_median - max(6, prev_median * 35 // 100):
+                    flag("too easy", f"{t['name']} ({t['class']}, lv {t['ace']}) in {t['map']} is much weaker than "
+                         f"the trainers of the chapter before (about lv {prev_median})", t)
+            if boss_ace is not None and prev_boss is not None and boss_ace < prev_boss:
+                flag("boss weaker", f"{r['boss']['name']} (lv {boss_ace}) is weaker than the previous chapter's boss "
+                     f"(lv {prev_boss})", r["boss"])
+            if r["wild"] and boss_ace is not None and r["wild"]["max"] > boss_ace:
+                flags.append({"chapter": r["index"], "kind": "wild too strong", "trainer": None,
+                              "map": r["wild"]["maps"][0],
+                              "message": f"wild Pokémon go up to lv {r['wild']['max']}, above this chapter's boss "
+                                         f"(lv {boss_ace})"})
+            prev_boss = boss_ace if boss_ace is not None else prev_boss
+            prev_median = r["median"] if r["median"] else prev_median
+        seen, uniq = set(), []
+        for f in flags:  # rivals have one trainer per starter: the same warning once
+            if f["message"] not in seen:
+                seen.add(f["message"])
+                uniq.append(f)
+        return {"chapters": [{k: r[k] for k in ("index", "name", "trainers", "wild", "median", "boss")} for r in rows],
+                "flags": uniq, "unplaced_trainers": unplaced}
+
     # ------------------------------------------------------------------ checks
     def check(self, changed: dict[str, str]) -> list[tuple[str, str, str]]:
         issues = []

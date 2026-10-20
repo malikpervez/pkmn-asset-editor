@@ -258,6 +258,8 @@ def make_handler(state: _State):
                 return self._json(dict(gd.tms(), tutors=gd.tutors()))
             if path == "/api/data/marts":
                 return self._json(gd.marts())
+            if path == "/api/data/difficulty":
+                return self._json(gd.difficulty())
             if path == "/api/data/teachable":
                 return self._json(dict(gd.teachable(q["id"]), egg_moves=gd.egg_moves(q["id"])))
             return self._error("not found", HTTPStatus.NOT_FOUND)

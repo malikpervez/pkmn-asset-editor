@@ -348,6 +348,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("label", help="the list's label, e.g. OldaleTown_Mart_Pokemart_Basic")
     q.add_argument("items", nargs="+")
 
+    with_project(sub.add_parser("difficulty", help="source tree: trainer and wild levels per story chapter, and "
+                                                   "what looks too hard or too easy"))
     p = sub.add_parser("story", help="source tree: story chapters, for play-tests that start later in the game")
     ssub = p.add_subparsers(dest="story_cmd", required=True)
     with_project(ssub.add_parser("list", help="list the chapters and their maps"))
@@ -769,6 +771,20 @@ def _run(args) -> int:
                     print(f"{m.script_path(name).relative_to(proj.root)}:{t.line}: {t.label}: {msg}")
         print(f"{count} problem(s)" if count else "every text fits its box")
         return 1 if count else 0
+    if args.cmd == "difficulty":
+        if not decomp:
+            raise ProjectError("the difficulty curve needs a pokeemerald-expansion source tree")
+        d = proj.gamedata.difficulty()
+        for c in d["chapters"]:
+            boss = f"{c['boss']['name']} lv {c['boss']['ace']}" if c["boss"] else "-"
+            wild = f"lv {c['wild']['min']}-{c['wild']['max']}" if c["wild"] else "-"
+            print(f"{c['index'] + 1:>2}. {c['name'][:44]:44}  trainers {len(c['trainers']):>3}  typical lv "
+                  f"{c['median'] if c['median'] is not None else '-':>3}  boss {boss:18}  wild {wild}")
+        if d["flags"]:
+            print(f"\n{len(d['flags'])} thing(s) worth a look:")
+            for f in d["flags"]:
+                print(f"  chapter {f['chapter'] + 1}: {f['message']}")
+        return 0
     if args.cmd in ("item", "move", "tm", "mart"):
         if not decomp:
             raise ProjectError("game data editing needs a pokeemerald-expansion source tree")

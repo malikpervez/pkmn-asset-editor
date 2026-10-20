@@ -16,6 +16,9 @@
       --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
     }
   }
+  :root { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --s1: #3987e5; --s2: #d95926; --s3: #199e70; } }
+  :root[data-theme="dark"] { --s1: #3987e5; --s2: #d95926; --s3: #199e70; }
   :root[data-theme="dark"] {
     --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
     --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
@@ -25,6 +28,7 @@
   header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
   header h1 { font-size: 15px; margin: 0 8px 0 0; white-space: nowrap; }
   header a { color: var(--muted); }
+  main a { color: var(--sel); }
   button, .btn, select, input, textarea { font: inherit; color: var(--text); }
   button, .btn { padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--chip); cursor: pointer; text-decoration: none; }
   button:hover { border-color: var(--muted); }
@@ -78,6 +82,13 @@
   .tmgrid small { color: var(--muted); width: 38px; }
   .hint { color: var(--muted); font-size: 11px; }
   .chips a { display: inline-block; background: var(--chip); border-radius: 10px; padding: 1px 8px; margin: 2px; color: var(--text); text-decoration: none; font-size: 12px; }
+  .chart { width: 100%; max-width: 1100px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+  .chart text { fill: var(--muted); font-size: 11px; }
+  .chart .grid line { stroke: var(--line); }
+  .legend { display: flex; gap: 14px; font-size: 12px; margin: 6px 0; align-items: center; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 4px; vertical-align: -1px; }
+  #tip { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; font-size: 12px; display: none; z-index: 30; box-shadow: 0 2px 8px rgba(0,0,0,.15); }
+  .flaggroup { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 6px 0; background: var(--panel); max-width: 1100px; }
   .itemicon { width: 48px; height: 48px; image-rendering: pixelated; background: var(--chip); border-radius: 8px; }
 </style>
 </head>
@@ -96,6 +107,7 @@
     <button data-tab="moves" title="power, accuracy, type and description of moves">Moves</button>
     <button data-tab="tms" title="which move each TM and HM teaches">TMs</button>
     <button data-tab="marts" title="what each Poké Mart sells">Shops</button>
+    <button data-tab="difficulty" title="trainer and wild Pokémon levels through the story">Difficulty</button>
   </div>
   <span style="flex:1"></span>
   <label class="muted" title="show every setting, with the names the game's files use"><input type="checkbox" id="expert"> Expert mode</label>
@@ -121,7 +133,7 @@
     <span class="muted" style="font-size:12px">Keyboard: arrows, Z = A, X = B, Enter = Start</span>
   </div>
 </div></div>
-<div id="toast"></div>
+<div id="toast"></div><div id="tip"></div>
 <datalist id="dl-SPECIES"></datalist><datalist id="dl-MOVE"></datalist><datalist id="dl-ITEM"></datalist>
 <datalist id="dl-ABILITY"></datalist><datalist id="dl-maps"></datalist><datalist id="dl-EVO"></datalist>
 <datalist id="dl-EFFECT"></datalist>
@@ -180,7 +192,7 @@ let listTimer;
 $('#search').oninput = () => { clearTimeout(listTimer); listTimer = setTimeout(renderList, 200); };
 async function renderList() {
   const q = $('#search').value.trim(), host = $('#list');
-  $('#search').placeholder = { trainers: 'Search trainers (name, class)…', wild: 'Search maps…', species: 'Search Pokémon…', items: 'Search items…', moves: 'Search moves…', tms: 'TMs, HMs and tutors', marts: 'Search shops (town)…' }[S.tab];
+  $('#search').placeholder = { trainers: 'Search trainers (name, class)…', wild: 'Search maps…', species: 'Search Pokémon…', items: 'Search items…', moves: 'Search moves…', tms: 'TMs, HMs and tutors', difficulty: 'Difficulty', marts: 'Search shops (town)…' }[S.tab];
   let rows = [];
   if (S.tab === 'trainers') {
     const r = await api('/api/data/trainers?q=' + encodeURIComponent(q));
@@ -194,6 +206,8 @@ async function renderList() {
   } else if (S.tab === 'moves') {
     const r = await api('/api/data/moves?q=' + encodeURIComponent(q));
     rows = r.slice(0, 600).map(t => ({ id: t.id, html: `<div>${esc(t.name)}<br><small>${esc(t.id)}</small></div>` }));
+  } else if (S.tab === 'difficulty') {
+    rows = [{ id: 'difficulty', html: '<div><b>Levels through the story</b><br><small>trainers, bosses and wild Pokémon per chapter</small></div>' }];
   } else if (S.tab === 'tms') {
     rows = [{ id: 'tms', html: '<div><b>TMs &amp; HMs</b><br><small>which move each one teaches</small></div>' }];
   } else if (S.tab === 'marts') {
@@ -206,7 +220,7 @@ async function renderList() {
   }
   host.innerHTML = rows.map(r => `<div class="item${r.id === S.sel ? ' sel' : ''}" data-id="${esc(r.id)}">${r.html}</div>`).join('') || '<p class="muted" style="padding:10px">Nothing found.</p>';
   host.querySelectorAll('.item').forEach(el => el.onclick = () => open(el.dataset.id));
-  if (S.tab === 'tms' && !S.sel) open('tms');
+  if ((S.tab === 'tms' || S.tab === 'difficulty') && !S.sel) open(S.tab);
 }
 async function open(id) {
   if (S.dirty && !confirm('Discard unsaved changes?')) return;
@@ -219,6 +233,7 @@ async function open(id) {
     else if (S.tab === 'items') await openItem(id);
     else if (S.tab === 'moves') await openMove(id);
     else if (S.tab === 'tms') await openTms();
+    else if (S.tab === 'difficulty') await openDifficulty();
     else if (S.tab === 'marts') await openMart(id);
     else await openSpecies(id);
   } catch (e) { $('#main').innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
@@ -516,6 +531,61 @@ async function openTms() {
     const k = b.dataset.tadd; $('#t-' + k).insertAdjacentHTML('beforeend', `<tr><td class="muted"></td><td><input data-tmk="${k}" list="dl-MOVE"></td><td><button data-tdel="${k}">✕</button></td></tr>`); renumber(k); bind();
   });
   bind();
+}
+
+// ------------------------------------------------------------------ difficulty
+async function openDifficulty() {
+  $('#main').innerHTML = '<p class="muted">Looking at every trainer and wild Pokémon…</p>';
+  const d = await api('/api/data/difficulty');
+  S.cur = d;
+  const ch = d.chapters, n = ch.length;
+  const all = ch.flatMap(c => [...c.trainers.map(t => t.ace), c.wild ? c.wild.max : 0]);
+  const top = Math.max(10, Math.ceil((Math.max(...all) + 5) / 10) * 10);
+  const W = 1100, H = 380, L = 44, R = 12, T = 14, B = 46, cw = (W - L - R) / n;
+  const x = (i) => L + cw * (i + 0.5), y = (v) => T + (H - T - B) * (1 - v / top);
+  const flagged = new Set(d.flags.map(f => f.trainer).filter(Boolean));
+  let g = '<g class="grid">';
+  for (let v = 0; v <= top; v += 10) g += `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+  g += '</g>';
+  ch.forEach((c, i) => {
+    g += `<text x="${x(i)}" y="${H - B + 16}" text-anchor="middle">${i + 1}</text>`;
+    if (c.wild) g += `<rect x="${x(i) - cw * 0.32}" y="${y(c.wild.max)}" width="${cw * 0.64}" height="${Math.max(4, y(c.wild.min) - y(c.wild.max))}" rx="4" fill="var(--s3)" opacity="0.35" data-tip="${esc(`<b>Chapter ${i + 1}</b><br>wild Pokémon (grass & caves): lv ${c.wild.min}–${c.wild.max}<br>${c.wild.maps.slice(0, 6).join(', ')}`)}"/>`;
+  });
+  g += `<text x="${L + (W - L - R) / 2}" y="${H - 8}" text-anchor="middle">story chapter</text><text x="12" y="${T + (H - T - B) / 2}" transform="rotate(-90 12 ${T + (H - T - B) / 2})" text-anchor="middle">level</text>`;
+  ch.forEach((c, i) => {
+    // trainers at the same level sit side by side (closer together when there are many), not on top of each other
+    const same = {};
+    c.trainers.filter(t => !t.boss).forEach(t => (same[t.ace] = same[t.ace] || []).push(t));
+    Object.values(same).forEach(list => list.forEach((t, k) => { t._dx = (k - (list.length - 1) / 2) * Math.min(9, (cw * 0.8) / list.length); }));
+  });
+  ch.forEach((c, i) => c.trainers.filter(t => !t.boss).forEach((t) => {
+    const jx = x(i) + t._dx;
+    g += `<circle cx="${jx}" cy="${y(t.ace)}" r="4" fill="var(--s1)" fill-opacity="0.75" ${flagged.has(t.id) ? 'stroke="var(--text)" stroke-width="2"' : 'stroke="var(--panel)" stroke-width="1"'} data-id="${esc(t.id)}" data-tip="${esc(`<b>${t.name}</b> (${t.class})<br>strongest Pokémon lv ${t.ace} · team of ${t.team}<br>${t.map}`)}" style="cursor:pointer"/>`;
+  }));
+  const bosses = ch.map((c, i) => c.boss ? [x(i), y(c.boss.ace), c.boss] : null).filter(Boolean);
+  if (bosses.length > 1) g += `<polyline points="${bosses.map(b => b[0] + ',' + b[1]).join(' ')}" fill="none" stroke="var(--s2)" stroke-width="2"/>`;
+  bosses.forEach(([bx, by, b]) => { g += `<circle cx="${bx}" cy="${by}" r="6" fill="var(--s2)" stroke="var(--panel)" stroke-width="2" data-id="${esc(b.id)}" data-tip="${esc(`<b>${b.name}</b> (${b.class})<br>strongest Pokémon lv ${b.ace}<br>${b.map}`)}" style="cursor:pointer"/>`; });
+  const byMap = {};
+  d.flags.forEach(f => (byMap[f.map || '(no map)'] = byMap[f.map || '(no map)'] || []).push(f));
+  const groups = Object.entries(byMap).sort((a, b) => b[1].length - a[1].length);
+  let h = `<h2>Levels through the story</h2>
+    <p class="muted" style="max-width:900px">Each dot is a trainer's strongest Pokémon, in the story chapter of the map where you battle them. The line is the bosses (gym leaders, team leaders, Elite Four, Champion); the band is the wild Pokémon in grass and caves. Click a dot to open the trainer.</p>
+    <div class="legend"><span><i style="background:var(--s1)"></i>Trainers</span><span><i style="background:var(--s2)"></i>Bosses</span><span><i style="background:var(--s3);opacity:.6;border-radius:3px"></i>Wild Pokémon (grass &amp; caves)</span><span><i style="border:2px solid var(--text);background:transparent"></i>Has a warning</span></div>
+    <svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="trainer and wild Pokémon levels per story chapter">${g}</svg>
+    <h3>⚠ Worth a look (${d.flags.length})</h3>
+    <p class="hint" style="max-width:900px">A map can show up here when the story comes back to it later (for example a part of a route you can only reach after Surf). Then it's fine, or move that map to a later chapter on the 📖 Story page.</p>
+    ${groups.map(([m, fs]) => `<div class="flaggroup"><b>${m === '(no map)' ? '' : `<a href="/maps?map=${encodeURIComponent(m)}">${esc(m)}</a>`}</b> <span class="muted">chapter ${fs[0].chapter + 1} · ${fs.length} warning${fs.length > 1 ? 's' : ''}</span>
+      <ul style="margin:4px 0 0;padding-left:18px">${fs.map(f => `<li>⚠ ${f.trainer ? `<a href="?tab=trainers&id=${encodeURIComponent(f.trainer)}">${esc(f.message)}</a>` : esc(f.message)}</li>`).join('')}</ul></div>`).join('') || '<p class="muted">Nothing looks out of place.</p>'}
+    <h3>As a table</h3><table><tr><th>chapter</th><th>trainers</th><th>typical level</th><th>boss</th><th>wild (grass &amp; caves)</th></tr>
+    ${ch.map((c, i) => `<tr><td>${i + 1}. ${esc(c.name)}</td><td>${c.trainers.length}</td><td>${c.median ?? '–'}</td><td>${c.boss ? `${esc(c.boss.name)} · lv ${c.boss.ace}` : '–'}</td><td>${c.wild ? `lv ${c.wild.min}–${c.wild.max}` : '–'}</td></tr>`).join('')}</table>
+    ${d.unplaced_trainers ? `<p class="hint">${d.unplaced_trainers} trainers are on maps that aren't in a chapter yet (or only battled as rematches).</p>` : ''}`;
+  $('#main').innerHTML = h;
+  const tip = $('#tip');
+  $('#main').querySelectorAll('[data-tip]').forEach(el => {
+    el.onmousemove = (e) => { tip.innerHTML = el.dataset.tip; tip.style.display = 'block'; tip.style.left = Math.min(e.clientX + 14, innerWidth - 260) + 'px'; tip.style.top = (e.clientY + 14) + 'px'; };
+    el.onmouseleave = () => { tip.style.display = 'none'; };
+  });
+  $('#main').querySelectorAll('circle[data-id]').forEach(el => el.onclick = () => { tip.style.display = 'none'; location.href = '?tab=trainers&id=' + encodeURIComponent(el.dataset.id); });
 }
 
 // ------------------------------------------------------------------ shops

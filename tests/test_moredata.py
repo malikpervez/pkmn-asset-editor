@@ -258,3 +258,25 @@ def test_cli_mcp_and_checks(gd, capsys):
     s.write_text(s.read_text().replace("Town_Pokemart:\n\t.2byte ITEM_POTION", "Town_Pokemart:\n\t.2byte ITEM_NOPE"))
     msgs = [i.message for i in DecompProject(gd.root).check().issues]
     assert any("ITEM_NOPE" in m for m in msgs)
+
+
+def test_difficulty(gd, capsys):
+    root = gd.root
+    st = DecompProject(root).maps.story
+    st.add_chapter("Home")
+    st.set_chapter("Town", 0)
+    s = root / "data/maps/Town/scripts.inc"
+    s.write_text(s.read_text() + "\nTown_EventScript_Josh::\n\ttrainerbattle_single TRAINER_JOSH, Town_Text_Hero, Town_Text_Hero\n"
+                 "\tend\nTown_EventScript_Roxanne::\n\ttrainerbattle_single TRAINER_ROXANNE_1, Town_Text_Hero, Town_Text_Hero\n\tend\n")
+    d = DecompProject(root).gamedata.difficulty()
+    c = d["chapters"][0]
+    assert {t["id"] for t in c["trainers"]} == {"TRAINER_JOSH", "TRAINER_ROXANNE_1"}
+    assert c["boss"]["id"] == "TRAINER_ROXANNE_1" and c["boss"]["ace"] == 15
+    assert c["wild"] == {"min": 2, "max": 4, "maps": ["Town"]}  # grass only
+    assert d["flags"] == []
+    p = root / "src/data/trainers.party"
+    p.write_text(p.read_text().replace("SPECIES_GEODUDE\nLevel: 10", "SPECIES_GEODUDE\nLevel: 30"))
+    d = DecompProject(root).gamedata.difficulty()
+    assert [f["kind"] for f in d["flags"]] == ["stronger than the boss"] and d["flags"][0]["trainer"] == "TRAINER_JOSH"
+    assert main(["difficulty", "-p", str(root)]) == 0
+    assert "stronger than this chapter's boss ROXANNE" in capsys.readouterr().out
