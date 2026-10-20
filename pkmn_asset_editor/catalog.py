@@ -48,9 +48,12 @@ class Asset:
     meta: dict = field(default_factory=dict)
     aliases: list[str] = field(default_factory=list)
     sha1: str = ""
+    path: str = ""  # explicit file (source-tree mode); ROM projects derive it from the id
 
     @property
     def file(self) -> str:
+        if self.path:
+            return self.path
         return "graphics/" + self.id + (".pal" if self.kind == "palette" else ".png")
 
     def blob_offsets(self) -> list[int]:
@@ -62,6 +65,8 @@ class Asset:
     def to_dict(self) -> dict:
         d = asdict(self)
         d["file"] = self.file
+        if not self.path:
+            d.pop("path")
         return d
 
     @classmethod

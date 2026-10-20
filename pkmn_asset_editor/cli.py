@@ -9,7 +9,10 @@ import sys
 from pathlib import Path
 
 from . import __version__
+from .decomp import DecompError, open_project
 from .project import Project, ProjectError
+
+ERRORS = (ProjectError, DecompError)
 
 
 def describe(proj: Project, asset) -> dict:
@@ -58,6 +61,12 @@ def _print_report(rep, as_json: bool) -> None:
         print(f"warning: {w}")
     for e in rep.errors:
         print(f"error: {e}")
+    if hasattr(rep, "checked"):  # source tree
+        print(f"checked {rep.checked} file(s)")
+        if rep.command:
+            tail = "\n".join(rep.output.rstrip().splitlines()[-30:])
+            print(f"$ {rep.command}\n{tail}\nexit status {rep.returncode} after {rep.seconds:.0f}s")
+        return
     if rep.ok:
         print(f"{len(rep.changed_assets)} asset(s) changed: {len(rep.in_place)} block(s) written in place, "
               f"{len(rep.relocated)} relocated")
@@ -103,10 +112,12 @@ def main(argv: list[str] | None = None) -> int:
     p = with_project(sub.add_parser("status", help="list edited assets"))
     p.add_argument("--json", action="store_true")
 
-    p = with_project(sub.add_parser("validate", help="check all edits without writing a ROM"))
+    p = with_project(sub.add_parser("validate", aliases=["check"], help="check edits without building"))
     p.add_argument("--json", action="store_true")
+    p.add_argument("--all", action="store_true", help="source tree: check every referenced graphic, not just edits")
 
-    p = with_project(sub.add_parser("build", help="write the edited ROM (and patches)"))
+    p = with_project(sub.add_parser("build", help="write the edited ROM (ROM project) or run make (source tree)"))
+    p.add_argument("--make", help="source tree: build command (default: make -jN; saved in .pae/config.json)")
     p.add_argument("-o", "--output", help="output ROM path (default: build/rom.gba)")
     p.add_argument("--patch", action="append", choices=["ups", "ips"], help="patch format(s) to write")
     p.add_argument("--no-patch", action="store_true")
@@ -135,7 +146,15 @@ def main(argv: list[str] | None = None) -> int:
     p = with_project(sub.add_parser("sync-palettes", help="re-colour PNGs after editing .pal files"))
     p.add_argument("palettes", nargs="*", help="palette ids (default: every edited palette)")
 
-    with_project(sub.add_parser("normalize", help="convert edited RGB/RGBA PNGs to indexed PNGs in place"))
+    p = with_project(sub.add_parser("fix", aliases=["normalize"],
+                                    help="convert RGB/RGBA PNGs to valid indexed PNGs in place"))
+    p.add_argument("files", nargs="*", help="default: every edited PNG")
+
+    p = with_project(sub.add_parser("palette-from-png", help="source tree: copy a PNG's colours into the .pal "
+                                                               "file the game uses for it"))
+    p.add_argument("images", nargs="+")
+
+    with_project(sub.add_parser("guide", help="print editing instructions for AI agents (AGENTS.md style)"))
 
     p = with_project(sub.add_parser("sheet", help="render many assets onto one contact sheet"))
     p.add_argument("prefix", nargs="?", default="", help="id prefix or category, e.g. 'pokemon' or 'items/01'")
@@ -163,9 +182,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-o", "--out", required=True)
 
     args = ap.parse_args(argv)
+    if args.cmd == "check":
+        args.cmd = "validate"
+    if args.cmd == "normalize":
+        args.cmd = "fix"
     try:
         return _run(args)
-    except ProjectError as e:
+    except ERRORS as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
@@ -211,7 +234,8 @@ def _run(args) -> int:
         print(f"wrote {args.out}")
         return 0
 
-    proj = Project(Path(args.project))
+    proj = open_project(Path(args.project), log=lambda m: print(m, file=sys.stderr))
+    decomp = proj.kind == "decomp"
     if args.cmd == "list":
         rows = []
         for a in sorted(proj.assets.values(), key=lambda a: a.id):
@@ -231,10 +255,16 @@ def _run(args) -> int:
             print(f"{len(rows)} asset(s)", file=sys.stderr)
         return 0
     if args.cmd == "describe":
-        print(json.dumps(describe(proj, proj.get(args.asset)), indent=2))
+        print(json.dumps(proj.describe(proj.get(args.asset)), indent=2))
         return 0
     if args.cmd == "status":
         st = proj.status()
+        if decomp and not args.json:
+            for s_ in st:
+                print(f"{s_['state']:<9} {s_['id']}")
+            if not st:
+                print("no changes to graphics")
+            return 0
         if args.json:
             print(json.dumps(st, indent=1))
         else:
@@ -245,8 +275,13 @@ def _run(args) -> int:
         return 0
     if args.cmd in ("validate", "build"):
         if args.cmd == "validate":
-            rep = proj.build(dry_run=True)
+            rep = proj.check(only_changed=not args.all) if decomp else proj.build(dry_run=True)
         else:
+            if decomp and args.make:
+                proj.config["build"]["command"] = args.make
+                proj.state_dir.mkdir(exist_ok=True)
+                (proj.state_dir / "config.json").write_text(json.dumps({"build": {"command": args.make}}, indent=2))
+                _exclude_state_dir(proj.root)
             patches = [] if args.no_patch else args.patch
             rep = proj.build(args.output, patches=patches)
         _print_report(rep, args.json)
@@ -276,36 +311,54 @@ def _run(args) -> int:
         print(f"imported {n} file(s); run `pae validate` then `pae build`")
         return 0
     if args.cmd == "revert":
-        targets = list(proj.assets.values()) if args.all else [proj.get(a) for a in args.assets]
+        if decomp and args.all:
+            targets = [proj.get(f) for f in proj.changed_files() if f in proj.assets]
+        else:
+            targets = list(proj.assets.values()) if args.all else [proj.get(a) for a in args.assets]
         n = 0
         for a in targets:
-            if args.all and not proj.is_touched(a) and proj.path(a).exists():
+            if args.all and not decomp and not proj.is_touched(a) and proj.path(a).exists():
                 continue
             proj.revert(a)
             n += 1
         print(f"reverted {n} asset(s)")
         return 0
     if args.cmd == "set":
+        if decomp:
+            raise ProjectError("`set` only applies to ROM projects; in a source tree the layout comes from the files")
         a = proj.get(args.asset)
         proj.relayout(a, args.frame_w, args.frame_h, args.cols, args.tiles_wide, args.palette, args.label, args.force)
         print(json.dumps(describe(proj, a)["layout"]))
         return 0
     if args.cmd == "sync-palettes":
-        ids = [proj.get(x).id for x in args.palettes] or [a.id for a in proj.assets.values()
-                                                          if a.kind == "palette" and proj.is_touched(a)]
+        if decomp:
+            ids = [proj.get(x).id for x in args.palettes] or [f for f in proj.changed_files() if f.endswith(".pal")]
+        else:
+            ids = [proj.get(x).id for x in args.palettes] or [a.id for a in proj.assets.values()
+                                                              if a.kind == "palette" and proj.is_touched(a)]
         for pid in ids:
             for aid in proj.sync_palette_views(pid):
                 print(f"recoloured {aid}")
         return 0
-    if args.cmd == "normalize":
-        done = proj.normalize()
-        print("\n".join(done) if done else "nothing to normalize")
+    if args.cmd == "fix":
+        done = proj.fix(args.files or None) if decomp else proj.normalize()
+        print("\n".join(f"converted {d}" for d in done) if done else "nothing to convert")
+        return 0
+    if args.cmd == "palette-from-png":
+        if not decomp:
+            raise ProjectError("in a ROM project, PNG palette edits are picked up by `pae build` automatically")
+        for f in args.images:
+            print(f"updated {proj.palette_from_png(proj.get(f))}")
+        return 0
+    if args.cmd == "guide":
+        from .previews import agents_guide, decomp_guide
+        print(decomp_guide(proj) if decomp else agents_guide(proj))
         return 0
     if args.cmd == "sheet":
         from .previews import contact_sheet
         pre = args.prefix.rstrip("/")
         sel = [a for a in sorted(proj.assets.values(), key=lambda a: a.id)
-               if (not pre or a.id == pre or a.id.startswith(pre + "/") or a.id.startswith(pre) or a.category == pre)
+               if (not pre or a.id.startswith(pre) or a.category == pre)
                and (not args.kind or a.kind == args.kind)]
         if not args.kind:
             sel = [a for a in sel if a.kind != "palette"] or sel
@@ -336,3 +389,15 @@ def _run(args) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
+def _exclude_state_dir(root: Path) -> None:
+    """Keep the tool's .pae/ folder out of git without touching the repository's .gitignore."""
+    excl = root / ".git" / "info" / "exclude"
+    try:
+        if excl.parent.exists():
+            text = excl.read_text() if excl.exists() else ""
+            if ".pae/" not in text:
+                excl.write_text(text + ("\n" if text and not text.endswith("\n") else "") + ".pae/\n")
+    except OSError:
+        pass

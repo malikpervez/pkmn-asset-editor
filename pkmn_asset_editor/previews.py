@@ -184,3 +184,59 @@ pae revert <asset-id> --project .                     # undo an edit
 There is also an MCP server (`pae mcp --project .`) exposing the same
 operations as tools, and a local web editor (`pae serve --project .`).
 """
+
+
+def decomp_guide(proj) -> str:
+    counts = proj.summary()
+    top = sorted(counts.items(), key=lambda kv: -kv[1])[:12]
+    lines = "\n".join(f"| `{k}` | {v} |" for k, v in top)
+    return f"""# Editing graphics in this repository with pae
+
+This is a pokeemerald-style source tree. Every graphic is a file in the repo
+(`graphics/**`, `data/tilesets/**`) and `make` builds the ROM from them, so an
+edit is just a change to a file. `pae` (pkmn-asset-editor) indexes the files from
+the `INCGFX_*`/`INCBIN_*` references in `src/`, knows which palette colours each
+image in game, and validates edits before you run `make`.
+
+| category | assets |
+|---|---|
+{lines}
+
+## Rules
+
+1. Graphics must stay **indexed PNGs** (gbagfx rejects RGB/RGBA). If a tool saved
+   RGBA, run `pae fix`.
+2. 4bpp images use colour indices 0-15 (index 0 = transparent for sprites).
+   Indices above 15 silently wrap around in gbagfx.
+3. **Keep sizes.** Front sprites are 64x128 (2 animation frames), back 64x64,
+   icons 32x64 (2 frames), item icons 24x24, trainer pics 64x64. Overworld sheets
+   must split into their frame size (`pae describe` shows it).
+4. **Which palette counts:** for Pokémon the game uses `normal.pal`/`shiny.pal`,
+   not the PNG's own palette. `pae describe <file>` shows `in_game_palette`.
+   If you changed colours inside a PNG whose in-game palette is a .pal file, run
+   `pae palette-from-png <file>`.
+5. When the PNG itself is the palette source (`.gbapal` built from the PNG), do not
+   add palette entries: gbagfx copies all of them into the ROM.
+6. Shiny palettes are matched to the normal palette **by index**. After
+   rebuilding a normal palette with `--new-palette`, update `shiny.pal` too.
+7. Tilesets: edit `<tileset>@tileset`, a coloured view of `tiles.png`. Only colour
+   indices are stored; the palette of each tile comes from `metatiles.bin`.
+8. Tilemap backgrounds: edit `<map>@bg`. Edits are cut back into 8x8 tiles (with
+   flip de-duplication) and written to the tiles PNG and the `.bin` tilemap.
+
+## Commands
+
+```
+pae list -c pokemon -q charizard          # find assets (ids are repo paths)
+pae describe graphics/pokemon/charizard/anim_front.png
+pae render graphics/pokemon/charizard/anim_front.png --palette graphics/pokemon/charizard/shiny.pal -o shiny.png
+pae sheet graphics/pokemon/charizard -o sheet.png
+pae import graphics/pokemon/charizard/back.png art.png --resize [--new-palette]
+pae import-dir drop/                       # drop/graphics/... mirrors repo paths
+pae fix                                    # RGB(A) PNGs -> indexed
+pae check                                  # validate edited files (pae check --all: everything)
+pae status / pae revert <file> / pae revert --all   # uses git
+pae build                                  # check, then make (pae build --make "make -j8 ...")
+pae serve                                  # web editor;  pae mcp  # MCP server for AI assistants
+```
+"""

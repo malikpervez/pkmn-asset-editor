@@ -1,13 +1,89 @@
 # pkmn-asset-editor
 
-Extract **every graphic** from a Gen 3 Pokémon ROM into an organised folder of
-ordinary PNG and palette files, edit them by hand, in the built-in web editor,
-or with an AI assistant, then **rebuild the ROM** with all edits inserted.
-Data that grows is relocated and its pointers are updated automatically.
+Organise, view and edit **every graphic** of a Gen 3 Pokémon game — battle
+sprites, icons, trainers, items, battle animations, overworld sprites, tilesets,
+backgrounds, UI — by hand, in a built-in web editor, or with an AI assistant,
+and get it back into the game safely.
 
-Supported games: **FireRed, LeafGreen, Ruby, Sapphire, Emerald**, in any
-language and revision, including ROM hacks whose tables were moved. Graphics
-tables are found by their structure, not by hardcoded offsets.
+It works in two modes:
+
+| Mode | For | "Inserting" edits |
+|---|---|---|
+| **Source tree** | **pokeemerald-expansion**, pokeemerald, pokefirered (decomp projects) | edits are written straight into the repo's PNG/.pal/.bin files, validated, and `make` builds the ROM |
+| **ROM** | unmodified retail FireRed/LeafGreen/Ruby/Sapphire/Emerald ROMs (or binary hacks) | edits are recompressed and written into a copy of the ROM, relocating data and repointing as needed |
+
+The same commands, web editor and MCP server work in both modes: pass the repo
+folder or an extracted ROM project as `--project`.
+
+## Source-tree mode (pokeemerald-expansion)
+
+In a decomp every graphic already is a file and `make` builds the ROM, so there
+is nothing to extract. `pae` adds the layer that makes editing them safe:
+
+* **An organised index of all ~21,000 graphics**, built from the `INCGFX_*` /
+  `INCBIN_*` references in `src/` (symbol names, output format, gbagfx
+  arguments such as frame sizes), grouped into categories (pokemon, trainers,
+  items, battle_anims, overworld, tilesets, …). Unreferenced files are flagged.
+* **The palette each image really uses in game**, which is often not the PNG's
+  own palette:
+  * Pokémon sprites → `normal.pal` / `shiny.pal`. Forms inherit from the parent
+    folder. Overworld followers → `overworld_normal.pal`.
+  * Icons → `icon_palettes/palN.pal` via `.iconPalIndex`, including ternaries
+    on config flags.
+  * Overworld sprites → `.paletteTag` through the graphics info and palette
+    tag tables.
+  * Trainers and items → paired symbols like `gTrainerFrontPic_X` ↔
+    `gTrainerPalette_X`, or `{ .iconPic, .iconPalette }` initializers.
+    Alternative palettes (shiny, a shared icon used by Super Potion) can be
+    previewed.
+* **Coloured, editable views of tilesets** (`…/general@tileset`). Each tile is
+  shown with the palette `metatiles.bin` gives it, and secondary tilesets
+  borrow their primary's palettes via `layouts.json`. **Tilemap backgrounds**
+  (`…/dark@bg`, battle environments, title screens) can be edited as one image
+  and are re-cut into tiles and a `.bin` tilemap.
+* **Validation (`pae check`)** that catches what breaks `make` or looks wrong:
+  * RGB/RGBA PNGs (gbagfx rejects them)
+  * sizes that are not multiples of 8, changed sizes, sheets that don't split
+    into frames
+  * colour indices above 15, which gbagfx silently wraps
+  * PNG palettes that grew, which overwrites neighbouring palettes in game
+  * colours edited in a PNG whose in-game palette is a separate `.pal`
+  * deleted files still referenced by the source
+* **Artwork conversion (`pae import`)**: any PNG (RGBA, any size, any number of
+  colours) is turned into a valid indexed PNG mapped to the in-game palette.
+  `--new-palette` builds a fresh palette, writes `normal.pal`, and remaps the
+  sibling sprites that share it. Art shaped like one frame fills every
+  animation frame.
+* **git-based** status and revert, and `pae build` = check + `make`.
+
+```bash
+pip install -e /path/to/pkmn-asset-editor
+cd ~/my-expansion-game
+
+pae check --all                       # sanity-check the whole tree (fast, read-only)
+pae serve                             # web editor at http://127.0.0.1:8765
+pae list -c pokemon -q charizard
+pae describe graphics/pokemon/charizard/anim_front.png     # size, frames, in-game palette, symbols
+pae import graphics/pokemon/charizard/back.png new_art.png --resize
+pae check                             # validates only what you changed
+pae build                             # check, then `make -jN` (pae build --make "make -j8 DEBUG=1")
+pae revert --all                      # undo (git checkout of the edited files)
+pae guide > GRAPHICS_AGENTS.md        # instructions for AI agents working in your repo
+```
+
+`pae` never commits, and writes nothing outside the files you edit and its own
+`.pae/` folder. `.pae/` is excluded via `.git/info/exclude`, so your `.gitignore`
+is not touched.
+
+## ROM mode
+
+Extract every graphic from a retail ROM into an organised folder of ordinary PNG
+and palette files, edit them, then **rebuild the ROM** with all edits inserted.
+Data that grows is relocated and its pointers are updated automatically.
+Graphics tables are found by their structure, not by hardcoded offsets, so
+every language and revision works, including binary hacks whose tables were
+moved. pokeemerald-expansion games use different data structures and their own
+compression, so use source-tree mode for those.
 
 | What | Where it ends up |
 |---|---|
@@ -21,7 +97,7 @@ tables are found by their structure, not by hardcoded offsets.
 | Map tilesets (tiles in their real colours + 16 palettes) and metatile previews | `graphics/tilesets/`, `previews/tilesets/` |
 | Any other LZ77-compressed graphics referenced by the game (title screens, menus, …) | `graphics/unknown/OFFSET.png` |
 
-## Install
+### Install
 
 ```bash
 pip install -e .          # Python 3.10+, installs numpy + Pillow and the `pae` command
@@ -30,7 +106,7 @@ pip install -e .          # Python 3.10+, installs numpy + Pillow and the `pae` 
 You must supply your own legally obtained ROM. ROMs and built files are
 git-ignored.
 
-## Quick start
+### Quick start
 
 ```bash
 pae scan  firered.gba                 # see what is found (no files written)
@@ -48,7 +124,7 @@ pae build                             # -> build/rom.gba + build/rom.ups + build
 `original.gba` inside the project is never modified. Every build starts again
 from it, so builds are repeatable and you can never corrupt your base ROM.
 
-### The web editor
+### The web editor (both modes)
 
 `pae serve` opens a local gallery with categories and search. Clicking an asset
 opens:
@@ -65,7 +141,7 @@ opens:
 **Build ROM** in the header writes the ROM and lets you download it or the
 patches.
 
-## Editing rules
+### Editing rules
 
 The tool enforces these rules and converts input for you wherever it can:
 
@@ -90,7 +166,7 @@ The tool enforces these rules and converts input for you wherever it can:
 6. Overworld frames, icons and tileset palettes are stored uncompressed in the
    game, so they are always written in place.
 
-## How reinsertion works
+### How reinsertion works
 
 * Each asset points at one or more **blobs**: pieces of ROM data, either
   LZ77-compressed or raw. The build decodes every edited file and compares it
@@ -114,8 +190,9 @@ The tool enforces these rules and converts input for you wherever it can:
 
 The project is designed so an AI agent can work on it directly:
 
-* **`AGENTS.md`** is written into every project. It explains the layout, the
-  rules above and the commands.
+* **`AGENTS.md`** is written into every ROM project. In a source tree,
+  `pae guide` prints the equivalent. Both explain the layout, the rules and the
+  commands.
 * **`manifest.json`** describes every asset: id, file, label, frame layout,
   linked palettes, aliases and ROM offsets. `pae describe <id>` prints one
   asset with its constraints as JSON. `pae list --json` lists them all.
@@ -132,21 +209,28 @@ The project is designed so an AI agent can work on it directly:
   images, setting palettes, validating and building.
 
   ```bash
-  claude mcp add pae -- pae mcp --project /path/to/fr-project       # Claude Code
+  claude mcp add pae -- pae mcp --project ~/my-expansion-game       # Claude Code, source tree
+  claude mcp add pae -- pae mcp --project /path/to/fr-project       # or an extracted ROM project
   ```
   ```json
   { "mcpServers": { "pae": { "command": "pae", "args": ["mcp", "--project", "/path/to/fr-project"] } } }
   ```
 
-Example prompt for an agent: *"Read AGENTS.md. Give every Fire-type Pokémon's
-shiny palette a blue tint, show me a contact sheet of the results, then validate
-and build."*
+Example prompts for an agent:
+*"Run `pae guide` and follow it. Give every Fire-type Pokémon's shiny palette
+a blue tint, show me a contact sheet of the results, then run `pae check`."*
+*"Replace the back sprites in drop/ with `pae import-dir drop --resize`, fix
+anything `pae check` reports, then build."*
 
 ## Command reference
 
 | Command | Purpose |
 |---|---|
 | `pae scan ROM` | report which tables are found in a ROM |
+| `pae check [--all]` | source tree: validate edited files (or every graphic) |
+| `pae fix [FILE…]` | convert RGB/RGBA PNGs into valid indexed PNGs (source tree and ROM project) |
+| `pae palette-from-png FILE…` | source tree: copy a PNG's colours into the `.pal` the game uses for it |
+| `pae guide` | print AI-agent instructions for the project |
 | `pae extract ROM -o DIR [--force]` | create a project |
 | `pae list [-c CATEGORY] [-k KIND] [-q TEXT] [--json]` | list assets |
 | `pae describe ID` | one asset plus its constraints (JSON) |
@@ -154,7 +238,6 @@ and build."*
 | `pae import-dir DIR [--resize] [--new-palette]` | bulk import by path |
 | `pae set ID [--frame-w N --frame-h N --cols N --tiles-wide N --palette ID --label TEXT]` | re-layout or re-colour an asset's view (useful for `unknown/` assets) |
 | `pae sync-palettes [ID…]` | recolour PNGs after editing `.pal` files |
-| `pae normalize` | convert edited RGB PNGs to indexed PNGs in place |
 | `pae sheet PREFIX -o FILE` / `pae render ID -o FILE` | previews |
 | `pae status` / `pae validate` / `pae build [-o FILE] [--no-patch]` | check and build |
 | `pae revert ID… / --all` | restore originals |
@@ -163,7 +246,7 @@ and build."*
 
 All project commands take `-p/--project DIR` (default `.`, or `$PAE_PROJECT`).
 
-## How tables are found
+## How ROM-mode tables are found
 
 `pae` reads the ROM as an array of 32-bit words and recognises each table type
 by the shape of its entries:
@@ -189,8 +272,13 @@ by the shape of its entries:
 
 ## Limitations
 
-* Gen 3 GBA games only. The project model is generic, but discovery is Gen 3
-  specific.
+* Gen 3 GBA games only.
+* Source-tree mode has been run against the latest upstream
+  pokeemerald-expansion (it indexes all ~21.5k graphics and `pae check --all`
+  is clean), but not against your fork. Palette linking relies on expansion's
+  naming and data conventions, so heavily customised code may need
+  `pae describe` to confirm which palette an image uses. `pae build` only
+  calls your `make`, so your normal toolchain must be installed.
 * Uncompressed graphics outside the tables above are not found
   automatically.
 * Map layouts, metatile arrangements, animation scripts and text are not
@@ -201,9 +289,10 @@ by the shape of its entries:
   extremely unlikely.
 * Trainer pictures and animation tags are named by number, because the ROM
   has no names for them. Use `pae set ID --label …` to add your own.
-* Discovery has only been tested against a synthetic ROM with the retail table
-  layouts (see `tests/synthrom.py`), not against retail ROMs. If something is
-  missing on a real ROM, `pae scan` shows what was and wasn't found.
+* ROM-mode discovery has only been tested against a synthetic ROM with the
+  retail table layouts (see `tests/synthrom.py`), not against retail ROMs. If
+  something is missing on a real ROM, `pae scan` shows what was and wasn't
+  found.
 
 ## Development
 
@@ -213,7 +302,9 @@ pytest -q
 ```
 
 The tests build a synthetic ROM (`tests/synthrom.py`) containing every table
-type. They check extraction, no-op builds (byte-identical output), in-place and
+type, and a miniature expansion-style git repository (`tests/decomp_fixture.py`). They check extraction, no-op builds (byte-identical output), in-place and
 relocated edits with pointer updates, palette edits and conflicts, RGBA import,
 tilesets, background re-tiling, overworld frames, patches, the MCP server and
-the web API.
+the web API. In source-tree mode they also check palette linking, validation,
+`fix`, imports with new palettes, tileset/background views, git revert and
+`make`.

@@ -244,6 +244,56 @@ class Project:
                     pass
         return pals
 
+    # ------------------------------------------------------------------ interface shared with DecompProject
+    kind = "rom"
+
+    @property
+    def title(self) -> str:
+        return self.config["game"]["name"]
+
+    def palette_colors(self, pid: str) -> list[RGB]:
+        a = self.get(pid)
+        if self.is_touched(a):
+            try:
+                cols = read_jasc(self.path(a))
+                if len(cols) == a.layout["colors"]:
+                    return cols
+            except (OSError, ValueError):
+                pass
+        return decode_palette(self.raw(a.blobs["data"]))
+
+    def set_palette(self, pid: str, colors: list[RGB]) -> list[str]:
+        a = self.get(pid)
+        if a.kind != "palette":
+            raise ProjectError(f"{a.id} is not a palette")
+        if len(colors) != a.layout["colors"]:
+            raise ProjectError(f"{a.id} needs exactly {a.layout['colors']} colours")
+        write_jasc(self.path(a), colors)
+        return self.sync_palette_views(a.id)
+
+    def view(self, asset: Asset, palette_override: str | None = None):
+        """(indices, PLTE, index-0-is-transparent) of the asset's editable PNG."""
+        p = self.path(asset)
+        with Image.open(p) as im:
+            mode = im.mode
+        if mode != "P":
+            self.import_image(asset, p)
+        img = load_png(p)
+        return img.indices, list(img.palette or []), asset.kind == "sprite" and bool(asset.palettes)
+
+    def write_view(self, asset: Asset, indices: np.ndarray) -> list[str]:
+        img = load_png(self.path(asset))
+        save_indexed_png(self.path(asset), indices, [tuple(c) for c in img.palette],
+                         transparent0=asset.kind == "sprite" and bool(asset.palettes))
+        return []
+
+    def output_rom(self) -> Path:
+        return self.root / (self.config["build"].get("output") or "build/rom.gba")
+
+    def describe(self, asset: Asset) -> dict:
+        from .cli import describe
+        return describe(self, asset)
+
     def users_of_palette(self, pid: str) -> list[str]:
         return [a.id for a in self.assets.values() if any(l["palette"] == pid for l in a.palettes)]
 
@@ -575,7 +625,9 @@ class Project:
                 if not resize:
                     raise ProjectError(f"{src} is {im.size[0]}x{im.size[1]}, {asset.id} needs "
                                        f"{target[0]}x{target[1]} (pass --resize to scale it)")
-                im = _fit(im.convert("RGBA"), target)
+                lay = asset.layout
+                frame = (lay["frame_w"] * 8, lay["frame_h"] * 8) if asset.kind == "sprite" else None
+                im = fit_to_asset(im, target, frame)
                 notes.append(f"resized to {target[0]}x{target[1]}")
             rgba = np.array(im.convert("RGBA"), dtype=np.uint8)
             src_indexed = load_png_from(im) if im.mode == "P" else None
@@ -691,6 +743,23 @@ def load_png_from(im: Image.Image) -> LoadedImage:
     raw_pal = im.getpalette() or []
     pal = [tuple(raw_pal[i:i + 3]) for i in range(0, len(raw_pal) - 2, 3)]
     return LoadedImage(im.size[0], im.size[1], idx, pal, np.array(im.convert("RGBA"), dtype=np.uint8))
+
+
+def fit_to_asset(im: Image.Image, size: tuple[int, int], frame: tuple[int, int] | None = None) -> Image.Image:
+    """Scale artwork for an asset. If the art is shaped like one animation frame rather than the whole
+    sheet, it fills one frame and is repeated in every frame (e.g. Emerald's 2-frame front sprites)."""
+    import math
+    im = im.convert("RGBA")
+    if frame and frame != size and size[0] % frame[0] == 0 and size[1] % frame[1] == 0:
+        aspect = im.width / im.height
+        if abs(math.log(aspect / (frame[0] / frame[1]))) < abs(math.log(aspect / (size[0] / size[1]))):
+            one = _fit(im, frame)
+            sheet = Image.new("RGBA", size, (0, 0, 0, 0))
+            for y in range(0, size[1], frame[1]):
+                for x in range(0, size[0], frame[0]):
+                    sheet.paste(one, (x, y))
+            return sheet
+    return _fit(im, size)
 
 
 def _fit(im: Image.Image, size: tuple[int, int]) -> Image.Image:

@@ -154,6 +154,7 @@ window.addEventListener('resize', syncHeader);
 async function init() {
   syncHeader();
   const s = await api('/api/summary');
+  if (s.mode === 'decomp') { $('#btn-build').textContent = 'Check & make'; $('#btn-validate').textContent = 'Check edits'; }
   $('#game').textContent = `${s.game.name} · ${s.game.code}`;
   const cats = Object.entries(s.categories).sort();
   const nav = $('#cats');
@@ -430,7 +431,13 @@ async function build(dry) {
     let h = `<h3>${dry ? 'Validation' : 'Build'} ${r.ok ? 'succeeded' : 'failed'}</h3>`;
     h += r.errors.map(e => `<div class="msg err">${esc(e)}</div>`).join('');
     h += r.warnings.map(e => `<div class="msg warn">${esc(e)}</div>`).join('');
-    if (r.ok) {
+    if (r.checked !== undefined) {
+      // source-tree mode: validation of edited files, then `make`
+      if (r.checked !== undefined) h += `<p>${r.checked} edited file(s) checked.</p>`;
+      if (r.command) h += `<p class="muted">$ ${esc(r.command)} → exit ${r.returncode} (${r.seconds}s)</p>`;
+      if (r.output) h += `<pre>${esc(r.output.split('\n').slice(-40).join('\n'))}</pre>`;
+      if (r.ok && !dry) h += `<div class="row"><a class="btn" href="/api/download?what=rom">Download ROM</a></div>`;
+    } else if (r.ok) {
       h += `<p>${r.changed_assets.length} asset(s) changed · ${r.in_place.length} block(s) written in place · ${r.relocated.length} relocated to free space.</p>`;
       if (r.relocated.length) h += '<pre>' + r.relocated.map(x => `${x.from} → ${x.to} (${x.size} bytes, ${x.pointers_updated} pointer(s) updated)`).join('\n') + '</pre>';
       if (!dry) h += `<div class="row"><a class="btn" href="/api/download?what=rom">Download ROM</a>` +

@@ -12,20 +12,23 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
-from .cli import describe
-from .gfx import write_jasc
-from .project import Project, ProjectError, file_sha1
+from .decomp import DecompError
+from .project import ProjectError, file_sha1
+
+ERRORS = (ProjectError, DecompError, ValueError, KeyError)
 
 WEB = Path(__file__).with_name("web")
 
 
 class _State:
-    def __init__(self, proj: Project):
+    def __init__(self, proj):
         self.proj = proj
         self.lock = threading.RLock()
         self._sha: dict[str, tuple[float, int, str]] = {}
 
     def modified(self, asset) -> bool:
+        if self.proj.kind == "decomp":
+            return self.proj.is_touched(asset)
         p = self.proj.path(asset)
         try:
             st = p.stat()
@@ -79,7 +82,7 @@ def make_handler(state: _State):
             try:
                 with state.lock:
                     self._get(path, q)
-            except ProjectError as e:
+            except ERRORS as e:
                 self._error(str(e))
             except Exception as e:  # noqa: BLE001
                 self._error(f"{type(e).__name__}: {e}", HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -89,7 +92,7 @@ def make_handler(state: _State):
                 return self._send((WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
             if path == "/api/summary":
                 return self._json({"game": proj.config["game"], "categories": proj.summary(),
-                                   "notes": proj.config.get("notes", [])})
+                                   "notes": proj.config.get("notes", []), "mode": proj.kind})
             if path == "/api/assets":
                 cat, query, kind = q.get("category"), (q.get("q") or "").lower(), q.get("kind")
                 rows = []
@@ -103,13 +106,15 @@ def make_handler(state: _State):
                 return self._json(rows)
             if path == "/api/asset":
                 a = proj.get(q["id"])
-                d = describe(proj, a)
+                d = proj.describe(a)
                 d["palette_colors"] = {}
-                pals = proj.current_palettes()
                 for pid in {l["palette"] for l in a.palettes} | ({a.id} if a.kind == "palette" else set()) | \
                         set(a.meta.get("alt_palettes", [])):
-                    if pid in pals:
-                        d["palette_colors"][pid] = pals[pid]
+                    try:
+                        d["palette_colors"][pid] = proj.palette_colors(pid)
+                    except (OSError, *ERRORS):
+                        pass
+                d["modified"] = state.modified(a)
                 return self._json(d)
             if path == "/api/image":
                 a = proj.get(q["id"])
@@ -128,9 +133,9 @@ def make_handler(state: _State):
                 return self._json(proj.status())
             if path == "/api/download":
                 which = q.get("what", "rom")
-                out = proj.root / (proj.config["build"].get("output") or "build/rom.gba")
-                target = out if which == "rom" else out.with_suffix("." + which)
-                if which not in ("rom", "ups", "ips") or not target.exists():
+                out = proj.output_rom()
+                target = out if which == "rom" or out is None else out.with_suffix("." + which)
+                if which not in ("rom", "ups", "ips") or target is None or not target.exists():
                     return self._error("not built yet", HTTPStatus.NOT_FOUND)
                 return self._send(target.read_bytes(), "application/octet-stream",
                                   headers={"Content-Disposition": f'attachment; filename="{target.name}"'})
@@ -142,7 +147,7 @@ def make_handler(state: _State):
             try:
                 with state.lock:
                     self._post(path, q)
-            except ProjectError as e:
+            except ERRORS as e:
                 self._error(str(e))
             except Exception as e:  # noqa: BLE001
                 self._error(f"{type(e).__name__}: {e}", HTTPStatus.INTERNAL_SERVER_ERROR)
@@ -159,14 +164,8 @@ def make_handler(state: _State):
                     os.unlink(tmp.name)
                 return self._json({"ok": True, "notes": notes})
             if path == "/api/palette":
-                a = proj.get(q["id"])
-                if a.kind != "palette":
-                    raise ProjectError(f"{a.id} is not a palette")
                 colors = [tuple(int(v) for v in c[:3]) for c in json.loads(self._body())["colors"]]
-                if len(colors) != a.layout["colors"]:
-                    raise ProjectError(f"{a.id} needs {a.layout['colors']} colours")
-                write_jasc(proj.path(a), colors)
-                return self._json({"ok": True, "recoloured": proj.sync_palette_views(a.id)})
+                return self._json({"ok": True, "recoloured": proj.set_palette(proj.get(q["id"]).id, colors)})
             if path == "/api/revert":
                 proj.revert(proj.get(q["id"]))
                 return self._json({"ok": True})
@@ -178,10 +177,10 @@ def make_handler(state: _State):
     return Handler
 
 
-def serve(proj: Project, host: str = "127.0.0.1", port: int = 8765) -> None:
+def serve(proj, host: str = "127.0.0.1", port: int = 8765) -> None:
     state = _State(proj)
     httpd = ThreadingHTTPServer((host, port), make_handler(state))
-    print(f"pae web editor for {proj.config['game']['name']} on http://{host}:{port}/  (Ctrl+C to stop)")
+    print(f"pae web editor for {proj.title} on http://{host}:{port}/  (Ctrl+C to stop)")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

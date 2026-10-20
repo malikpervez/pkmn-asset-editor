@@ -13,14 +13,14 @@ import sys
 import tempfile
 from pathlib import Path
 
-import numpy as np
 from PIL import Image
 
 from . import __version__
-from .cli import describe
-from .gfx import load_png, save_indexed_png, write_jasc
+from .decomp import DecompError
 from .previews import contact_sheet
-from .project import Project, ProjectError
+from .project import ProjectError
+
+ERRORS = (ProjectError, DecompError, ValueError, KeyError, OSError)
 
 PROTOCOL = "2025-06-18"
 
@@ -58,13 +58,13 @@ TOOLS = [
     ("revert_asset", "Restore an asset to the original ROM contents.", _schema({"id": S}, ["id"])),
     ("status", "List assets that were edited.", _schema({})),
     ("validate", "Check every edit (sizes, colours, conflicts, tile limits) without writing a ROM.", _schema({})),
-    ("build_rom", "Write the edited ROM and UPS/IPS patches into the project's build folder.",
-     _schema({"output": S})),
+    ("build_rom", "ROM project: write the edited ROM and UPS/IPS patches. Source tree: check the edits, then run "
+     "`make` and return its output.", _schema({"output": S})),
 ]
 
 
 class Server:
-    def __init__(self, proj: Project):
+    def __init__(self, proj):
         self.proj = proj
 
     # ------------------------------------------------------------------ tools
@@ -72,14 +72,6 @@ class Server:
         buf = io.BytesIO()
         im.save(buf, "PNG")
         return {"type": "image", "data": base64.b64encode(buf.getvalue()).decode(), "mimeType": "image/png"}
-
-    def _indexed(self, a):
-        p = self.proj.path(a)
-        with Image.open(p) as im:
-            mode = im.mode
-        if mode != "P":
-            self.proj.import_image(a, p)
-        return load_png(p)
 
     def call(self, name: str, args: dict) -> list[dict]:
         proj = self.proj
@@ -98,7 +90,7 @@ class Server:
             limit = args.get("limit") or 200
             return txt({"total": len(rows), "assets": rows[:limit]})
         if name == "describe_asset":
-            return txt(describe(proj, proj.get(args["id"])))
+            return txt(proj.describe(proj.get(args["id"])))
         if name == "view_asset":
             a = proj.get(args["id"])
             pal = proj.get(args["palette"]).id if args.get("palette") else None
@@ -116,19 +108,20 @@ class Server:
             a = proj.get(args["id"])
             if a.kind == "palette":
                 raise ProjectError("palettes have no pixels; use describe_asset")
-            img = self._indexed(a)
+            indices, _plte, _t = proj.view(a)
+            hgt, wid = indices.shape
             x, y = args.get("x", 0), args.get("y", 0)
-            w, h = args.get("w") or img.width - x, args.get("h") or img.height - y
-            region = img.indices[y:y + h, x:x + w]
-            two = a.kind != "sprite"
+            w, h = args.get("w") or wid - x, args.get("h") or hgt - y
+            region = indices[y:y + h, x:x + w]
+            two = a.kind in ("tileset", "bg") or int(indices.max(initial=0)) > 15
             rows = ["".join(("%02x" if two else "%x") % v for v in row) for row in region]
             return txt({"id": a.id, "x": x, "y": y, "w": region.shape[1], "h": region.shape[0],
                         "chars_per_pixel": 2 if two else 1, "rows": rows})
         if name == "paint_pixels":
             a = proj.get(args["id"])
-            img = self._indexed(a)
-            idx = img.indices.copy()
-            two = a.kind != "sprite"
+            indices, _plte, _t = proj.view(a)
+            idx = indices.copy()
+            two = a.kind in ("tileset", "bg") or int(indices.max(initial=0)) > 15
             step = 2 if two else 1
             x0, y0 = args.get("x", 0), args.get("y", 0)
             for dy, row in enumerate(args.get("rows") or []):
@@ -137,15 +130,14 @@ class Server:
                     if "." in ch:
                         continue
                     px, py = x0 + dx // step, y0 + dy
-                    if 0 <= px < img.width and 0 <= py < img.height:
+                    if 0 <= px < idx.shape[1] and 0 <= py < idx.shape[0]:
                         idx[py, px] = int(ch, 16)
             for r in args.get("rects") or []:
                 idx[r["y"]:r["y"] + r["h"], r["x"]:r["x"] + r["w"]] = int(r["index"])
-            if not two and int(idx.max(initial=0)) > 15:
+            if a.kind == "sprite" and a.layout.get("bpp", 4) == 4 and int(idx.max(initial=0)) > 15:
                 raise ProjectError("sprite colour indices must be 0-15")
-            plte = [tuple(c) for c in img.palette]
-            save_indexed_png(proj.path(a), idx, plte, transparent0=a.kind == "sprite" and bool(a.palettes))
-            return txt(f"updated {a.file}")
+            notes = proj.write_view(a, idx)
+            return txt({"updated": a.file, "notes": notes})
         if name == "import_image":
             a = proj.get(args["id"])
             src = args.get("path")
@@ -165,9 +157,6 @@ class Server:
                     Path(tmp.name).unlink(missing_ok=True)
             return txt({"ok": True, "file": a.file, "notes": notes})
         if name == "set_palette":
-            a = proj.get(args["id"])
-            if a.kind != "palette":
-                raise ProjectError(f"{a.id} is not a palette")
             cols = []
             for c in args["colors"]:
                 if isinstance(c, str):
@@ -175,10 +164,7 @@ class Server:
                     cols.append(tuple(int(c[i:i + 2], 16) for i in (0, 2, 4)))
                 else:
                     cols.append(tuple(int(v) for v in c[:3]))
-            if len(cols) != a.layout["colors"]:
-                raise ProjectError(f"{a.id} needs exactly {a.layout['colors']} colours")
-            write_jasc(proj.path(a), cols)
-            return txt({"ok": True, "recoloured": proj.sync_palette_views(a.id)})
+            return txt({"ok": True, "recoloured": proj.set_palette(proj.get(args["id"]).id, cols)})
         if name == "revert_asset":
             proj.revert(proj.get(args["id"]))
             return txt("reverted")
@@ -201,9 +187,11 @@ class Server:
                 ver = (msg.get("params") or {}).get("protocolVersion") or PROTOCOL
                 result = {"protocolVersion": ver, "capabilities": {"tools": {}},
                           "serverInfo": {"name": "pkmn-asset-editor", "version": __version__},
-                          "instructions": "Tools for editing the graphics of a Gen 3 Pokémon ROM project. Start "
-                                          "with list_assets/describe_asset, look with view_asset, edit with "
-                                          "paint_pixels/import_image/set_palette, then validate and build_rom."}
+                          "instructions": "Tools for editing the graphics of a Gen 3 Pokémon game (a pokeemerald-"
+                                          "style source tree or an extracted ROM project). Start with "
+                                          "list_assets/describe_asset, look with view_asset, edit with "
+                                          "paint_pixels/import_image/set_palette, then validate and build_rom. "
+                                          "Respect describe_asset's constraints (size, colours, in-game palette)."}
             elif method == "ping":
                 result = {}
             elif method == "tools/list":
@@ -213,7 +201,7 @@ class Server:
                 try:
                     content = self.call(params.get("name"), params.get("arguments") or {})
                     result = {"content": content, "isError": False}
-                except (ProjectError, ValueError, KeyError, OSError) as e:
+                except ERRORS as e:
                     result = {"content": [{"type": "text", "text": f"error: {e}"}], "isError": True}
             else:
                 return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"unknown method {method}"}}
@@ -222,7 +210,7 @@ class Server:
         return {"jsonrpc": "2.0", "id": mid, "result": result}
 
 
-def run(proj: Project, stdin=None, stdout=None) -> None:
+def run(proj, stdin=None, stdout=None) -> None:
     stdin = stdin or sys.stdin
     stdout = stdout or sys.stdout
     srv = Server(proj)
