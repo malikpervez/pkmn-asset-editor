@@ -1,0 +1,338 @@
+"""Command line interface: ``pae <command>``."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from pathlib import Path
+
+from . import __version__
+from .project import Project, ProjectError
+
+
+def describe(proj: Project, asset) -> dict:
+    """Everything an editor (human or AI) needs to know to change one asset safely."""
+    d = asset.to_dict()
+    d.pop("sha1", None)
+    hx = lambda v: [f"0x{x:06X}" for x in v] if isinstance(v, list) else f"0x{v:06X}"
+    d["blobs"] = {k: hx(v) for k, v in asset.blobs.items()}
+    d["meta"] = {k: (hx(v) if k.endswith("offset") and isinstance(v, int) else v) for k, v in asset.meta.items()}
+    if asset.kind == "tileset":
+        d["layout"] = {k: v for k, v in asset.layout.items() if k != "banks"}
+    d["file"] = asset.file
+    d["absolute_path"] = str(proj.path(asset))
+    d["modified"] = proj.is_touched(asset)
+    if asset.kind == "palette":
+        d["constraints"] = {"colors": asset.layout["colors"], "format": "JASC-PAL; 15-bit colour (channels rounded to multiples of 8)",
+                            "used_by": proj.users_of_palette(asset.id)}
+    else:
+        w, h = proj._dims(asset)
+        c = {"width": w, "height": h}
+        if asset.kind == "sprite":
+            c.update({"format": "4-bit indexed PNG, 16 colours, index 0 = transparent",
+                      "frame_size_px": [asset.layout["frame_w"] * 8, asset.layout["frame_h"] * 8],
+                      "frames": asset.layout["frames"], "frame_arrangement": f"{asset.layout['cols']} per row"})
+        elif asset.kind == "tileset":
+            c.update({"format": "8-bit indexed PNG, pixel = bank*16 + colour; only the colour is stored",
+                      "tiles": asset.layout["count"]})
+        else:
+            c.update({"format": "8-bit indexed PNG, pixel = bank*16 + colour; re-tiled automatically",
+                      "max_unique_tiles": asset.layout["tiles"], "retile_allowed": asset.layout.get("retile", False)})
+        shared = {}
+        for link in asset.palettes:
+            users = [u for u in proj.users_of_palette(link["palette"]) if u != asset.id]
+            if users:
+                shared[link["palette"]] = users
+        c["palette_shared_with"] = shared
+        d["constraints"] = c
+    return d
+
+
+def _print_report(rep, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(rep.to_dict(), indent=2))
+        return
+    for w in rep.warnings:
+        print(f"warning: {w}")
+    for e in rep.errors:
+        print(f"error: {e}")
+    if rep.ok:
+        print(f"{len(rep.changed_assets)} asset(s) changed: {len(rep.in_place)} block(s) written in place, "
+              f"{len(rep.relocated)} relocated")
+        for r in rep.relocated:
+            print(f"  moved {r['from']} -> {r['to']} ({r['size']} bytes, {r['pointers_updated']} pointer(s) updated)")
+        if rep.output:
+            print(f"wrote {rep.output}")
+        for p in rep.patches:
+            print(f"wrote {p}")
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(prog="pae", description="Extract, organise, edit and re-insert Gen 3 Pokémon ROM graphics.")
+    ap.add_argument("--version", action="version", version=__version__)
+    sub = ap.add_subparsers(dest="cmd", required=True)
+
+    def with_project(p):
+        p.add_argument("--project", "-p", default=os.environ.get("PAE_PROJECT", "."), help="project folder (default: .)")
+        return p
+
+    p = sub.add_parser("extract", help="extract every graphic from a ROM into a new project folder")
+    p.add_argument("rom")
+    p.add_argument("-o", "--out", required=True)
+    p.add_argument("--force", action="store_true", help="overwrite an existing project")
+
+    p = sub.add_parser("scan", help="show which graphics tables are found in a ROM (no project needed)")
+    p.add_argument("rom")
+
+    p = with_project(sub.add_parser("import-dir", help="import a folder of images; paths mirror asset ids"))
+    p.add_argument("folder", help="e.g. a folder containing pokemon/025_pikachu/front.png")
+    p.add_argument("--resize", action="store_true")
+    p.add_argument("--new-palette", action="store_true")
+
+    p = with_project(sub.add_parser("list", help="list assets"))
+    p.add_argument("--category", "-c")
+    p.add_argument("--kind", "-k", choices=["sprite", "palette", "tileset", "bg"])
+    p.add_argument("--query", "-q", help="substring of id or label")
+    p.add_argument("--json", action="store_true")
+
+    p = with_project(sub.add_parser("describe", help="show one asset and its editing constraints"))
+    p.add_argument("asset")
+
+    p = with_project(sub.add_parser("status", help="list edited assets"))
+    p.add_argument("--json", action="store_true")
+
+    p = with_project(sub.add_parser("validate", help="check all edits without writing a ROM"))
+    p.add_argument("--json", action="store_true")
+
+    p = with_project(sub.add_parser("build", help="write the edited ROM (and patches)"))
+    p.add_argument("-o", "--output", help="output ROM path (default: build/rom.gba)")
+    p.add_argument("--patch", action="append", choices=["ups", "ips"], help="patch format(s) to write")
+    p.add_argument("--no-patch", action="store_true")
+    p.add_argument("--json", action="store_true")
+
+    p = with_project(sub.add_parser("import", help="convert any image into an asset (palette mapping, resizing)"))
+    p.add_argument("asset")
+    p.add_argument("source")
+    p.add_argument("--resize", action="store_true", help="scale the image to fit the asset size")
+    p.add_argument("--new-palette", action="store_true", help="build a new palette from the image")
+
+    p = with_project(sub.add_parser("revert", help="restore assets to their original ROM contents"))
+    p.add_argument("assets", nargs="*")
+    p.add_argument("--all", action="store_true")
+
+    p = with_project(sub.add_parser("set", help="change how an asset is laid out / labelled / previewed"))
+    p.add_argument("asset")
+    p.add_argument("--frame-w", type=int, help="frame width in 8px tiles")
+    p.add_argument("--frame-h", type=int, help="frame height in 8px tiles")
+    p.add_argument("--cols", type=int, help="frames per row")
+    p.add_argument("--tiles-wide", type=int, help="sheet width in tiles (single-frame view)")
+    p.add_argument("--palette", help="palette asset used to colour this image ('none' for grayscale)")
+    p.add_argument("--label")
+    p.add_argument("--force", action="store_true")
+
+    p = with_project(sub.add_parser("sync-palettes", help="re-colour PNGs after editing .pal files"))
+    p.add_argument("palettes", nargs="*", help="palette ids (default: every edited palette)")
+
+    with_project(sub.add_parser("normalize", help="convert edited RGB/RGBA PNGs to indexed PNGs in place"))
+
+    p = with_project(sub.add_parser("sheet", help="render many assets onto one contact sheet"))
+    p.add_argument("prefix", nargs="?", default="", help="id prefix or category, e.g. 'pokemon' or 'items/01'")
+    p.add_argument("-o", "--out", required=True)
+    p.add_argument("--kind", choices=["sprite", "palette", "tileset", "bg"])
+    p.add_argument("--scale", type=int, default=2)
+    p.add_argument("--limit", type=int, default=200)
+    p.add_argument("--width", type=int, default=1600)
+
+    p = with_project(sub.add_parser("render", help="render one asset (optionally with another palette) to a PNG"))
+    p.add_argument("asset")
+    p.add_argument("-o", "--out", required=True)
+    p.add_argument("--palette", help="e.g. pokemon/025_pikachu/shiny")
+    p.add_argument("--scale", type=int, default=1)
+
+    p = with_project(sub.add_parser("serve", help="start the local web editor"))
+    p.add_argument("--host", default="127.0.0.1")
+    p.add_argument("--port", type=int, default=8765)
+
+    with_project(sub.add_parser("mcp", help="run an MCP server on stdio for AI assistants"))
+
+    p = sub.add_parser("apply-patch", help="apply a UPS or IPS patch to a ROM")
+    p.add_argument("rom")
+    p.add_argument("patch")
+    p.add_argument("-o", "--out", required=True)
+
+    args = ap.parse_args(argv)
+    try:
+        return _run(args)
+    except ProjectError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+def _run(args) -> int:
+    if args.cmd == "extract":
+        Project.create(args.rom, args.out, force=args.force)
+        print(f"project ready in {args.out} – see {Path(args.out) / 'AGENTS.md'}")
+        return 0
+    if args.cmd == "scan":
+        from .discovery import discover
+        from .rom import Rom
+        rom = Rom.load(args.rom)
+        d = discover(rom)
+        print(f"{rom.info.name} [{rom.info.code}] '{rom.info.title}' rev {rom.info.version}")
+        row = lambda name, off, n: print(f"  {name:<28} {('0x%06X' % off) if off is not None else '-':>10}  {n} entries")
+        for k, t in d.mon_pic_tables.items():
+            row(f"pokemon {k} pics", t.offset, len(t.entries))
+        for name, t in (("pokemon palettes", d.mon_palettes), ("pokemon shiny palettes", d.mon_shiny_palettes),
+                        ("pokemon icon palettes", d.mon_icon_palettes), ("trainer pics", d.trainer_pics),
+                        ("trainer palettes", d.trainer_palettes), ("battle anim sprites", d.anim_pics),
+                        ("battle anim palettes", d.anim_palettes)):
+            row(name, t.offset if t else None, len(t.entries) if t else 0)
+        print(f"  {'species names':<28} {len(d.species_names):>10}  ({', '.join(d.species_names[1:4])}…)")
+        print(f"  {'pokemon icons':<28} {len(d.mon_icons):>10}")
+        print(f"  {'item icons':<28} {len(d.item_icons):>10}  ({len(d.item_names)} names)")
+        print(f"  {'anim sprite frame sizes':<28} {len(d.anim_frame_dims):>10}  (from sprite templates)")
+        print(f"  {'battle anim backgrounds':<28} {len(d.anim_backgrounds):>10}")
+        print(f"  {'battle backgrounds':<28} {len(d.battle_backgrounds):>10}")
+        print(f"  {'overworld graphics':<28} {len(d.ow_graphics):>10}  ({len(d.ow_graphics_ids)} with ids, "
+              f"{len(d.ow_palettes)} palettes)")
+        print(f"  {'map tilesets':<28} {len(d.tilesets):>10}  ({len(d.tileset_pairs)} secondary/primary pairs)")
+        print(f"  {'LZ77 streams referenced':<28} {len(d.lz_blobs):>10}")
+        for n in d.notes:
+            print(f"  note: {n}")
+        return 0
+    if args.cmd == "apply-patch":
+        from . import patch
+        src = Path(args.rom).read_bytes()
+        data = Path(args.patch).read_bytes()
+        out = patch.apply_ups(src, data) if data[:4] == b"UPS1" else patch.apply_ips(src, data)
+        Path(args.out).write_bytes(out)
+        print(f"wrote {args.out}")
+        return 0
+
+    proj = Project(Path(args.project))
+    if args.cmd == "list":
+        rows = []
+        for a in sorted(proj.assets.values(), key=lambda a: a.id):
+            if args.category and a.category != args.category:
+                continue
+            if args.kind and a.kind != args.kind:
+                continue
+            if args.query and args.query.lower() not in (a.id + " " + a.label).lower():
+                continue
+            rows.append({"id": a.id, "kind": a.kind, "label": a.label, "file": a.file, "aliases": len(a.aliases)})
+        if args.json:
+            print(json.dumps(rows, indent=1))
+        else:
+            for r in rows:
+                extra = f"  (+{r['aliases']} aliases)" if r["aliases"] else ""
+                print(f"{r['id']:<48} {r['kind']:<8} {r['label']}{extra}")
+            print(f"{len(rows)} asset(s)", file=sys.stderr)
+        return 0
+    if args.cmd == "describe":
+        print(json.dumps(describe(proj, proj.get(args.asset)), indent=2))
+        return 0
+    if args.cmd == "status":
+        st = proj.status()
+        if args.json:
+            print(json.dumps(st, indent=1))
+        else:
+            for s in st:
+                print(f"{s['state']:<9} {s['id']}" + (f"  – {s['error']}" if s.get("error") else ""))
+            if not st:
+                print("no changes")
+        return 0
+    if args.cmd in ("validate", "build"):
+        if args.cmd == "validate":
+            rep = proj.build(dry_run=True)
+        else:
+            patches = [] if args.no_patch else args.patch
+            rep = proj.build(args.output, patches=patches)
+        _print_report(rep, args.json)
+        if args.cmd == "validate" and rep.ok and not args.json:
+            print("all edits are valid")
+        return 0 if rep.ok else 1
+    if args.cmd == "import":
+        notes = proj.import_image(proj.get(args.asset), args.source, new_palette=args.new_palette, resize=args.resize)
+        for n in notes:
+            print(f"note: {n}")
+        print(f"imported into {proj.get(args.asset).file}")
+        return 0
+    if args.cmd == "import-dir":
+        root = Path(args.folder)
+        n = 0
+        for f in sorted(root.rglob("*")):
+            if f.suffix.lower() not in (".png", ".pal", ".json") or not f.is_file():
+                continue
+            ident = f.relative_to(root).with_suffix("").as_posix()
+            try:
+                a = proj.get(ident)
+                for note in proj.import_image(a, f, new_palette=args.new_palette, resize=args.resize):
+                    print(f"note: {a.id}: {note}")
+                n += 1
+            except ProjectError as e:
+                print(f"skipped {f}: {e}")
+        print(f"imported {n} file(s); run `pae validate` then `pae build`")
+        return 0
+    if args.cmd == "revert":
+        targets = list(proj.assets.values()) if args.all else [proj.get(a) for a in args.assets]
+        n = 0
+        for a in targets:
+            if args.all and not proj.is_touched(a) and proj.path(a).exists():
+                continue
+            proj.revert(a)
+            n += 1
+        print(f"reverted {n} asset(s)")
+        return 0
+    if args.cmd == "set":
+        a = proj.get(args.asset)
+        proj.relayout(a, args.frame_w, args.frame_h, args.cols, args.tiles_wide, args.palette, args.label, args.force)
+        print(json.dumps(describe(proj, a)["layout"]))
+        return 0
+    if args.cmd == "sync-palettes":
+        ids = [proj.get(x).id for x in args.palettes] or [a.id for a in proj.assets.values()
+                                                          if a.kind == "palette" and proj.is_touched(a)]
+        for pid in ids:
+            for aid in proj.sync_palette_views(pid):
+                print(f"recoloured {aid}")
+        return 0
+    if args.cmd == "normalize":
+        done = proj.normalize()
+        print("\n".join(done) if done else "nothing to normalize")
+        return 0
+    if args.cmd == "sheet":
+        from .previews import contact_sheet
+        pre = args.prefix.rstrip("/")
+        sel = [a for a in sorted(proj.assets.values(), key=lambda a: a.id)
+               if (not pre or a.id == pre or a.id.startswith(pre + "/") or a.id.startswith(pre) or a.category == pre)
+               and (not args.kind or a.kind == args.kind)]
+        if not args.kind:
+            sel = [a for a in sel if a.kind != "palette"] or sel
+        sel = sel[: args.limit]
+        contact_sheet(proj, sel, scale=args.scale, max_width=args.width).save(args.out)
+        print(f"wrote {args.out} ({len(sel)} assets)")
+        return 0
+    if args.cmd == "render":
+        from PIL import Image
+        a = proj.get(args.asset)
+        pal = proj.get(args.palette).id if args.palette else None
+        im = proj.render_image(a, palette_override=pal)
+        if args.scale > 1:
+            im = im.resize((im.width * args.scale, im.height * args.scale), Image.NEAREST)
+        im.save(args.out)
+        print(f"wrote {args.out}")
+        return 0
+    if args.cmd == "serve":
+        from .server import serve
+        serve(proj, args.host, args.port)
+        return 0
+    if args.cmd == "mcp":
+        from .mcp import run
+        run(proj)
+        return 0
+    raise AssertionError(args.cmd)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
