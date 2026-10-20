@@ -96,6 +96,24 @@ TOOLS = [
     ("playtest_press", "Press buttons in the running play-test and return the screen. inputs like "
      "'UP, wait 10, A, wait 60' (KEY*N holds N frames; 16 frames = one step). record=true also returns a strip "
      "of frames.", _schema({"inputs": S, "record": B}, ["inputs"])),
+    ("tileset_info", "The map's primary/secondary tilesets: metatile and tile counts and limits, palettes.",
+     _schema({"name": S}, ["name"])),
+    ("get_metatile", "One metatile: 8 tile entries (0-3 bottom layer TL,TR,BL,BR; 4-7 top layer) with tile id, "
+     "hflip, vflip, palette; plus behavior (MB_* index) and layer_type (0 normal, 1 covered, 2 split).",
+     _schema({"name": S, "id": I}, ["name", "id"])),
+    ("set_metatile", "Change a metatile's entries (all 8), behavior (name like MB_NORMAL or number) and/or layer_type.",
+     _schema({"name": S, "id": I, "entries": {"type": "array", "items": {"type": "object"}}, "behavior": S,
+              "layer_type": S}, ["name", "id"])),
+    ("add_metatiles", "Append metatiles to the map's secondary tileset (blank, or copies of copy_from); returns ids.",
+     _schema({"name": S, "count": I, "copy_from": I}, ["name"])),
+    ("view_tiles", "Image of every 8x8 tile the map can use, 16 per row, coloured with palette `bank`. Tile id = "
+     "row*16 + column (secondary tiles start at NUM_TILES_IN_PRIMARY).", _schema({"name": S, "bank": I}, ["name"])),
+    ("import_art_as_metatiles", "Turn artwork (a building, sign, statue…) into new tiles + metatiles in the map's "
+     "secondary tileset. Reuses existing tiles (incl. flips). base_metatile puts that metatile's ground under "
+     "transparent pixels. Returns the new metatile ids as rows for set_blocks; place them with set_blocks and "
+     "paint collision. Then playtest to see it in game.",
+     _schema({"name": S, "path": S, "png_base64": S, "base_metatile": I, "bank": I, "new_palette": B,
+              "behavior": S}, ["name"])),
     ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
      "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
     ("status", "List assets that were edited.", _schema({})),
@@ -107,7 +125,8 @@ TOOLS = [
 
 MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks", "set_blocks", "copy_blocks", "edit_map",
              "get_script", "write_script", "new_script", "duplicate_map", "link_warps", "resize_map",
-             "find_constants", "playtest_start", "playtest_press"}
+             "find_constants", "playtest_start", "playtest_press", "tileset_info", "get_metatile", "set_metatile",
+             "add_metatiles", "view_tiles", "import_art_as_metatiles"}
 
 
 class Server:
@@ -298,6 +317,38 @@ class Server:
             return txt("linked")
         if name == "resize_map":
             return txt({"ok": True, "notes": m.resize(args["name"], int(args["width"]), int(args["height"]))})
+        te = m.tileset_editor
+        if name == "tileset_info":
+            return txt(te.info(args["name"]))
+        if name == "get_metatile":
+            return txt(te.get_metatile(args["name"], int(args["id"])))
+        if name == "set_metatile":
+            te.set_metatile(args["name"], int(args["id"]), args.get("entries"), args.get("behavior"),
+                            args.get("layer_type"))
+            return txt("saved")
+        if name == "add_metatiles":
+            return txt({"ids": te.add_metatiles(args["name"], int(args.get("count") or 1), args.get("copy_from"))})
+        if name == "view_tiles":
+            return [self._png(te.tile_sheet(args["name"], int(args.get("bank") or 0), 2)),
+                    *txt("tile id = row * 16 + column")]
+        if name == "import_art_as_metatiles":
+            src, tmp = args.get("path"), None
+            if not src:
+                if not args.get("png_base64"):
+                    raise ProjectError("give either path or png_base64")
+                tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                tmp.write(base64.b64decode(args["png_base64"]))
+                tmp.close()
+                src = tmp.name
+            try:
+                r = te.import_image(args["name"], src, args.get("base_metatile"), args.get("bank"),
+                                    bool(args.get("new_palette")), args.get("behavior") or 0)
+            finally:
+                if tmp:
+                    Path(tmp.name).unlink(missing_ok=True)
+            r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
+                                        for y in range(r["h"])]
+            return txt(r)
         if name in ("playtest_start", "playtest_press"):
             from .playtest import PlaytestError, strip
             proj = self.proj

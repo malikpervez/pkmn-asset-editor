@@ -90,6 +90,13 @@ class MapEditor:
         self._labels: dict[str, str] | None = None
         self.reload()
 
+    @property
+    def tileset_editor(self):
+        if not hasattr(self, "_tse"):
+            from .metatiles import TilesetEditor
+            self._tse = TilesetEditor(self)
+        return self._tse
+
     # ------------------------------------------------------------------ index
     def reload(self) -> None:
         root = self.root

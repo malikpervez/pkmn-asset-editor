@@ -753,7 +753,7 @@ class DecompProject:
 
     def _changed_files(self) -> dict[str, str]:
         r = self._run_git("status", "--porcelain", "-uall", "--", "graphics", "data/tilesets", "data/maps",
-                          "data/layouts")
+                          "data/layouts", "src/data/tilesets")
         out = {}
         if r is not None and r.returncode == 0:
             for line in r.stdout.decode(errors="replace").splitlines():
@@ -994,6 +994,15 @@ class DecompProject:
                 seen.update(files)
                 out.append({"type": "map", "map": name, "files": sorted(files),
                             "new": all(changed[f] == "new" for f in files)})
+        tilesets: dict[str, list[str]] = {}
+        for f in changed:
+            m_ = re.match(r"(data/tilesets/(?:primary|secondary)/.+?)/(tiles\.png|metatiles\.bin|metatile_attributes\.bin|palettes/\d+\.pal)$", f)
+            if m_ and m_.group(1) + "@tileset" in self.assets:
+                tilesets.setdefault(m_.group(1), []).append(f)
+        for d, files in sorted(tilesets.items()):
+            seen.update(files)
+            out.append({"type": "image", "id": d + "@tileset", "file": d, "state": "modified",
+                        "files": sorted(files), "views": [d + "@tileset"]})
         for f, state in sorted(changed.items()):
             if f in seen:
                 continue
@@ -1239,6 +1248,10 @@ class DecompProject:
                 rep.issues.append(Issue(level, f, msg))
                 rep.checked += 0
             rep.checked += sum(1 for f in changed if f.startswith(("data/maps/", "data/layouts/")))
+        if any(f.startswith("data/tilesets/") and f.endswith(".bin") or f.endswith("/tiles.png") for f in changed) \
+                and self.maps is not None:
+            for level, f, msg in self.maps.tileset_editor.check():
+                rep.issues.append(Issue(level, f, msg))
         return rep
 
     def _check_png(self, f: str, a: Asset | None, rep: CheckReport) -> None:
@@ -1282,7 +1295,8 @@ class DecompProject:
                 rep.issues.append(Issue("warning", f, f"has {(w // 8) * (h // 8)} tiles but the source expects {nt}"))
         orig = self._original_png(f) if f in self.changed_files() else None
         if orig is not None:
-            if (orig.width, orig.height) != (w, h):
+            grown_tileset = f.startswith("data/tilesets/") and f.endswith("/tiles.png") and orig.width == w
+            if (orig.width, orig.height) != (w, h) and not grown_tileset:
                 level = "error" if a is not None and a.category in ("pokemon", "trainers", "items") else "warning"
                 rep.issues.append(Issue(level, f, f"size changed from {orig.width}x{orig.height} to {w}x{h}"))
             if raw_pal is not None and orig.palette is not None and any(r.fmt.startswith(".gbapal") for r in refs):

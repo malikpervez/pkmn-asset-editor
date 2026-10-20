@@ -99,6 +99,18 @@ like any other edit.
   it gets its own copy of the layout, and it is registered in
   `map_groups.json`/`layouts.json`. Then add a warp on a door and click
   *Make two-way*.
+* **Design new buildings and tiles.** The Metatiles tab has a metatile
+  editor:
+  * each of the 8 tile slots (bottom/top layer, tile, flip, palette)
+  * behaviour (door, grass, water, … from your `MB_*` enum) and layer type
+  * new metatiles (blank or copied) and new tiles, with an 8×8 pixel editor
+
+  **Import art…** turns any picture into new metatiles. The art is mapped
+  to the best palette (or writes its own colours into a palette). It is cut
+  into tiles, reusing identical ones including flips. New metatiles are
+  assembled over a ground metatile, so grass shows through, and you get a
+  stamp to paint. Engine limits (512/640 tiles and metatiles) are enforced,
+  and `-num_tiles` in `graphics.h` is updated so gbagfx keeps the new tiles.
 * **Check** validates the edited maps:
   * warps to missing maps or warp ids
   * scripts that aren't defined anywhere
@@ -118,12 +130,16 @@ pae map metatiles PetalburgCity -o metatiles.png           # ids to paint with
 pae map events PetalburgCity
 pae map new PetalburgCity_House1 PetalburgCity_House3       # new house interior
 pae map link PetalburgCity 6 PetalburgCity_House3 0         # door <-> house, both ways
+pae map import-art PetalburgCity cottage.png --x 24 --y 6 --solid   # art -> metatiles, placed on the map
+pae map tiles PetalburgCity                                  # tileset counts and limits
 ```
 
 MCP map tools: `list_maps`, `view_map`, `get_map`, `view_metatiles`,
 `get_blocks`/`set_blocks` (blocks as text), `copy_blocks`, `edit_map`
 (header + add/update/delete events), `get_script`/`write_script`/`new_script`,
-`duplicate_map`, `link_warps`, `resize_map`, `find_constants`.
+`duplicate_map`, `link_warps`, `resize_map`, `find_constants`, `tileset_info`,
+`get_metatile`/`set_metatile`/`add_metatiles`, `view_tiles`,
+`import_art_as_metatiles`, `playtest_start`/`playtest_press`.
 
 ### Build and play-test
 
@@ -373,9 +389,8 @@ by the shape of its entries:
   automatically.
 * ROM mode edits graphics and palettes only. Maps, events and scripts are
   edited in source-tree mode.
-* The map editor edits maps, events, headers and scripts, but not metatile
-  definitions (which 8x8 tiles make up a metatile) or tileset animations.
-  Use Porymap's tileset editor for those.
+* Tileset animations (animated water and flowers) are not edited, and
+  imported art always goes into the map's secondary tileset.
 * Play-testing starts from a new save (Quickstart), so flags and vars are
   unset. It needs a non-release build with `ENABLE_QUICKSTART`, and libmgba.
 * Relocation updates every aligned word in the ROM that equals the old

@@ -142,6 +142,35 @@
     </div>
     <div class="tab on" id="tab-tiles">
       <div class="muted" style="margin-bottom:6px">Click a metatile, or drag to pick a multi-block stamp (e.g. a whole house). On the map, use <b>Copy</b> to grab blocks you've already placed.</div>
+      <div class="row">
+        <button id="mt-edit" disabled>Edit metatile</button>
+        <button id="mt-new" title="add a blank metatile to the secondary tileset">New metatile</button>
+        <label class="btn" title="turn a picture (building, statue, sign…) into new metatiles">Import art…<input type="file" id="mt-art" accept="image/*" hidden></label>
+      </div>
+      <div class="row muted" style="font-size:12px">
+        <label><input type="checkbox" id="art-base" checked> ground under art = selected metatile</label>
+        <label>palette <select id="art-bank"><option value="">best match</option></select></label>
+        <label><input type="checkbox" id="art-newpal"> use the art's colours</label>
+      </div>
+      <div id="mt-editor" hidden>
+        <h3 id="mt-title">Metatile</h3>
+        <div class="muted" style="font-size:12px">bottom layer · top layer · result. Click a quarter to select a slot, then click a tile below.</div>
+        <canvas id="mt-canvas" width="56" height="16" style="width:336px;height:96px;image-rendering:pixelated;cursor:pointer;background:#000"></canvas>
+        <div class="row">slot <b id="mt-slot">0</b> tile <input id="mt-tile" type="number" min="0" max="1023" style="width:72px">
+          palette <select id="mt-pal"></select> <label><input type="checkbox" id="mt-h"> flip H</label><label><input type="checkbox" id="mt-v"> flip V</label></div>
+        <div class="field"><label>behavior</label><select id="mt-beh"></select></div>
+        <div class="field"><label>layer type</label><select id="mt-layer"><option value="0">normal (top layer above player)</option><option value="1">covered (both below player)</option><option value="2">split</option></select></div>
+        <div class="row"><button id="mt-save" class="primary">Save metatile</button><button id="mt-copy">Copy as new</button><button id="mt-close">Done</button></div>
+        <h3>Tiles <span class="muted" id="ts-note"></span></h3>
+        <div class="muted" style="font-size:12px">Click: use in the selected slot. Shift+click: draw the tile's pixels.</div>
+        <div style="max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:6px;background:#000"><canvas id="tilesheet" style="image-rendering:pixelated;cursor:crosshair;display:block"></canvas></div>
+        <div id="tile-editor" hidden>
+          <h3 id="te-title">Tile</h3>
+          <div class="row" style="align-items:flex-start"><canvas id="te-canvas" width="8" height="8" style="width:192px;height:192px;image-rendering:pixelated;cursor:crosshair;background:#000"></canvas>
+            <div><div id="te-swatches" style="display:grid;grid-template-columns:repeat(4,22px);gap:3px"></div>
+            <div class="row"><button id="te-save" class="primary">Save tile</button><button id="te-new" title="append a copy of this tile as a new tile">Save as new tile</button></div></div></div>
+        </div>
+      </div>
       <div id="atlaswrap"><canvas id="atlas"></canvas></div>
     </div>
     <div class="tab" id="tab-event">
@@ -742,6 +771,167 @@ $('#newmap').onclick = () => {
       openMap(r.name);
     } catch (e) { $('#nm-out').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
   };
+};
+
+// ------------------------------------------------------------------ metatile & tile editing
+let TS = null, MT = null, mtSlot = 0, sheets = {}, teTile = null, teColor = 1;
+for (let b = 0; b < 16; b++) { $('#mt-pal').insertAdjacentHTML('beforeend', `<option>${b}</option>`); if (b < 13) $('#art-bank').insertAdjacentHTML('beforeend', `<option>${b}</option>`); }
+async function loadTS() {
+  TS = await api('/api/map/tsinfo?name=' + encodeURIComponent(S.cur.name));
+  sheets = {};
+  $('#mt-beh').innerHTML = TS.behaviors.map((b, i) => `<option value="${i}">${esc(b)}</option>`).join('');
+  $('#ts-note').textContent = `${TS.secondary.symbol}: ${TS.secondary.tiles}/${TS.secondary.tile_limit} tiles, ${TS.secondary.metatiles}/${TS.secondary.metatile_limit} metatiles`;
+}
+function sheet(bank) {
+  if (!sheets[bank]) {
+    const img = new Image();
+    sheets[bank] = { img, ready: img.decode ? null : null };
+    img.src = `/api/map/tilesheet?name=${encodeURIComponent(S.cur.name)}&bank=${bank}&alpha=1&t=${Date.now()}`;
+    sheets[bank].ready = img.decode().then(() => img);
+  }
+  return sheets[bank].ready;
+}
+async function refreshAtlas() {
+  const img = new Image();
+  img.src = '/api/map/atlas?name=' + encodeURIComponent(S.cur.name) + '&t=' + Date.now();
+  await img.decode();
+  S.atlasImg = img;
+  await loadTS();
+  S.cur.metatiles.count = TS.num_primary_metatiles + TS.secondary.metatiles;
+  drawAtlas(); drawBase(); drawOver();
+}
+function selectedSingle() { return S.stamp && S.stamp.fromAtlas && S.stamp.w === 1 && S.stamp.h === 1 ? S.stamp.ids[0] & 0x3FF : null; }
+const _showStamp = showStamp;
+showStamp = function () { _showStamp(); $('#mt-edit').disabled = selectedSingle() === null; };
+$('#mt-edit').onclick = () => openMetatile(selectedSingle());
+$('#mt-close').onclick = () => { $('#mt-editor').hidden = true; MT = null; };
+async function openMetatile(id) {
+  if (id === null) return;
+  if (!TS) await loadTS();
+  MT = await api(`/api/map/metatile?name=${encodeURIComponent(S.cur.name)}&id=${id}`);
+  $('#mt-editor').hidden = false;
+  $('#mt-title').textContent = `Metatile 0x${id.toString(16).padStart(3, '0')} (${MT.tileset})`;
+  $('#mt-beh').value = MT.behavior; $('#mt-layer').value = MT.layer_type;
+  selectSlot(0); drawTileSheet();
+}
+function selectSlot(i) {
+  mtSlot = i; const e = MT.entries[i];
+  $('#mt-slot').textContent = `${i} (${i < 4 ? 'bottom' : 'top'} ${['top-left', 'top-right', 'bottom-left', 'bottom-right'][i % 4]})`;
+  $('#mt-tile').value = e.tile; $('#mt-pal').value = e.palette; $('#mt-h').checked = e.hflip; $('#mt-v').checked = e.vflip;
+  drawMetatile(); drawTileSheet();
+}
+async function drawMetatile() {
+  const c = $('#mt-canvas'), ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  for (let i = 0; i < 8; i++) {
+    const e = MT.entries[i], img = await sheet(e.palette), q = i % 4;
+    const ox = i < 4 ? 0 : 20, dx = ox + (q % 2) * 8, dy = Math.floor(q / 2) * 8;
+    for (const target of i < 4 ? [dx, 40 + (q % 2) * 8] : [dx, 40 + (q % 2) * 8]) {
+      const x = target, y = dy;
+      ctx.save(); ctx.translate(x + (e.hflip ? 8 : 0), y + (e.vflip ? 8 : 0)); ctx.scale(e.hflip ? -1 : 1, e.vflip ? -1 : 1);
+      ctx.drawImage(img, (e.tile % 16) * 8, Math.floor(e.tile / 16) * 8, 8, 8, 0, 0, 8, 8); ctx.restore();
+    }
+  }
+  const q = mtSlot % 4, ox = (mtSlot < 4 ? 0 : 20) + (q % 2) * 8, oy = Math.floor(q / 2) * 8;
+  ctx.strokeStyle = '#ff0'; ctx.lineWidth = 1; ctx.strokeRect(ox + .5, oy + .5, 7, 7);
+}
+$('#mt-canvas').onclick = (e) => {
+  const r = e.target.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * 56, y = (e.clientY - r.top) / r.height * 16;
+  if (x >= 36) return;
+  const layer = x >= 20 ? 1 : 0, lx = x - layer * 20;
+  if (lx < 0 || lx >= 16) return;
+  selectSlot(layer * 4 + (y >= 8 ? 2 : 0) + (lx >= 8 ? 1 : 0));
+};
+function slotFromForm() {
+  Object.assign(MT.entries[mtSlot], { tile: +$('#mt-tile').value, palette: +$('#mt-pal').value, hflip: $('#mt-h').checked, vflip: $('#mt-v').checked });
+  drawMetatile();
+}
+['#mt-tile', '#mt-pal', '#mt-h', '#mt-v'].forEach(s => $(s).onchange = () => { slotFromForm(); if (s === '#mt-pal') drawTileSheet(); });
+async function drawTileSheet() {
+  if (!MT) return;
+  const bank = +$('#mt-pal').value, img = await sheet(bank), c = $('#tilesheet'), z = 2;
+  c.width = img.width; c.height = img.height; c.style.width = img.width * z + 'px'; c.style.height = img.height * z + 'px';
+  const ctx = c.getContext('2d'); ctx.clearRect(0, 0, c.width, c.height); ctx.drawImage(img, 0, 0);
+  const t = +$('#mt-tile').value; ctx.strokeStyle = '#ff0'; ctx.strokeRect((t % 16) * 8 + .5, Math.floor(t / 16) * 8 + .5, 7, 7);
+  ctx.fillStyle = 'rgba(255,255,255,.7)'; ctx.fillRect(0, Math.floor(TS.num_primary_tiles / 16) * 8 - 1, 128, 1);
+}
+$('#tilesheet').onclick = (e) => {
+  const r = e.target.getBoundingClientRect(), tx = Math.floor((e.clientX - r.left) / r.width * 16), ty = Math.floor((e.clientY - r.top) / r.height * (e.target.height / 8));
+  const t = ty * 16 + tx;
+  if (e.shiftKey) return openTile(t);
+  $('#mt-tile').value = t; slotFromForm(); drawTileSheet();
+};
+$('#mt-save').onclick = async () => {
+  try {
+    await api(`/api/map/metatile?name=${encodeURIComponent(S.cur.name)}&id=${MT.id}`, { entries: MT.entries, behavior: +$('#mt-beh').value, layer_type: +$('#mt-layer').value });
+    toast(`Saved metatile 0x${MT.id.toString(16)}`); await refreshAtlas();
+  } catch (e) { toast(e.message, 'err', 6000); }
+};
+$('#mt-copy').onclick = async () => {
+  try {
+    const r = await api('/api/map/metatile_add?name=' + encodeURIComponent(S.cur.name), { count: 1, copy_from: MT.id });
+    await api(`/api/map/metatile?name=${encodeURIComponent(S.cur.name)}&id=${r.ids[0]}`, { entries: MT.entries, behavior: +$('#mt-beh').value, layer_type: +$('#mt-layer').value });
+    await refreshAtlas(); S.stamp = { w: 1, h: 1, ids: [r.ids[0] | defaultAttrs()], src: [r.ids[0] % 8, Math.floor(r.ids[0] / 8)], fromAtlas: true };
+    showStamp(); drawAtlas(); openMetatile(r.ids[0]); toast(`New metatile 0x${r.ids[0].toString(16)}`);
+  } catch (e) { toast(e.message, 'err', 6000); }
+};
+$('#mt-new').onclick = async () => {
+  if (!S.cur) return;
+  try {
+    const r = await api('/api/map/metatile_add?name=' + encodeURIComponent(S.cur.name), { count: 1 });
+    await refreshAtlas(); S.stamp = { w: 1, h: 1, ids: [r.ids[0] | defaultAttrs()], src: [r.ids[0] % 8, Math.floor(r.ids[0] / 8)], fromAtlas: true };
+    showStamp(); drawAtlas(); openMetatile(r.ids[0]);
+  } catch (e) { toast(e.message, 'err', 6000); }
+};
+async function openTile(t) {
+  teTile = { id: t, px: await api(`/api/map/tile?name=${encodeURIComponent(S.cur.name)}&id=${t}`) };
+  $('#tile-editor').hidden = false; $('#te-title').textContent = `Tile ${t} (palette ${$('#mt-pal').value})`;
+  drawTileEditor();
+}
+function drawTileEditor() {
+  const pal = TS.palettes[+$('#mt-pal').value], ctx = $('#te-canvas').getContext('2d');
+  for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) { const c = pal[teTile.px[y][x]]; ctx.fillStyle = `rgb(${c[0]},${c[1]},${c[2]})`; ctx.fillRect(x, y, 1, 1); }
+  $('#te-swatches').innerHTML = pal.map((c, i) => `<div class="sw-t" data-i="${i}" title="colour ${i}" style="width:22px;height:22px;border-radius:4px;cursor:pointer;border:2px solid ${i === teColor ? '#ff0' : 'transparent'};background:rgb(${c[0]},${c[1]},${c[2]})"></div>`).join('');
+  document.querySelectorAll('.sw-t').forEach(el => el.onclick = () => { teColor = +el.dataset.i; drawTileEditor(); });
+}
+let tePainting = false;
+const tePaint = (e) => {
+  const r = $('#te-canvas').getBoundingClientRect(), x = Math.floor((e.clientX - r.left) / r.width * 8), y = Math.floor((e.clientY - r.top) / r.height * 8);
+  if (x >= 0 && y >= 0 && x < 8 && y < 8) { teTile.px[y][x] = teColor; drawTileEditor(); }
+};
+$('#te-canvas').onpointerdown = (e) => { tePainting = true; tePaint(e); };
+$('#te-canvas').onpointermove = (e) => { if (tePainting) tePaint(e); };
+window.addEventListener('pointerup', () => { tePainting = false; });
+$('#te-save').onclick = async () => {
+  try { await api(`/api/map/tile?name=${encodeURIComponent(S.cur.name)}&id=${teTile.id}`, { pixels: teTile.px }); toast(`Saved tile ${teTile.id}`); sheets = {}; await refreshAtlas(); drawMetatile(); drawTileSheet(); }
+  catch (e) { toast(e.message, 'err', 6000); }
+};
+$('#te-new').onclick = async () => {
+  try {
+    const r = await api('/api/map/tile_add?name=' + encodeURIComponent(S.cur.name), { count: 1 });
+    await api(`/api/map/tile?name=${encodeURIComponent(S.cur.name)}&id=${r.ids[0]}`, { pixels: teTile.px });
+    teTile.id = r.ids[0]; $('#mt-tile').value = r.ids[0]; slotFromForm(); sheets = {}; await refreshAtlas(); drawTileSheet(); drawMetatile();
+    toast(`New tile ${r.ids[0]} – used in slot ${mtSlot}; save the metatile to keep it`);
+  } catch (e) { toast(e.message, 'err', 6000); }
+};
+$('#mt-art').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f || !S.cur) return;
+  const q = new URLSearchParams({ name: S.cur.name });
+  const base = selectedSingle();
+  if ($('#art-base').checked && base !== null) q.set('base', String(base));
+  if ($('#art-bank').value) q.set('bank', $('#art-bank').value);
+  if ($('#art-newpal').checked) q.set('new_palette', '1');
+  try {
+    const r = await fetch('/api/map/import_art?' + q, { method: 'POST', body: f });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error);
+    await refreshAtlas();
+    S.stamp = { w: data.w, h: data.h, ids: data.ids.map(i => i | defaultAttrs()), fromAtlas: true };
+    showStamp(); setTool('paint');
+    data.notes.forEach(n => toast(n, 'ok', 6000));
+    toast(`Art imported as a ${data.w}×${data.h} stamp – click the map to place it, then paint collision.`, 'ok', 7000);
+  } catch (err) { toast(err.message, 'err', 8000); }
 };
 
 // ------------------------------------------------------------------ play-test

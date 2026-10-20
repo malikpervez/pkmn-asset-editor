@@ -229,6 +229,19 @@ def make_handler(state: _State):
             if path == "/api/map/script":
                 name = m.resolve(q["name"])
                 return self._json({"file": str(m.script_path(name).relative_to(proj.root)), "text": m.read_script(name)})
+            if path == "/api/map/tsinfo":
+                te = m.tileset_editor
+                info = te.info(q["name"])
+                info["behaviors"] = te.behaviors(info["version"])
+                info["palettes"] = te.palettes(q["name"])
+                return self._json(info)
+            if path == "/api/map/metatile":
+                return self._json(m.tileset_editor.get_metatile(q["name"], int(q["id"], 0)))
+            if path == "/api/map/tilesheet":
+                im = m.tileset_editor.tile_sheet(q["name"], int(q.get("bank", 0)), transparent=q.get("alpha") == "1")
+                return self._send(m.png_bytes(im), "image/png")
+            if path == "/api/map/tile":
+                return self._json(m.tileset_editor.get_tile(q["name"], int(q["id"], 0)))
             if path == "/api/constants":
                 return self._json(m.constants(q.get("prefix", "")))
             if path == "/api/labels":
@@ -240,7 +253,32 @@ def make_handler(state: _State):
 
         def _map_post(self, path, q):
             m = self._maps()
+            if path == "/api/map/import_art":
+                with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                    tmp.write(self._body())
+                try:
+                    base = q.get("base")
+                    r = m.tileset_editor.import_image(
+                        q["name"], tmp.name, base_metatile=int(base, 0) if base else None,
+                        bank=int(q["bank"]) if q.get("bank") else None, new_palette=q.get("new_palette") == "1",
+                        behavior=q.get("behavior") or 0)
+                finally:
+                    os.unlink(tmp.name)
+                return self._json(r)
             body = json.loads(self._body() or b"{}")
+            te = m.tileset_editor
+            if path == "/api/map/metatile":
+                te.set_metatile(q["name"], int(q["id"], 0), body.get("entries"), body.get("behavior"),
+                                body.get("layer_type"))
+                return self._json({"ok": True})
+            if path == "/api/map/metatile_add":
+                return self._json({"ids": te.add_metatiles(q["name"], int(body.get("count", 1)),
+                                                           body.get("copy_from"))})
+            if path == "/api/map/tile":
+                te.set_tile(q["name"], int(q["id"], 0), body["pixels"])
+                return self._json({"ok": True})
+            if path == "/api/map/tile_add":
+                return self._json({"ids": te.add_tiles(q["name"], int(body.get("count", 1)))})
             if path == "/api/map/blocks":
                 import numpy as np
                 name = m.resolve(q["name"])

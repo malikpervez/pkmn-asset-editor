@@ -154,28 +154,40 @@ def main(argv: list[str] | None = None) -> int:
                                                                "file the game uses for it"))
     p.add_argument("images", nargs="+")
 
-    p = with_project(sub.add_parser("map", help="source tree: maps, events and scripts (see `pae map -h`)"))
+    p = sub.add_parser("map", help="source tree: maps, events, scripts and tilesets (see `pae map -h`)")
     msub = p.add_subparsers(dest="map_cmd", required=True)
-    q = msub.add_parser("list", help="list maps")
+    q = with_project(msub.add_parser("list", help="list maps"))
     q.add_argument("query", nargs="?", default="")
-    q = msub.add_parser("render", help="render a map (with events) to a PNG")
+    q = with_project(msub.add_parser("render", help="render a map (with events) to a PNG"))
     q.add_argument("name")
     q.add_argument("-o", "--out", required=True)
     q.add_argument("--scale", type=int, default=1)
     q.add_argument("--no-events", action="store_true")
     q.add_argument("--grid", action="store_true")
-    q = msub.add_parser("metatiles", help="render the metatiles a map can use (with ids)")
+    q = with_project(msub.add_parser("metatiles", help="render the metatiles a map can use (with ids)"))
     q.add_argument("name")
     q.add_argument("-o", "--out", required=True)
-    q = msub.add_parser("events", help="print a map's events")
+    q = with_project(msub.add_parser("events", help="print a map's events"))
     q.add_argument("name")
-    q = msub.add_parser("new", help="create a new map as a copy of an existing one (e.g. a new house)")
+    q = with_project(msub.add_parser("new", help="create a new map as a copy of an existing one (e.g. a new house)"))
     q.add_argument("source")
     q.add_argument("new_name")
     q.add_argument("--group")
     q.add_argument("--share-layout", action="store_true", help="reuse the source's blocks instead of copying them")
     q.add_argument("--id", help="map id constant (default derived from the name)")
-    q = msub.add_parser("link", help="connect two warps in both directions")
+    q = with_project(msub.add_parser("tiles", help="tileset info for a map (metatile/tile counts and limits)"))
+    q.add_argument("name")
+    q = with_project(msub.add_parser("import-art", help="turn artwork into new metatiles (and optionally place it on the map)"))
+    q.add_argument("name")
+    q.add_argument("image")
+    q.add_argument("--x", type=int, help="place the result with its top-left block here")
+    q.add_argument("--y", type=int)
+    q.add_argument("--base", help="metatile id whose ground goes under transparent pixels (default with "
+                                  "--x/--y: the block already there)")
+    q.add_argument("--bank", type=int, help="palette bank to use (default: best match)")
+    q.add_argument("--new-palette", action="store_true", help="write the art's colours into --bank")
+    q.add_argument("--solid", action="store_true", help="make the placed blocks impassable")
+    q = with_project(msub.add_parser("link", help="connect two warps in both directions"))
     q.add_argument("map")
     q.add_argument("warp", type=int)
     q.add_argument("dest_map")
@@ -453,6 +465,32 @@ def _run(args) -> int:
             for n in m.duplicate_map(args.source, args.new_name, args.group, not args.share_layout, args.id):
                 print(f"note: {n}")
             print(f"created {args.new_name} ({m.get_map(args.new_name)['id']})")
+        elif args.map_cmd == "tiles":
+            print(json.dumps(m.tileset_editor.info(args.name), indent=2))
+        elif args.map_cmd == "import-art":
+            base = int(args.base, 0) if args.base else None
+            lay = m.layout_of(args.name)
+            if base is None and args.x is not None and args.y is not None:
+                base = int(m.read_blocks(lay)[args.y, args.x]) & 0x3FF
+            r = m.tileset_editor.import_image(args.name, args.image, base, args.bank, args.new_palette)
+            for n in r["notes"]:
+                print(f"note: {n}")
+            rows = [r["ids"][y * r["w"]:(y + 1) * r["w"]] for y in range(r["h"])]
+            print(f"stamp {r['w']}x{r['h']} metatiles (palette {r['bank']}):")
+            for row in rows:
+                print("  " + " ".join(f"{i:03x}" for i in row))
+            if args.x is not None and args.y is not None:
+                b = m.read_blocks(lay).copy()
+                for j, row in enumerate(rows):
+                    for i, mid in enumerate(row):
+                        yy, xx = args.y + j, args.x + i
+                        if 0 <= yy < b.shape[0] and 0 <= xx < b.shape[1]:
+                            v = (int(b[yy, xx]) & ~0x3FF) | mid
+                            if args.solid:
+                                v = (v & ~0x0C00) | (1 << 10)
+                            b[yy, xx] = v
+                m.write_blocks(args.name, b)
+                print(f"placed at ({args.x}, {args.y}) on {args.name}")
         elif args.map_cmd == "link":
             m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
             print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")
