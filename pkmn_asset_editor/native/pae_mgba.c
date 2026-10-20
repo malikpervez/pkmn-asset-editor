@@ -1,0 +1,142 @@
+/*
+ * pae_mgba: a tiny headless mGBA driver for play-testing builds.
+ *
+ * Reads one command per line on stdin and answers one line on stdout:
+ *   frames N KEYS       run N frames holding the key mask KEYS (GBA KEYINPUT bit order)
+ *   r8|r16|r32 ADDR     read memory through the bus            -> "ok VALUE"
+ *   w8|w16|w32 ADDR V   write memory through the bus
+ *   shot PATH           write the current frame as raw RGBA (240x160x4)
+ *   save PATH | load PATH   savestate to/from a file
+ *   quit
+ * Numbers may be decimal or 0x-prefixed hex.
+ *
+ * Build: cc -O2 -o pae_mgba pae_mgba.c -lmgba   (Debian/Ubuntu: apt install libmgba-dev)
+ */
+#include <mgba/core/core.h>
+#include <mgba/core/config.h>
+#include <mgba/core/log.h>
+#include <mgba/core/serialize.h>
+#include <mgba-util/vfs.h>
+
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+static unsigned width, height;
+
+static void quietLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args) {
+	(void) logger;
+	(void) category;
+	if (level & mLOG_FATAL) {
+		vfprintf(stderr, format, args);
+		fputc('\n', stderr);
+	}
+}
+
+static struct mLogger quietLogger = { .log = quietLog };
+static color_t* video;
+
+static int writeShot(const char* path) {
+	FILE* f = fopen(path, "wb");
+	if (!f) {
+		return 0;
+	}
+	unsigned char* row = malloc(width * 4);
+	for (unsigned y = 0; y < height; ++y) {
+		for (unsigned x = 0; x < width; ++x) {
+			color_t c = video[y * width + x];
+#ifdef COLOR_16_BIT
+			unsigned r = (c & 0x1F) << 3, g = ((c >> 5) & 0x1F) << 3, b = ((c >> 10) & 0x1F) << 3;
+#else
+			unsigned r = c & 0xFF, g = (c >> 8) & 0xFF, b = (c >> 16) & 0xFF;
+#endif
+			row[x * 4] = r;
+			row[x * 4 + 1] = g;
+			row[x * 4 + 2] = b;
+			row[x * 4 + 3] = 255;
+		}
+		fwrite(row, 1, width * 4, f);
+	}
+	free(row);
+	fclose(f);
+	return 1;
+}
+
+int main(int argc, char** argv) {
+	if (argc < 2) {
+		fprintf(stderr, "usage: %s ROM\n", argv[0]);
+		return 2;
+	}
+	mLogSetDefaultLogger(&quietLogger);
+	struct mCore* core = mCoreFind(argv[1]);
+	if (!core || !core->init(core)) {
+		fprintf(stderr, "cannot open %s\n", argv[1]);
+		return 1;
+	}
+	mCoreInitConfig(core, NULL);
+	core->desiredVideoDimensions(core, &width, &height);
+	video = calloc(width * height, sizeof(color_t));
+	core->setVideoBuffer(core, video, width);
+	if (!mCoreLoadFile(core, argv[1])) {
+		fprintf(stderr, "cannot load %s\n", argv[1]);
+		return 1;
+	}
+	core->reset(core);
+	setvbuf(stdout, NULL, _IOLBF, 0);
+	printf("ready %u %u\n", width, height);
+
+	char line[4096], cmd[16], arg[4000];
+	while (fgets(line, sizeof(line), stdin)) {
+		unsigned long a = 0, b = 0;
+		arg[0] = 0;
+		if (sscanf(line, "%15s", cmd) != 1) {
+			continue;
+		}
+		if (!strcmp(cmd, "frames")) {
+			if (sscanf(line, "%*s %li %li", (long*) &a, (long*) &b) < 1) {
+				puts("err usage: frames N KEYS");
+				continue;
+			}
+			core->setKeys(core, (uint32_t) b);
+			for (unsigned long i = 0; i < a; ++i) {
+				core->runFrame(core);
+			}
+			puts("ok");
+		} else if (!strcmp(cmd, "r8") || !strcmp(cmd, "r16") || !strcmp(cmd, "r32")) {
+			sscanf(line, "%*s %li", (long*) &a);
+			uint32_t v = cmd[1] == '8' ? core->busRead8(core, a) : cmd[1] == '1' ? core->busRead16(core, a) : core->busRead32(core, a);
+			printf("ok %u\n", v);
+		} else if (!strcmp(cmd, "w8") || !strcmp(cmd, "w16") || !strcmp(cmd, "w32")) {
+			sscanf(line, "%*s %li %li", (long*) &a, (long*) &b);
+			if (cmd[1] == '8') {
+				core->busWrite8(core, a, b);
+			} else if (cmd[1] == '1') {
+				core->busWrite16(core, a, b);
+			} else {
+				core->busWrite32(core, a, b);
+			}
+			puts("ok");
+		} else if (!strcmp(cmd, "shot") && sscanf(line, "%*s %3999[^\n]", arg) == 1) {
+			puts(writeShot(arg) ? "ok" : "err cannot write");
+		} else if ((!strcmp(cmd, "save") || !strcmp(cmd, "load")) && sscanf(line, "%*s %3999[^\n]", arg) == 1) {
+			int saving = cmd[0] == 's';
+			struct VFile* vf = VFileOpen(arg, saving ? O_CREAT | O_TRUNC | O_RDWR : O_RDONLY);
+			if (!vf) {
+				puts("err cannot open state file");
+				continue;
+			}
+			int okState = saving ? mCoreSaveStateNamed(core, vf, SAVESTATE_SAVEDATA | SAVESTATE_RTC)
+			                     : mCoreLoadStateNamed(core, vf, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
+			vf->close(vf);
+			puts(okState ? "ok" : "err state failed");
+		} else if (!strcmp(cmd, "quit")) {
+			puts("ok");
+			break;
+		} else {
+			puts("err unknown command");
+		}
+	}
+	core->deinit(core);
+	return 0;
+}

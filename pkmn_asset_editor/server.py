@@ -137,6 +137,25 @@ def make_handler(state: _State):
                                   headers={"Content-Disposition": f'attachment; filename="{name}"'})
             if path == "/api/status":
                 return self._json(proj.status())
+            if path == "/api/changes":
+                if proj.kind != "decomp":
+                    return self._json([{"type": "image" if s_["state"] != "missing" else "file", "id": s_["id"],
+                                        "file": s_["file"], "state": s_["state"], "views": []} for s_ in proj.status()])
+                return self._json(proj.changes())
+            if path == "/api/before":
+                if "map" in q:
+                    im = proj.maps.render_head(q["map"], scale=int(q.get("scale", 1)))
+                else:
+                    a = proj.get(q["id"])
+                    im = proj.render_head(a) if proj.kind == "decomp" else self._rom_before(a)
+                if im is None:
+                    return self._error("no committed version", HTTPStatus.NOT_FOUND)
+                buf = io.BytesIO()
+                im.save(buf, "PNG")
+                return self._send(buf.getvalue(), "image/png")
+            if path == "/api/diff":
+                text = proj.diff_text(q["file"]) if proj.kind == "decomp" else ""
+                return self._send(text.encode(), "text/plain; charset=utf-8")
             if path == "/api/download":
                 which = q.get("what", "rom")
                 out = proj.output_rom()
@@ -157,6 +176,19 @@ def make_handler(state: _State):
                 self._error(str(e))
             except Exception as e:  # noqa: BLE001
                 self._error(f"{type(e).__name__}: {e}", HTTPStatus.INTERNAL_SERVER_ERROR)
+
+        def _rom_before(self, a):
+            if a.kind == "palette":
+                return proj.render_image(a, palettes=proj.original_palettes())
+            return Image.open(io.BytesIO(self._rom_original_png(a))).convert("RGBA")
+
+        def _rom_original_png(self, a):
+            from . import formats
+            from .gfx import save_indexed_png
+            pixels, plte = formats.render(a, proj.raw_view(), proj.original_palettes())
+            buf = io.BytesIO()
+            save_indexed_png(buf, pixels, plte, transparent0=a.kind == "sprite" and bool(a.palettes))
+            return buf.getvalue()
 
         def _maps(self):
             m = getattr(proj, "maps", None)
@@ -246,7 +278,42 @@ def make_handler(state: _State):
                 return self._json({"ok": True})
             return self._error("not found", HTTPStatus.NOT_FOUND)
 
+        def _play_post(self, path, q):
+            import base64
+            from .playtest import PlaytestError
+            if proj.kind != "decomp":
+                raise ProjectError("play-testing needs a source tree")
+            body = json.loads(self._body() or b"{}")
+
+            def png_url(img):
+                buf = io.BytesIO()
+                img.save(buf, "PNG")
+                return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+            try:
+                if path == "/api/play/start":
+                    build = None
+                    if body.get("build", True):
+                        rep = proj.build_rom()
+                        build = {"returncode": rep.returncode, "seconds": round(rep.seconds, 1),
+                                 "output": "\n".join(rep.output.rstrip().splitlines()[-40:])}
+                        if rep.returncode != 0:
+                            return self._json({"ok": False, "build": build, "error": "make failed"})
+                    name = proj.maps.resolve(body["map"]) if proj.maps else body["map"]
+                    img = proj.play.start(name, body.get("x"), body.get("y"))
+                    return self._json({"ok": True, "image": png_url(img), "where": proj.play.where, "build": build})
+                if path == "/api/play/press":
+                    final, _ = proj.play.press(body.get("inputs", ""))
+                    return self._json({"ok": True, "image": png_url(final)})
+                if path == "/api/play/stop":
+                    proj.play.close()
+                    return self._json({"ok": True})
+            except PlaytestError as e:
+                return self._json({"ok": False, "error": str(e)})
+            return self._error("not found", HTTPStatus.NOT_FOUND)
+
         def _post(self, path, q):
+            if path.startswith("/api/play/"):
+                return self._play_post(path, q)
             if path.startswith("/api/map"):
                 return self._map_post(path, q)
             if path == "/api/upload":

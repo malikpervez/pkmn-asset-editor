@@ -71,6 +71,17 @@
   #modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 20; padding: 16px; }
   #modal.open { display: flex; }
   #modal .box { background: var(--panel); border-radius: 12px; padding: 16px; width: min(560px, 100%); max-height: 85vh; overflow: auto; }
+  .modalish { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 25; padding: 16px; }
+  .modalish.open { display: flex; }
+  .modalish .box { background: var(--panel); border-radius: 12px; padding: 14px; width: min(560px, 100%); max-height: 95vh; overflow: auto; }
+  #play-screen { width: 480px; max-width: 100%; height: auto; image-rendering: pixelated; background: #000; display: block; margin: 8px 0; border-radius: 6px; }
+  .pad { align-items: flex-start; gap: 14px; }
+  .dpad { display: grid; grid-template-columns: repeat(3, 38px); grid-template-rows: repeat(3, 34px); gap: 2px; }
+  .dpad [data-k=UP] { grid-column: 2; grid-row: 1; } .dpad [data-k=LEFT] { grid-column: 1; grid-row: 2; }
+  .dpad [data-k=RIGHT] { grid-column: 3; grid-row: 2; } .dpad [data-k=DOWN] { grid-column: 2; grid-row: 3; }
+  .col { display: flex; flex-direction: column; gap: 4px; }
+  .ab { width: 44px; height: 34px; border-radius: 17px; }
+  pre { background: var(--bg); padding: 8px; border-radius: 8px; overflow: auto; font-size: 11px; max-height: 200px; }
   .dirty::after { content: " •"; color: var(--accent); }
   .muted { color: var(--muted); }
   @media (max-width: 900px) {
@@ -89,6 +100,7 @@
   <button id="undo" title="Ctrl+Z" disabled>Undo</button>
   <button id="redo" title="Ctrl+Y" disabled>Redo</button>
   <button id="newmap">New map…</button>
+  <button id="play" title="build with make, then play this map in a headless emulator">▶ Play-test</button>
   <button id="check">Check</button>
   <button id="revert">Revert map</button>
   <button id="save" class="primary" disabled>Save</button>
@@ -146,6 +158,24 @@
       <textarea id="script" spellcheck="false"></textarea>
     </div>
   </aside>
+</div>
+<div id="playbox" class="modalish">
+  <div class="box">
+    <div class="row" style="justify-content:space-between;margin-top:0"><b id="play-title">Play-test</b><button id="play-close">Close</button></div>
+    <div class="row">start at x <input id="play-x" type="number" style="width:64px"> y <input id="play-y" type="number" style="width:64px">
+      <button id="play-start" class="primary">Rebuild &amp; start</button><button id="play-restart">Restart (no build)</button></div>
+    <div id="play-status" class="muted">Starts a fresh game (Quickstart) and warps here. Flags and vars are those of a new save.</div>
+    <img id="play-screen" alt="game screen" width="480" height="320">
+    <div class="row pad">
+      <div class="dpad"><button data-k="UP">▲</button><button data-k="LEFT">◀</button><button data-k="RIGHT">▶</button><button data-k="DOWN">▼</button></div>
+      <div class="col"><button data-k="A" class="ab">A</button><button data-k="B" class="ab">B</button></div>
+      <div class="col"><button data-k="L">L</button><button data-k="R">R</button><button data-k="START">Start</button><button data-k="SELECT">Select</button></div>
+      <div class="col"><label>walk steps <input id="play-steps" type="number" value="1" min="1" style="width:52px"></label>
+        <button id="play-wait">wait 1s</button><input id="play-custom" placeholder="e.g. UP*32, A, wait 60" style="width:180px"><button id="play-run">Run</button></div>
+    </div>
+    <pre id="play-build" hidden></pre>
+    <div class="muted" style="font-size:11px">Keyboard: arrows move, Z = A, X = B, Enter = Start, Backspace = Select.</div>
+  </div>
 </div>
 <div id="toast"></div>
 <div id="modal"><div class="box"><div id="modal-body"></div><div class="row"><button id="modal-close">Close</button></div></div></div>
@@ -471,7 +501,7 @@ function restore(state) { S.cur.blocks = state.blocks.slice(); S.cur.data = JSON
 $('#undo').onclick = () => { const s = S.undo.pop(); if (!s) return; S.redo.push({ blocks: S.cur.blocks.slice(), data: JSON.stringify(S.cur.data) }); restore(s); S.dirtyBlocks = S.dirtyData = true; updateButtons(); };
 $('#redo').onclick = () => { const s = S.redo.pop(); if (!s) return; S.undo.push({ blocks: S.cur.blocks.slice(), data: JSON.stringify(S.cur.data) }); restore(s); S.dirtyBlocks = S.dirtyData = true; updateButtons(); };
 document.addEventListener('keydown', (e) => {
-  if (e.target.matches('input, textarea, select')) return;
+  if (e.target.matches('input, textarea, select') || playOpen()) return;
   if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); $('#undo').click(); }
   else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); $('#redo').click(); }
   else if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); $('#save').click(); }
@@ -713,6 +743,60 @@ $('#newmap').onclick = () => {
     } catch (e) { $('#nm-out').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
   };
 };
+
+// ------------------------------------------------------------------ play-test
+let lastCell = null, playBusy = false;
+$('#over').addEventListener('pointerdown', (e) => { if (S.cur) lastCell = cellOf(e); });
+function playOpen() { return $('#playbox').classList.contains('open'); }
+$('#play').onclick = () => {
+  if (!S.cur) return toast('Open a map first', 'warn');
+  let x = null, y = null;
+  if (S.sel) { const ev = S.cur.data[S.sel.kind][S.sel.i]; x = ev.x; y = Math.min(ev.y + 1, S.cur.layout.height - 1); }
+  else if (lastCell) [x, y] = lastCell;
+  else if ((S.cur.data.warp_events || []).length) { x = S.cur.data.warp_events[0].x; y = S.cur.data.warp_events[0].y; }
+  $('#play-x').value = x ?? 0; $('#play-y').value = y ?? 0;
+  $('#play-title').textContent = 'Play-test ' + S.cur.name;
+  $('#playbox').classList.add('open');
+};
+$('#play-close').onclick = () => { $('#playbox').classList.remove('open'); api('/api/play/stop', {}).catch(() => {}); };
+async function playStart(build) {
+  if (playBusy) return;
+  if (dirty() && !(await saveAll(true))) return;
+  playBusy = true;
+  $('#play-status').textContent = build ? 'Building with make… (a changed map takes ~1 minute, nothing changed ~1s)' : 'Starting…';
+  $('#play-build').hidden = true;
+  try {
+    const r = await api('/api/play/start', { map: S.cur.name, x: +$('#play-x').value, y: +$('#play-y').value, build });
+    if (r.build) { $('#play-build').textContent = r.build.output; }
+    if (!r.ok) { $('#play-status').textContent = r.error; $('#play-build').hidden = !r.build; return; }
+    $('#play-screen').src = r.image;
+    $('#play-status').textContent = `Playing ${r.where.map} from (${r.where.x}, ${r.where.y})` + (r.build ? ` · built in ${r.build.seconds}s` : '');
+  } catch (e) { $('#play-status').textContent = e.message; }
+  finally { playBusy = false; }
+}
+$('#play-start').onclick = () => playStart(true);
+$('#play-restart').onclick = () => playStart(false);
+async function playPress(inputs) {
+  if (playBusy || !$('#play-screen').src) return;
+  playBusy = true;
+  try {
+    const r = await api('/api/play/press', { inputs });
+    if (r.ok) $('#play-screen').src = r.image; else $('#play-status').textContent = r.error;
+  } catch (e) { $('#play-status').textContent = e.message; }
+  finally { playBusy = false; }
+}
+function keyInput(k) {
+  const dirs = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
+  return dirs.includes(k) ? `${k}*${16 * Math.max(1, +$('#play-steps').value || 1)}, wait 4` : `${k}, wait 45`;
+}
+document.querySelectorAll('#playbox [data-k]').forEach(b => b.onclick = () => playPress(keyInput(b.dataset.k)));
+$('#play-wait').onclick = () => playPress('wait 60');
+$('#play-run').onclick = () => playPress($('#play-custom').value);
+document.addEventListener('keydown', (e) => {
+  if (!playOpen() || e.target.matches('input, textarea, select')) return;
+  const k = { ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT', z: 'A', x: 'B', Enter: 'START', Backspace: 'SELECT', a: 'L', s: 'R' }[e.key];
+  if (k) { e.preventDefault(); e.stopPropagation(); playPress(keyInput(k)); }
+}, true);
 
 loadMaps().then(() => {
   const want = new URLSearchParams(location.search).get('map');

@@ -90,6 +90,12 @@ TOOLS = [
      _schema({"map": S, "warp": I, "dest_map": S, "dest_warp": I}, ["map", "warp", "dest_map", "dest_warp"])),
     ("resize_map", "Change a map layout's width/height (new area filled with the border block).",
      _schema({"name": S, "width": I, "height": I}, ["name", "width", "height"])),
+    ("playtest_start", "Build the ROM with `make` (unless build=false), start a fresh game and warp to `map` at x,y "
+     "(default: its first warp). Returns the screen. Story state is a new game's (flags/vars unset).",
+     _schema({"map": S, "x": I, "y": I, "build": B}, ["map"])),
+    ("playtest_press", "Press buttons in the running play-test and return the screen. inputs like "
+     "'UP, wait 10, A, wait 60' (KEY*N holds N frames; 16 frames = one step). record=true also returns a strip "
+     "of frames.", _schema({"inputs": S, "record": B}, ["inputs"])),
     ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
      "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
     ("status", "List assets that were edited.", _schema({})),
@@ -101,7 +107,7 @@ TOOLS = [
 
 MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks", "set_blocks", "copy_blocks", "edit_map",
              "get_script", "write_script", "new_script", "duplicate_map", "link_warps", "resize_map",
-             "find_constants"}
+             "find_constants", "playtest_start", "playtest_press"}
 
 
 class Server:
@@ -292,6 +298,26 @@ class Server:
             return txt("linked")
         if name == "resize_map":
             return txt({"ok": True, "notes": m.resize(args["name"], int(args["width"]), int(args["height"]))})
+        if name in ("playtest_start", "playtest_press"):
+            from .playtest import PlaytestError, strip
+            proj = self.proj
+            try:
+                if name == "playtest_start":
+                    if args.get("build", True):
+                        rep = proj.build_rom()
+                        if rep.returncode != 0:
+                            tail = "\n".join(rep.output.rstrip().splitlines()[-30:])
+                            raise ProjectError(f"make failed (exit {rep.returncode}):\n{tail}")
+                    img = proj.play.start(m.resolve(args["map"]), args.get("x"), args.get("y"))
+                    out = [self._png(img.resize((480, 320), Image.NEAREST))]
+                    return out + txt(f"playing {proj.play.where}")
+                final, frames = proj.play.press(args["inputs"], record_every=8 if args.get("record") else 0)
+                out = [self._png(final.resize((480, 320), Image.NEAREST))]
+                if frames:
+                    out.append(self._png(strip(frames)))
+                return out + txt("ok")
+            except PlaytestError as e:
+                raise ProjectError(str(e))
         if name == "find_constants":
             q = (args.get("query") or "").upper()
             hits = [c for c in m.constants(args["prefix"]) if q in c]

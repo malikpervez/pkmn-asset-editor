@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .decomp import DecompError, open_project
+from .decomp import DecompError, _exclude_state_dir, open_project
 from .project import Project, ProjectError
 
 ERRORS = (ProjectError, DecompError)
@@ -180,6 +180,19 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("warp", type=int)
     q.add_argument("dest_map")
     q.add_argument("dest_warp", type=int)
+
+    p = with_project(sub.add_parser("play", help="source tree: build, then play-test a map headlessly and save "
+                                                  "screenshots (needs libmgba)"))
+    p.add_argument("map", help="map name, e.g. PetalburgCity")
+    p.add_argument("--x", type=int)
+    p.add_argument("--y", type=int)
+    p.add_argument("--inputs", default="", help="e.g. 'UP, wait 10, A, wait 60' (KEY*N holds N frames)")
+    p.add_argument("-o", "--out", default="playtest.png", help="final screenshot (.png)")
+    p.add_argument("--gif", help="also record the inputs as an animated GIF")
+    p.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
+    p.add_argument("--scale", type=int, default=2)
+
+    with_project(sub.add_parser("doctor", help="check that building and play-testing will work"))
 
     with_project(sub.add_parser("guide", help="print editing instructions for AI agents (AGENTS.md style)"))
 
@@ -389,6 +402,32 @@ def _run(args) -> int:
         for f in args.images:
             print(f"updated {proj.palette_from_png(proj.get(f))}")
         return 0
+    if args.cmd == "doctor":
+        return _doctor(proj)
+    if args.cmd == "play":
+        if not decomp:
+            raise ProjectError("`pae play` needs a source tree (it plays the ROM that `make` builds)")
+        from .playtest import PlaytestError, save_gif
+        if not args.no_build:
+            rep = proj.build_rom()
+            if rep.returncode != 0:
+                print("\n".join(rep.output.rstrip().splitlines()[-25:]))
+                print(f"make failed (exit {rep.returncode})")
+                return 1
+            print(f"built in {rep.seconds:.0f}s")
+        try:
+            name = proj.maps.resolve(args.map) if proj.maps else args.map
+            first = proj.play.start(name, args.x, args.y)
+            final, frames = proj.play.press(args.inputs, record_every=4 if args.gif else 0) if args.inputs else (first, [])
+        except PlaytestError as e:
+            raise ProjectError(str(e))
+        final.resize((final.width * args.scale, final.height * args.scale)).save(args.out)
+        print(f"wrote {args.out} ({proj.play.where})")
+        if args.gif:
+            save_gif([first] + frames, args.gif, args.scale)
+            print(f"wrote {args.gif} ({len(frames) + 1} frames)")
+        proj.play.close()
+        return 0
     if args.cmd == "map":
         m = getattr(proj, "maps", None)
         if m is None:
@@ -459,13 +498,42 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-def _exclude_state_dir(root: Path) -> None:
-    """Keep the tool's .pae/ folder out of git without touching the repository's .gitignore."""
-    excl = root / ".git" / "info" / "exclude"
+
+def _doctor(proj) -> int:
+    """Report what building and play-testing need, and what is missing."""
+    import shutil
+
+    rows = []
+
+    def check(name, ok, fix=""):
+        rows.append((name, ok, fix))
+
+    if proj.kind != "decomp":
+        print("ROM projects need nothing else: `pae build` writes the ROM directly.")
+        return 0
+    for tool, fix in (("make", "install make"), ("arm-none-eabi-gcc", "scripts/setup-toolchain.sh (or devkitARM)"),
+                      ("cc", "install a C compiler (build-essential / Xcode tools)")):
+        check(f"{tool} on PATH", shutil.which(tool) is not None, fix)
+    has_png = any(Path(p).exists() for p in ("/usr/include/png.h", "/usr/local/include/png.h",
+                                             "/opt/homebrew/include/png.h"))
+    check("libpng headers (for the repo's tools)", has_png, "install libpng-dev")
+    from .playtest import PlaytestError, driver_path, find_rom
     try:
-        if excl.parent.exists():
-            text = excl.read_text() if excl.exists() else ""
-            if ".pae/" not in text:
-                excl.write_text(text + ("\n" if text and not text.endswith("\n") else "") + ".pae/\n")
-    except OSError:
-        pass
+        driver_path(proj.root / ".pae" / "cache")
+        check("libmgba (headless emulator for pae play)", True)
+    except PlaytestError:
+        check("libmgba (headless emulator for pae play)", False, "install libmgba-dev / brew install mgba")
+    import re
+    cfg = proj.root / "include" / "config" / "quickstart.h"
+    qs = cfg.exists() and bool(re.search(r"#define\s+ENABLE_QUICKSTART\s+TRUE", cfg.read_text()))
+    check("Quickstart enabled (pae play starts games with it)", qs,
+          "set ENABLE_QUICKSTART TRUE in include/config/quickstart.h (non-release builds)")
+    try:
+        rom = find_rom(proj.root)
+        check(f"built ROM: {rom.name} (+ .elf)", True)
+    except PlaytestError:
+        check("built ROM (.gba + .elf)", False, "run `pae build`")
+    width = max(len(r[0]) for r in rows)
+    for name, ok, fix in rows:
+        print(f"{'ok ' if ok else 'MISSING'}  {name:<{width}}" + ("" if ok else f"   -> {fix}"))
+    return 0 if all(ok for _, ok, _ in rows) else 1
