@@ -172,6 +172,8 @@ async function init() {
   nav.innerHTML = `<a data-cat="">All <span>${total}</span></a>` +
     cats.map(([c, n]) => `<a data-cat="${esc(c)}">${esc(c.replace('_', ' '))} <span>${n}</span></a>`).join('');
   nav.onclick = (e) => { const a = e.target.closest('a'); if (!a) return; state.cat = a.dataset.cat || null; load(); };
+  const wanted = new URLSearchParams(location.search).get('q');  // e.g. from a mission: /?q=mudkip
+  if (wanted) { state.q = wanted; $('#search').value = wanted; }
   load();
 }
 
@@ -484,6 +486,7 @@ $('#btn-build').onclick = () => build(false);
 init();
 </script>
 <script src="/history.js"></script>
+<script src="/missions.js"></script>
 <script src="/findtext.js"></script>
 </body>
 </html>

@@ -385,6 +385,10 @@ def main(argv: list[str] | None = None) -> int:
     q = with_project(tsub.add_parser("delete", help="delete a test"))
     q.add_argument("name")
 
+    p = with_project(sub.add_parser("missions", help="guided missions for beginners: small real tasks in your game, "
+                                                      "ticked off by themselves"))
+    p.add_argument("--reset", action="store_true", help="start the missions again")
+
     p = sub.add_parser("ci", help="source tree: check every push on GitHub (build, `pae check`, replay tests)")
     csub = p.add_subparsers(dest="ci_cmd", required=True)
     q = with_project(csub.add_parser("init", help="write .github/workflows/pae.yml"))
@@ -889,6 +893,19 @@ def _run(args) -> int:
         elif args.map_cmd == "link":
             m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
             print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")
+        return 0
+    if args.cmd == "missions":
+        from .missions import Missions
+        m = Missions(proj)
+        r = m.reset() if args.reset else m.status()
+        print(f"{r['done']} of {r['total']} missions done")
+        for x in r["missions"]:
+            mark = "✅" if x["done"] else ("⏭ " if x["skipped"] else ("👉" if x["id"] == r["current"] else "  "))
+            print(f"{mark} {x['title']}")
+            if x["id"] == r["current"]:
+                for i, step in enumerate(x["steps"], 1):
+                    print(f"     {i}. {step.replace('**', '')}")
+        print("(the missions are also in the browser: 🎯 at the top of every page of `pae serve`)")
         return 0
     if args.cmd in ("test", "ci"):
         return _run_tests(proj, args, decomp)

@@ -165,7 +165,10 @@ def make_handler(state: _State):
                 ctype = "text/plain; charset=utf-8" if f.suffix == ".txt" else "application/octet-stream"
                 hdr = {} if f.suffix == ".txt" else {"Content-Disposition": f'attachment; filename="{f.name}"'}
                 return self._send(f.read_bytes(), ctype, headers=hdr)
-            if path in ("/history.js", "/findtext.js", "/blocks.js", "/live.js"):
+            if path == "/api/missions":
+                from .missions import Missions
+                return self._json(Missions(proj).status())
+            if path in ("/history.js", "/findtext.js", "/blocks.js", "/live.js", "/missions.js"):
                 return self._send((WEB / path[1:]).read_bytes(), "text/javascript; charset=utf-8")
             if path == "/api/text/search":
                 if proj.kind != "decomp":
@@ -755,6 +758,11 @@ def make_handler(state: _State):
                                                      body.get("flag")))
             if path.startswith("/api/tests/"):
                 return self._tests_post(path)
+            if path in ("/api/missions/reset", "/api/missions/skip"):
+                from .missions import Missions
+                body = json.loads(self._body() or b"{}")
+                m = Missions(proj)
+                return self._json(m.reset() if path.endswith("reset") else m.skip(body["id"], bool(body.get("skip", True))))
             if path.startswith("/api/release/"):
                 rel = self._release()
                 if path == "/api/release/base":

@@ -711,6 +711,8 @@ class PlaySession:
                         "save_file": str(save_file) if save_file else None,
                         "state": [state] if isinstance(state, str) else list(state or []), "script": script}
         self.steps = []
+        from .missions import note_activity
+        note_activity(self.root, "played")
         return img or g.emu.screenshot()
 
     def press(self, inputs, record_every: int = 0) -> tuple[Image.Image, list[Image.Image]]:
