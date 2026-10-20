@@ -178,6 +178,15 @@ def parse_inputs(spec: str | list) -> list[tuple[int, int]]:
     return steps
 
 
+def quickstart_enabled(root: Path) -> bool:
+    """pokeemerald-expansion's Quickstart (SELECT on the title screen starts a new game)."""
+    cfg = Path(root) / "include" / "config" / "quickstart.h"
+    try:
+        return bool(re.search(r"#define\s+ENABLE_QUICKSTART\s+(TRUE|1)\b", cfg.read_text()))
+    except OSError:
+        return False
+
+
 def find_rom(root: Path) -> Path:
     """The most recently built ROM in the repository that has its .elf next to it."""
     roms = sorted((p for p in Path(root).glob("*.gba") if p.with_suffix(".elf").exists()),
@@ -207,6 +216,8 @@ class Game:
         self.log = log or (lambda *_: None)
         self.emu = Emulator(driver_path(self.cache_dir), self.rom, self.save)
         self.rom_hash = hashlib.sha1(self.rom.read_bytes()).hexdigest()[:12]
+        # where SaveBlock1's pos and location are; vanilla layout unless the session reads the real one
+        self.sb1 = {"pos": 0, "location": 4}
         self.save_hash = hashlib.sha1(self.save.read_bytes()).hexdigest()[:12] \
             if self.save and self.save.exists() and self.save.stat().st_size else "fresh"
 
@@ -259,18 +270,25 @@ class Game:
             self.emu.close()
             self.emu = Emulator(driver_path(self.cache_dir), self.rom, self.save)
         t0 = time.time()
-        if self.save_hash == "fresh":
-            # SELECT pulses: skip the intros, then Quickstart on the title screen.
-            key, why = KEYS["SELECT"], ("could not reach the overworld. Quickstart (SELECT on the title screen) must "
-                                        "be enabled: ENABLE_QUICKSTART in include/config/quickstart.h, non-release build")
-        else:
+        title = {v for k, v in self.sym.items() if k.startswith("CB2_TitleScreen")}
+        if self.save_hash != "fresh":
             # A pulses: skip the intros, title -> main menu -> CONTINUE.
-            key, why = KEYS["A"], ("could not continue from this save. It may come from a build with a different "
-                                   "save layout, or be empty/corrupt.")
+            pick = lambda: KEYS["A"]
+            why = "could not continue from this save. It may come from a build with a different save layout, or be empty/corrupt."
+        elif quickstart_enabled(self.root):
+            # SELECT pulses: skip the intros, then Quickstart on the title screen.
+            pick = lambda: KEYS["SELECT"]
+            why = ("could not reach the overworld. Quickstart (SELECT on the title screen) must be enabled: "
+                   "ENABLE_QUICKSTART in include/config/quickstart.h, non-release build")
+        else:
+            # No Quickstart (e.g. a fork without it): a real new game, START on the title screen and A through the
+            # menu, the intro speech and the naming screens (default names).
+            pick = lambda: KEYS["START"] if self.callback2 in title else KEYS["A"]
+            why = "could not reach the overworld by starting a new game (START, then A through the intro)"
         for _ in range(1500):
             if self.in_overworld():
                 break
-            self.emu.frames(2, key)
+            self.emu.frames(2, pick())
             self.emu.frames(8, 0)
         else:
             raise PlaytestError(why)
@@ -292,14 +310,15 @@ class Game:
         sb1 = self.emu.read(self.sym["gSaveBlock1Ptr"])
         if not 0x02000000 <= sb1 < 0x04000000:
             raise PlaytestError("save block pointer looks invalid; is the game running?")
-        # SaveBlock1: pos (s16 x, y) at 0x00, location (s8 group, s8 num, s8 warpId, pad, s16 x, s16 y) at 0x04
-        self.emu.write(sb1 + 0, x, 2)
-        self.emu.write(sb1 + 2, y, 2)
-        self.emu.write(sb1 + 4, group, 1)
-        self.emu.write(sb1 + 5, num, 1)
-        self.emu.write(sb1 + 6, 0xFF, 1)  # WARP_ID_NONE: use x/y
-        self.emu.write(sb1 + 8, x, 2)
-        self.emu.write(sb1 + 10, y, 2)
+        # SaveBlock1: pos (s16 x, y), location (s8 group, s8 num, s8 warpId, pad, s16 x, s16 y)
+        pos, loc = sb1 + self.sb1["pos"], sb1 + self.sb1["location"]
+        self.emu.write(pos + 0, x, 2)
+        self.emu.write(pos + 2, y, 2)
+        self.emu.write(loc + 0, group, 1)
+        self.emu.write(loc + 1, num, 1)
+        self.emu.write(loc + 2, 0xFF, 1)  # WARP_ID_NONE: use x/y
+        self.emu.write(loc + 4, x, 2)
+        self.emu.write(loc + 6, y, 2)
         self.emu.write(self.sym["gMain"] + 4, self.sym["CB2_LoadMap"])
         self.emu.frames(2)
         if not self.wait_until(self.in_overworld, 900):
@@ -439,9 +458,10 @@ class PlaySession:
     def location(self) -> dict:
         g = self._require()
         sb1 = g.emu.read(g.sym["gSaveBlock1Ptr"])
-        grp, num = g.emu.read(sb1 + 4, 1), g.emu.read(sb1 + 5, 1)
+        pos, loc = sb1 + g.sb1["pos"], sb1 + g.sb1["location"]
+        grp, num = g.emu.read(loc, 1), g.emu.read(loc + 1, 1)
         names = {v: k for k, v in map_numbers(self.root).items()}
-        return {"map": names.get((grp, num)), "x": g.emu.read(sb1, 2), "y": g.emu.read(sb1 + 2, 2)}
+        return {"map": names.get((grp, num)), "x": g.emu.read(pos, 2), "y": g.emu.read(pos + 2, 2)}
 
     # -- story state
     @property
@@ -668,6 +688,10 @@ class PlaySession:
             self.scratch.write_bytes(data)
             self.game = Game(self.root, rom, self.cache_dir, self.log, save=self.scratch)
             self._stamp = stamp
+            try:
+                self.game.sb1 = self.constants.offsets("SaveBlock1", ["pos", "location"], game_version(rom))
+            except PlaytestError as e:  # keep the vanilla layout
+                self.log(f"couldn't read SaveBlock1's layout ({e}); assuming the vanilla one")
         return self.game
 
     def start(self, map_name: str | None = None, x: int | None = None, y: int | None = None,
@@ -864,6 +888,7 @@ class Constants:
 
     def _signature(self) -> str:
         files = list((self.root / "include" / "constants").glob("*.h")) + list((self.root / "include" / "config").glob("*.h"))
+        files += [f for f in (self.root / "include" / "global.h",) if f.exists()]
         return str(max((f.stat().st_mtime for f in files), default=0))
 
     def values(self, names: list[str], version: str = "EMERALD") -> dict[str, int]:
@@ -882,17 +907,24 @@ class Constants:
             self.cache_file.write_text(json.dumps(self._cache))
         return {n: self._cache[n] for n in names}
 
+    def offsets(self, struct: str, fields: list[str], version: str = "EMERALD") -> dict[str, int]:
+        """Field offsets in a game struct, as the game's compiler lays them out (forks add fields)."""
+        keys = {f: f"offsetof(struct {struct}, {f})" for f in fields}
+        vals = self.values(list(keys.values()), version)
+        return {f: vals[k] for f, k in keys.items()}
+
     def _compile(self, names: list[str], version: str) -> dict[str, int]:
         cc = shutil.which("arm-none-eabi-gcc")
         if cc is None:
             raise PlaytestError("arm-none-eabi-gcc is needed to read constant values (see `pae doctor`)")
         for n in names:
-            if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", n):
+            if not re.fullmatch(r"[A-Z_][A-Z0-9_]*|offsetof\(struct \w+, \w+\)", n):
                 raise PlaytestError(f"not a constant name: {n}")
         work = self.cache_file.parent / "consts"
         work.mkdir(parents=True, exist_ok=True)
         src = work / "pae_consts.c"
         includes = "".join(f'#include "{h}"\n' for h in self.HEADERS if (self.root / "include" / h).exists())
+        includes += "#ifndef offsetof\n#define offsetof(t, m) __builtin_offsetof(t, m)\n#endif\n"
         src.write_text(includes + "const unsigned int pae_v[] = {\n" + "".join(f"    {n},\n" for n in names) + "};\n")
         # the same target flags the repository's Makefile uses (apcs-gnu changes enum sizes)
         cmd = [cc, "-mthumb", "-mthumb-interwork", "-mabi=apcs-gnu", "-mtune=arm7tdmi", "-march=armv4t",

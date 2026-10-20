@@ -833,7 +833,7 @@ def _run(args) -> int:
         except PlaytestError as e:
             raise ProjectError(str(e))
         final.resize((final.width * args.scale, final.height * args.scale)).save(args.out)
-        print(f"wrote {args.out} ({proj.play.where})")
+        print(f"wrote {args.out} ({ {**proj.play.where, **proj.play.location()} })")
         if args.gif:
             save_gif([first] + frames, args.gif, args.scale)
             print(f"wrote {args.gif} ({len(frames) + 1} frames)")
@@ -1182,7 +1182,9 @@ def _run(args) -> int:
             w = gd.wild(args.map)
             if not w["entries"]:
                 print(f"{w['map']}: no wild Pokémon")
-            for e in w["entries"]:
+            for i, e in enumerate(w["entries"]):
+                if e.get("variant"):
+                    print(f"[{i}] {e['variant']} ({e['base_label']})")
                 for k, v in e["kinds"].items():
                     if v["mons"]:
                         slots = ", ".join(f"{m['name']} {m['min_level']}-{m['max_level']} ({r}%)"
@@ -1407,7 +1409,10 @@ def _doctor(proj, fix: bool = False, yes: bool = False) -> int:
         ("Tools that build your game (make, a C compiler, arm-none-eabi-gcc)", lambda: tools and has_png(),
          "install them", run_setup),
         ("The test-play emulator (libmgba)", has_mgba, "install it", run_setup),
-        ("Quickstart (needed to test from a brand-new game)", quickstart_on,
+        # without the Quickstart config (forks such as pokehns-expansion), new games start through the intro instead
+        ("Quickstart (needed to test from a brand-new game)" if cfg.exists() else
+         "Brand-new test games (this game has no Quickstart: they start through the intro)",
+         quickstart_on if cfg.exists() else (lambda: True),
          "set ENABLE_QUICKSTART to TRUE in include/config/quickstart.h", turn_quickstart_on if cfg.exists() else None),
         ("Save points (the game folder is a git repository)", is_git, "run `git init` and make a first save point",
          git_init),

@@ -794,10 +794,19 @@ by the shape of its entries:
   round-trip byte for byte, battles and play-tests in the emulator), but not
   against your fork. Heavily customised code may need `pae describe` to
   confirm which palette an image uses, and Expert mode to see unusual fields.
+* Also tried on a pokehns-expansion FireRed fork (a Kanto → Johto hack,
+  `make firered`): building, checks, graphics, trainers, wild Pokémon (with
+  its FireRed/LeafGreen/night tables), dialogue and play-testing (new games,
+  warps, battles, checkpoints, replay tests) work. Its build switches maps
+  to `firered_campaign` versions (other people, connections and geometry for
+  the FireRed game, and blocks changed through sparse overrides). pae shows
+  and edits the base map, so check those maps in the test window.
 * `install.sh` and Docker were tested on Ubuntu 24.04. The Windows script and
   macOS (Homebrew) have not been tested yet.
-* Play-testing needs a non-release build with `ENABLE_QUICKSTART` (`pae doctor
-  --fix` turns it on) and libmgba. Checkpoints made before a change to the save
+* Play-testing needs a non-release build and libmgba. With `ENABLE_QUICKSTART`
+  (`pae doctor --fix` turns it on) a new test game starts from the title screen;
+  forks without Quickstart (pokehns-expansion) start one through the intro
+  instead (START, then A with the default names), which is just as quick. Checkpoints made before a change to the save
   layout (SaveBlock structs) are not readable, just as with real saves.
   Battle tests use expansion's debug battle path (`BattleSetup_StartTrainerBattle_Debug`).
 * The dialogue preview uses the normal latin font; texts shown in other fonts
