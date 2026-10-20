@@ -139,7 +139,9 @@ MCP map tools: `list_maps`, `view_map`, `get_map`, `view_metatiles`,
 (header + add/update/delete events), `get_script`/`write_script`/`new_script`,
 `duplicate_map`, `link_warps`, `resize_map`, `find_constants`, `tileset_info`,
 `get_metatile`/`set_metatile`/`add_metatiles`, `view_tiles`,
-`import_art_as_metatiles`, `playtest_start`/`playtest_press`.
+`import_art_as_metatiles`, `playtest_start`/`playtest_press`,
+`playtest_save_checkpoint`/`list_checkpoints`, `playtest_set_state`,
+`playtest_run_script`.
 
 ### Build and play-test
 
@@ -165,9 +167,38 @@ How it works:
 4. Inputs are a small script: `KEY`, `KEY*frames` (16 frames = one step),
    `A+B 4`, `wait 60`. Results come back as a PNG, or as a GIF with `--gif`.
 
+#### Test saves: start from anywhere in the story
+
+A play-test can start from a **checkpoint** (a real cartridge save) instead of a
+new game, so you can test the part of the story you are working on without
+replaying everything before it.
+
+```bash
+pae checkpoint import before-gym ~/emerald.sav       # use a save from your emulator / flash cart
+pae play --from before-gym                           # continue it, where it was saved
+pae play PetalburgCity --x 17 --y 11 --from before-gym   # continue it, then warp to a map
+pae play PetalburgCity --state "FLAG_BADGE01_GET, VAR_PETALBURG_GYM_STATE=2, ITEM_POTION*5" \
+    --script PetalburgCity_EventScript_GymSign --save-as gym-test
+pae checkpoint list / delete NAME
+```
+
+* `--state` sets story state before the test starts: `FLAG_X` (set), `!FLAG_X`
+  (clear), `VAR_X=5`, `ITEM_X*3` (give). Values come from *your* headers (they
+  are compiled with your toolchain), so renumbered or new flags in a fork work.
+  The game's own `FlagSet`/`VarSet`/`AddBagItem` are called.
+* `--script LABEL` starts any script (event, cutscene, sign) immediately, as if
+  it had been triggered.
+* `--save-as NAME` (or **Save checkpoint** in the play window) saves with the
+  game's own save routine at the current spot, so the checkpoint has the party,
+  bag, flags and position exactly as they are. Checkpoints live in
+  `.pae/checkpoints/` as plain `.sav` files that any emulator can load.
+* A checkpoint keeps working after you rebuild, as long as the save layout
+  does not change (the same rule as for real saves).
+
 * In the map editor, **▶ Play-test** opens the game at the selected event or the
-  clicked tile. You can then play it with on-screen buttons or the keyboard,
-  and rebuild/restart after edits.
+  clicked tile, from a new game or a checkpoint (or import a `.sav`), with
+  optional story state and a script to run. You can then play it with on-screen
+  buttons or the keyboard, save checkpoints, and rebuild/restart after edits.
 * AI assistants get `playtest_start` and `playtest_press` MCP tools that return
   screenshots.
 * **Changes** (graphics page) shows before/after renders of every edited sprite,
@@ -345,7 +376,8 @@ anything `pae check` reports, then build."*
 | `pae status` / `pae validate` / `pae build [-o FILE] [--no-patch]` | check and build |
 | `pae revert ID… / --all` | restore originals |
 | `pae doctor` | check toolchain, emulator, Quickstart and built ROM |
-| `pae play MAP [--x --y --inputs … -o PNG --gif GIF]` | build, then play-test a map headlessly |
+| `pae play [MAP] [--x --y --from CKPT --state … --script LABEL --save-as NAME --inputs … -o PNG --gif GIF]` | build, then play-test headlessly |
+| `pae checkpoint list / import NAME FILE / delete NAME` | test saves |
 | `pae map list / render / metatiles / events / new / link` | maps, events and warps |
 | `pae serve` / `pae mcp` | web editor / MCP server |
 | `pae apply-patch ROM PATCH -o OUT` | apply UPS/IPS |
@@ -391,8 +423,9 @@ by the shape of its entries:
   edited in source-tree mode.
 * Tileset animations (animated water and flowers) are not edited, and
   imported art always goes into the map's secondary tileset.
-* Play-testing starts from a new save (Quickstart), so flags and vars are
-  unset. It needs a non-release build with `ENABLE_QUICKSTART`, and libmgba.
+* Play-testing a new game needs a non-release build with `ENABLE_QUICKSTART`,
+  and libmgba. Checkpoints made before a change to the save layout (SaveBlock
+  structs) are not readable, just as with real saves.
 * Relocation updates every aligned word in the ROM that equals the old
   address. This is the standard approach in ROM-hacking tools. A random data
   word that happens to equal the address would also be changed, but this is

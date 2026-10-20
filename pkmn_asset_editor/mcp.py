@@ -90,9 +90,20 @@ TOOLS = [
      _schema({"map": S, "warp": I, "dest_map": S, "dest_warp": I}, ["map", "warp", "dest_map", "dest_warp"])),
     ("resize_map", "Change a map layout's width/height (new area filled with the border block).",
      _schema({"name": S, "width": I, "height": I}, ["name", "width", "height"])),
-    ("playtest_start", "Build the ROM with `make` (unless build=false), start a fresh game and warp to `map` at x,y "
-     "(default: its first warp). Returns the screen. Story state is a new game's (flags/vars unset).",
-     _schema({"map": S, "x": I, "y": I, "build": B}, ["map"])),
+    ("playtest_start", "Build the ROM with `make` (unless build=false) and start a play-test: a fresh game, or "
+     "`checkpoint` (a saved game: story progress, party, bag). Optional `state` lines applied before arriving: "
+     "FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5. Warps to `map` at x,y (default: its first warp; with a checkpoint and no "
+     "map, stays where it was saved). `script` starts a script label on arrival. Returns the screen.",
+     _schema({"map": S, "x": I, "y": I, "build": B, "checkpoint": S, "state": {"type": "array", "items": S},
+              "script": S})),
+    ("playtest_save_checkpoint", "Save the running play-test like the in-game Save and keep it as a named "
+     "checkpoint to start later tests from (survives rebuilds).", _schema({"name": S, "note": S}, ["name"])),
+    ("list_checkpoints", "Saved checkpoints (name, map, note).", _schema({})),
+    ("playtest_run_script", "Start any script label in the running play-test (event, cutscene, sign) and return "
+     "the screen.", _schema({"label": S, "frames": I}, ["label"])),
+    ("playtest_set_state", "Set story state in the running play-test: FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5. NPCs "
+     "and map scripts only react after the next map load (playtest_start does that for you).",
+     _schema({"state": {"type": "array", "items": S}}, ["state"])),
     ("playtest_press", "Press buttons in the running play-test and return the screen. inputs like "
      "'UP, wait 10, A, wait 60' (KEY*N holds N frames; 16 frames = one step). record=true also returns a strip "
      "of frames.", _schema({"inputs": S, "record": B}, ["inputs"])),
@@ -126,7 +137,8 @@ TOOLS = [
 MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks", "set_blocks", "copy_blocks", "edit_map",
              "get_script", "write_script", "new_script", "duplicate_map", "link_warps", "resize_map",
              "find_constants", "playtest_start", "playtest_press", "tileset_info", "get_metatile", "set_metatile",
-             "add_metatiles", "view_tiles", "import_art_as_metatiles"}
+             "add_metatiles", "view_tiles", "import_art_as_metatiles", "playtest_save_checkpoint",
+             "list_checkpoints", "playtest_run_script", "playtest_set_state"}
 
 
 class Server:
@@ -349,6 +361,20 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
+        if name in ("playtest_save_checkpoint", "list_checkpoints", "playtest_run_script", "playtest_set_state"):
+            from .playtest import PlaytestError
+            play = self.proj.play
+            try:
+                if name == "playtest_save_checkpoint":
+                    return txt(play.save_checkpoint(args["name"], args.get("note", "")))
+                if name == "list_checkpoints":
+                    return txt(play.checkpoints())
+                if name == "playtest_set_state":
+                    return txt({"done": play.apply_state(args["state"])})
+                img = play.run_script(args["label"], int(args.get("frames") or 60))
+                return [self._png(img.resize((480, 320), Image.NEAREST)), *txt(f"started {args['label']}")]
+            except PlaytestError as e:
+                raise ProjectError(str(e))
         if name in ("playtest_start", "playtest_press"):
             from .playtest import PlaytestError, strip
             proj = self.proj
@@ -359,7 +385,9 @@ class Server:
                         if rep.returncode != 0:
                             tail = "\n".join(rep.output.rstrip().splitlines()[-30:])
                             raise ProjectError(f"make failed (exit {rep.returncode}):\n{tail}")
-                    img = proj.play.start(m.resolve(args["map"]), args.get("x"), args.get("y"))
+                    img = proj.play.start(m.resolve(args["map"]) if args.get("map") else None, args.get("x"),
+                                          args.get("y"), checkpoint=args.get("checkpoint"),
+                                          state=args.get("state"), script=args.get("script"))
                     out = [self._png(img.resize((480, 320), Image.NEAREST))]
                     return out + txt(f"playing {proj.play.where}")
                 final, frames = proj.play.press(args["inputs"], record_every=8 if args.get("record") else 0)

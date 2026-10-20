@@ -195,7 +195,12 @@ def main(argv: list[str] | None = None) -> int:
 
     p = with_project(sub.add_parser("play", help="source tree: build, then play-test a map headlessly and save "
                                                   "screenshots (needs libmgba)"))
-    p.add_argument("map", help="map name, e.g. PetalburgCity")
+    p.add_argument("map", nargs="?", help="map name, e.g. PetalburgCity (optional with --from)")
+    p.add_argument("--from", dest="checkpoint", help="continue from a saved checkpoint (story progress, party…)")
+    p.add_argument("--state", action="append", default=[],
+                   help="story state before arriving: FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5 (repeatable)")
+    p.add_argument("--script", help="start this script label on arrival (e.g. a cutscene)")
+    p.add_argument("--save-as", help="after the inputs, save the game as a checkpoint with this name")
     p.add_argument("--x", type=int)
     p.add_argument("--y", type=int)
     p.add_argument("--inputs", default="", help="e.g. 'UP, wait 10, A, wait 60' (KEY*N holds N frames)")
@@ -203,6 +208,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--gif", help="also record the inputs as an animated GIF")
     p.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
     p.add_argument("--scale", type=int, default=2)
+
+    p = with_project(sub.add_parser("checkpoint", help="source tree: saved games to start play-tests from"))
+    p.add_argument("action", choices=["list", "import", "delete"])
+    p.add_argument("name", nargs="?")
+    p.add_argument("file", nargs="?", help="for import: a .sav from your emulator (mGBA, VBA, …)")
 
     with_project(sub.add_parser("doctor", help="check that building and play-testing will work"))
 
@@ -414,6 +424,28 @@ def _run(args) -> int:
         for f in args.images:
             print(f"updated {proj.palette_from_png(proj.get(f))}")
         return 0
+    if args.cmd == "checkpoint":
+        if not decomp:
+            raise ProjectError("checkpoints belong to source-tree play-testing")
+        from .playtest import PlaytestError
+        try:
+            if args.action == "list":
+                cps = proj.play.checkpoints()
+                for c in cps:
+                    where = f"{c.get('map')} ({c.get('x')},{c.get('y')})" if c.get("map") else ""
+                    print(f"{c['name']:<24} {c.get('created', ''):<17} {where:<32} {c.get('note', '')}")
+                if not cps:
+                    print("no checkpoints yet: `pae play MAP --inputs ... --save-as NAME` or `pae checkpoint import NAME FILE.sav`")
+            elif args.action == "import":
+                if not args.name or not args.file:
+                    raise ProjectError("usage: pae checkpoint import NAME FILE.sav")
+                print(f"imported {proj.play.import_save(args.file, args.name)['name']}")
+            else:
+                proj.play.delete_checkpoint(args.name or "")
+                print(f"deleted {args.name}")
+        except PlaytestError as e:
+            raise ProjectError(str(e))
+        return 0
     if args.cmd == "doctor":
         return _doctor(proj)
     if args.cmd == "play":
@@ -428,9 +460,14 @@ def _run(args) -> int:
                 return 1
             print(f"built in {rep.seconds:.0f}s")
         try:
-            name = proj.maps.resolve(args.map) if proj.maps else args.map
-            first = proj.play.start(name, args.x, args.y)
+            name = (proj.maps.resolve(args.map) if proj.maps else args.map) if args.map else None
+            first = proj.play.start(name, args.x, args.y, checkpoint=args.checkpoint, state=args.state,
+                                    script=args.script)
+            for line in proj.play.where.get("state") or []:
+                print(f"state: {line}")
             final, frames = proj.play.press(args.inputs, record_every=4 if args.gif else 0) if args.inputs else (first, [])
+            if args.save_as:
+                print(f"saved checkpoint {proj.play.save_checkpoint(args.save_as)['name']}")
         except PlaytestError as e:
             raise ProjectError(str(e))
         final.resize((final.width * args.scale, final.height * args.scale)).save(args.out)

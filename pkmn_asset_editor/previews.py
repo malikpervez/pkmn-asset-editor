@@ -287,5 +287,12 @@ pae play PetalburgCity --x 17 --y 11 --inputs "UP, wait 10, A, wait 60" -o shot.
 ```
 `pae play` builds, starts a fresh save (Quickstart) and warps to the map.
 Inputs: `KEY`, `KEY*frames` (16 frames = 1 step), `A+B 4`, `wait 60`.
+
+To test later parts of the story, start from a checkpoint (a real save) and/or
+set state first: `playtest_start(map, checkpoint="before-gym",
+state=["FLAG_BADGE01_GET", "!FLAG_HIDE_X", "VAR_STORY=3", "ITEM_POTION*5"],
+script="Town_EventScript_Cutscene")`. `list_checkpoints` shows saves;
+`playtest_save_checkpoint(name)` saves the running game in place (overworld
+only). `playtest_set_state` / `playtest_run_script` work mid-session.
 Always look at the result before telling the user an edit works.
 """

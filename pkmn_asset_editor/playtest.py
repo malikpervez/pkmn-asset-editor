@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -50,12 +51,17 @@ def elf_symbols(path: Path) -> dict[str, int]:
         strtab = sections[sh[6]]
         str_off = strtab[4]
         for i in range(sh[5] // 16):
-            name_off, value, _size, info, _other, _shndx = struct.unpack_from("<IIIBBH", data, sh[4] + i * 16)
-            if not name_off or (info & 0xF) not in (1, 2):  # OBJECT / FUNC
+            name_off, value, _size, info, _other, shndx = struct.unpack_from("<IIIBBH", data, sh[4] + i * 16)
+            typ, bind = info & 0xF, info >> 4
+            # OBJECT / FUNC, plus NOTYPE for assembler labels (scripts, movement data) that live in sections
+            if not name_off or typ not in (0, 1, 2) or (typ == 0 and (shndx == 0 or shndx >= 0xFF00)):
                 continue
             end = data.index(b"\0", str_off + name_off)
             name = data[str_off + name_off:end].decode("ascii", "replace")
-            out.setdefault(name, value)
+            if name.startswith(("$", ".L")):
+                continue
+            if bind == 1 or name not in out:  # GLOBAL wins over a same-named local
+                out[name] = value
     return out
 
 
@@ -80,8 +86,9 @@ def driver_path(cache_dir: Path) -> Path:
 
 
 class Emulator:
-    def __init__(self, exe: Path, rom: Path):
-        self.proc = subprocess.Popen([str(exe), str(rom)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    def __init__(self, exe: Path, rom: Path, save: Path | None = None):
+        args = [str(exe), str(rom)] + ([str(save)] if save else [])
+        self.proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      stderr=subprocess.PIPE, text=True, bufsize=1)
         line = self.proc.stdout.readline()
         if not line.startswith("ready"):
@@ -118,6 +125,10 @@ class Emulator:
 
     def load_state(self, path: Path) -> None:
         self.cmd(f"load {path}")
+
+    def call(self, addr: int, *args: int) -> int:
+        """Run a game function (thumb address) to completion and return r0."""
+        return int(self.cmd(" ".join(["call", str(addr), *(str(a & 0xFFFFFFFF) for a in args)])))
 
     def close(self) -> None:
         try:
@@ -172,9 +183,11 @@ def find_rom(root: Path) -> Path:
 class Game:
     """A running ROM plus the symbols needed to drive it."""
 
-    def __init__(self, root: Path, rom: Path | None = None, cache_dir: Path | None = None, log=None):
+    def __init__(self, root: Path, rom: Path | None = None, cache_dir: Path | None = None, log=None,
+                 save: Path | None = None):
         self.root = Path(root)
         self.rom = Path(rom) if rom else self.find_rom()
+        self.save = Path(save) if save else None
         elf = self.rom.with_suffix(".elf")
         if not elf.exists():
             raise PlaytestError(f"{elf.name} not found next to {self.rom.name}; it is produced by `make`")
@@ -184,8 +197,10 @@ class Game:
                 raise PlaytestError(f"symbol {need} not found in {elf.name}")
         self.cache_dir = cache_dir or self.root / ".pae" / "cache"
         self.log = log or (lambda *_: None)
-        self.emu = Emulator(driver_path(self.cache_dir), self.rom)
+        self.emu = Emulator(driver_path(self.cache_dir), self.rom, self.save)
         self.rom_hash = hashlib.sha1(self.rom.read_bytes()).hexdigest()[:12]
+        self.save_hash = hashlib.sha1(self.save.read_bytes()).hexdigest()[:12] \
+            if self.save and self.save.exists() and self.save.stat().st_size else "fresh"
 
     def find_rom(self) -> Path:
         return find_rom(self.root)
@@ -213,9 +228,18 @@ class Game:
         return cond()
 
     # -- boot
+    @property
+    def boot_state(self) -> Path:
+        return self.cache_dir / f"boot-{self.rom_hash}-{self.save_hash}.state"
+
+    def call(self, symbol: str, *args: int) -> int:
+        if symbol not in self.sym:
+            raise PlaytestError(f"function {symbol} not found in the .elf")
+        return self.emu.call(self.sym[symbol], *args)
+
     def boot(self) -> None:
-        """Reach the overworld in a fresh game (cached as a savestate per ROM)."""
-        state = self.cache_dir / f"boot-{self.rom_hash}.state"
+        """Reach the overworld: Quickstart for a fresh game, Continue when a save is loaded (cached)."""
+        state = self.boot_state
         if state.exists():
             try:
                 self.emu.load_state(state)
@@ -225,17 +249,23 @@ class Game:
                 pass
             state.unlink(missing_ok=True)
             self.emu.close()
-            self.emu = Emulator(driver_path(self.cache_dir), self.rom)
+            self.emu = Emulator(driver_path(self.cache_dir), self.rom, self.save)
         t0 = time.time()
-        # Press SELECT in pulses: skips the intros, then triggers Quickstart on the title screen.
-        for _ in range(900):
+        if self.save_hash == "fresh":
+            # SELECT pulses: skip the intros, then Quickstart on the title screen.
+            key, why = KEYS["SELECT"], ("could not reach the overworld. Quickstart (SELECT on the title screen) must "
+                                        "be enabled: ENABLE_QUICKSTART in include/config/quickstart.h, non-release build")
+        else:
+            # A pulses: skip the intros, title -> main menu -> CONTINUE.
+            key, why = KEYS["A"], ("could not continue from this save. It may come from a build with a different "
+                                   "save layout, or be empty/corrupt.")
+        for _ in range(1500):
             if self.in_overworld():
                 break
-            self.emu.frames(2, KEYS["SELECT"])
+            self.emu.frames(2, key)
             self.emu.frames(8, 0)
         else:
-            raise PlaytestError("could not reach the overworld. Quickstart (SELECT on the title screen) must be "
-                                "enabled: ENABLE_QUICKSTART in include/config/quickstart.h, non-release build")
+            raise PlaytestError(why)
         self.emu.frames(240)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.emu.save_state(state)
@@ -293,39 +323,180 @@ def spawn_point(map_json: dict, x: int | None, y: int | None) -> tuple[int, int]
 
 
 class PlaySession:
-    """A long-lived play-test: start at a map, press buttons, look at the screen."""
+    """A long-lived play-test: start at a map (fresh game or from a checkpoint save), set story state,
+    press buttons, run scripts, save checkpoints, look at the screen."""
 
     def __init__(self, root: Path, cache_dir: Path | None = None, log=None):
         self.root = Path(root)
         self.cache_dir = cache_dir or self.root / ".pae" / "cache"
+        self.checkpoint_dir = self.root / ".pae" / "checkpoints"
         self.log = log or (lambda *_: None)
         self.game: Game | None = None
-        self._rom_stamp = None
+        self._stamp = None
         self.where: dict = {}
+        self.scratch = self.cache_dir / "session.sav"
+        self._constants: Constants | None = None
 
-    def _game(self) -> Game:
-        rom = find_rom(self.root)
-        stamp = (str(rom), rom.stat().st_mtime)
-        if self.game is None or stamp != self._rom_stamp:
-            if self.game is not None:
-                self.game.close()
-            self.game = Game(self.root, rom, self.cache_dir, self.log)
-            self._rom_stamp = stamp
+    # -- checkpoints (cartridge saves kept by name)
+    def checkpoints(self) -> list[dict]:
+        out = []
+        for meta in sorted(self.checkpoint_dir.glob("*.json")):
+            try:
+                d = json.loads(meta.read_text())
+            except ValueError:
+                continue
+            d["name"] = meta.stem
+            out.append(d)
+        return out
+
+    def _checkpoint_path(self, name: str) -> Path:
+        if not name or not all(c.isalnum() or c in "-_ " for c in name):
+            raise PlaytestError("checkpoint names may use letters, digits, spaces, - and _")
+        return self.checkpoint_dir / f"{name}.sav"
+
+    def import_save(self, src, name: str, note: str = "") -> dict:
+        data = Path(src).read_bytes()
+        if len(data) not in (0x10000, 0x10010, 0x20000, 0x20010):
+            raise PlaytestError(f"{src} is {len(data)} bytes; a Gen 3 flash save is 64 or 128 KiB")
+        dst = self._checkpoint_path(name)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(data)
+        meta = {"note": note or f"imported from {Path(src).name}", "created": time.strftime("%Y-%m-%d %H:%M"),
+                "source": "import"}
+        dst.with_suffix(".json").write_text(json.dumps(meta, indent=2))
+        return {"name": name, **meta}
+
+    def delete_checkpoint(self, name: str) -> None:
+        p = self._checkpoint_path(name)
+        if not p.exists():
+            raise PlaytestError(f"no checkpoint named {name}")
+        p.unlink()
+        p.with_suffix(".json").unlink(missing_ok=True)
+
+    def save_checkpoint(self, name: str, note: str = "") -> dict:
+        """Save the running game exactly like the in-game Save, and keep the save as a named checkpoint."""
+        g = self._require()
+        if not g.in_overworld():
+            raise PlaytestError("checkpoints can only be saved while walking around in the overworld")
+        if "SaveMapView" in g.sym:
+            g.call("SaveMapView")
+        status = g.call("TrySavingData", 0)  # SAVE_NORMAL
+        g.emu.frames(30)  # let the emulator flush the flash writes to the save file
+        if status != 1:
+            raise PlaytestError(f"the game reported a save error (status {status})")
+        dst = self._checkpoint_path(name)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(self.scratch, dst)
+        where = self.location()
+        meta = {"note": note, "created": time.strftime("%Y-%m-%d %H:%M"), "source": "play-test",
+                "map": where.get("map"), "x": where.get("x"), "y": where.get("y"), "rom": g.rom.name}
+        dst.with_suffix(".json").write_text(json.dumps(meta, indent=2))
+        return {"name": name, **meta}
+
+    def location(self) -> dict:
+        g = self._require()
+        sb1 = g.emu.read(g.sym["gSaveBlock1Ptr"])
+        grp, num = g.emu.read(sb1 + 4, 1), g.emu.read(sb1 + 5, 1)
+        names = {v: k for k, v in map_numbers(self.root).items()}
+        return {"map": names.get((grp, num)), "x": g.emu.read(sb1, 2), "y": g.emu.read(sb1 + 2, 2)}
+
+    # -- story state
+    @property
+    def constants(self) -> "Constants":
+        if self._constants is None:
+            self._constants = Constants(self.root, self.cache_dir)
+        return self._constants
+
+    def apply_state(self, ops) -> list[str]:
+        """Story state lines: FLAG_X (set), !FLAG_X (clear), VAR_X=5, ITEM_X*3 (give)."""
+        g = self._require()
+        parsed = parse_state(ops)
+        values = self.constants.values([name for _, name, _ in parsed], game_version(g.rom))
+        done = []
+        for kind, name, arg in parsed:
+            v = values[name]
+            if kind == "flag":
+                g.call("FlagSet" if arg else "FlagClear", v)
+                done.append(f"{'set' if arg else 'cleared'} {name}")
+            elif kind == "var":
+                g.call("VarSet", v, arg)
+                done.append(f"{name} = {arg}")
+            else:
+                if not g.call("AddBagItem", v, arg):
+                    raise PlaytestError(f"could not add {arg} x {name} (bag full or invalid item)")
+                done.append(f"gave {arg} x {name}")
+        return done
+
+    def run_script(self, label: str, frames: int = 30) -> Image.Image:
+        """Start any script label (an event, cutscene, sign…) right now, as if it had been triggered."""
+        g = self._require()
+        if label not in g.sym:
+            raise PlaytestError(f"script {label} is not in the built ROM (is it defined, and built?)")
+        if not g.in_overworld():
+            raise PlaytestError("scripts can only be started in the overworld")
+        g.call("ScriptContext_SetupScript", g.sym[label])
+        g.emu.frames(frames)
+        return g.emu.screenshot()
+
+    # -- session
+    def _require(self) -> Game:
+        if self.game is None:
+            raise PlaytestError("start a play-test first")
         return self.game
 
-    def start(self, map_name: str, x: int | None = None, y: int | None = None) -> Image.Image:
-        """Fresh game state, warped to ``map_name`` at (x, y) (default: its first warp)."""
+    def _game(self, checkpoint: str | None) -> Game:
+        rom = find_rom(self.root)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        if checkpoint:
+            src = self._checkpoint_path(checkpoint)
+            if not src.exists():
+                raise PlaytestError(f"no checkpoint named {checkpoint}")
+            data = src.read_bytes()
+        else:
+            data = b""
+        stamp = (str(rom), rom.stat().st_mtime, hashlib.sha1(data).hexdigest())
+        if self.game is None or stamp != self._stamp:
+            if self.game is not None:
+                self.game.close()
+            self.scratch.write_bytes(data)
+            self.game = Game(self.root, rom, self.cache_dir, self.log, save=self.scratch)
+            self._stamp = stamp
+        return self.game
+
+    def start(self, map_name: str | None = None, x: int | None = None, y: int | None = None,
+              checkpoint: str | None = None, state=None, script: str | None = None) -> Image.Image:
+        """Start a play-test.
+
+        * fresh game (Quickstart), or ``checkpoint`` = continue from a saved checkpoint (story progress, party…)
+        * ``state``: story state applied before arriving (see :meth:`apply_state`)
+        * ``map_name``: warp there at (x, y) (default its first warp); with a checkpoint and no map, stay
+          where the save was made
+        * ``script``: start this script label once there
+        """
         nums = map_numbers(self.root)
-        if map_name not in nums:
+        if map_name is not None and map_name not in nums:
             raise PlaytestError(f"{map_name} is not in map_groups.json (rebuild after adding maps)")
-        mj = json.loads((self.root / "data" / "maps" / map_name / "map.json").read_text())
-        x, y = spawn_point(mj, x, y)
-        g = self._game()
+        if map_name is None and not checkpoint:
+            raise PlaytestError("give a map, or a checkpoint to continue from")
+        g = self._game(checkpoint)
         g.boot()
-        g.emu.load_state(g.cache_dir / f"boot-{g.rom_hash}.state")  # same starting state every time
-        g.warp(*nums[map_name], x, y)
-        self.where = {"map": map_name, "x": x, "y": y, "rom": g.rom.name}
-        return g.emu.screenshot()
+        g.emu.load_state(g.boot_state)  # same starting state every time
+        notes = self.apply_state(state) if state else []
+        if map_name is not None:
+            mj = json.loads((self.root / "data" / "maps" / map_name / "map.json").read_text())
+            x, y = spawn_point(mj, x, y)
+            g.warp(*nums[map_name], x, y)
+        elif notes:
+            # reload the current map so NPCs and map scripts see the new flags/vars
+            here = self.location()
+            g.warp(*nums[here["map"]], here["x"], here["y"])
+        img = run = None
+        if script:
+            img = self.run_script(script)
+            run = script
+        where = self.location()
+        self.where = {**where, "rom": g.rom.name, "checkpoint": checkpoint, "state": notes, "script": run}
+        return img or g.emu.screenshot()
 
     def press(self, inputs, record_every: int = 0) -> tuple[Image.Image, list[Image.Image]]:
         """Run input steps; returns the final screen and (optionally) frames sampled every N frames."""
@@ -376,3 +547,100 @@ def strip(frames: list[Image.Image], max_frames: int = 6) -> Image.Image:
         out.paste(f, (x, 0))
         x += f.width + 4
     return out
+
+
+# ---------------------------------------------------------------------- constants & story state
+
+GAME_VERSIONS = {"BPE": "EMERALD", "BPR": "FIRERED", "BPG": "LEAFGREEN", "AXV": "RUBY", "AXP": "SAPPHIRE"}
+
+
+def game_version(rom: Path) -> str:
+    with open(rom, "rb") as fh:
+        fh.seek(0xAC)
+        code = fh.read(3).decode("ascii", "replace")
+    return GAME_VERSIONS.get(code, "EMERALD")
+
+
+def parse_state(ops) -> list[tuple[str, str, int]]:
+    """['FLAG_BADGE01_GET', '!FLAG_HIDE_X', 'VAR_STORY=3', 'ITEM_POTION*5'] -> [(kind, name, arg)]."""
+    items = ops if isinstance(ops, list) else re.split(r"[,\n]", ops or "")
+    out = []
+    for raw in items:
+        s = str(raw).strip()
+        if not s or s.startswith("#"):
+            continue
+        m = re.fullmatch(r"(!?)\s*(FLAG_\w+)(?:\s*=\s*(\d+|true|false))?", s, re.I)
+        if m:
+            on = not m.group(1) and (m.group(3) or "1").lower() not in ("0", "false")
+            out.append(("flag", m.group(2).upper(), int(on)))
+            continue
+        m = re.fullmatch(r"(VAR_\w+)\s*=\s*(-?\w+)", s, re.I)
+        if m:
+            out.append(("var", m.group(1).upper(), int(m.group(2), 0) & 0xFFFF))
+            continue
+        m = re.fullmatch(r"(ITEM_\w+)(?:\s*[*x]\s*(\d+))?", s, re.I)
+        if m:
+            out.append(("item", m.group(1).upper(), int(m.group(2) or 1)))
+            continue
+        raise PlaytestError(f"can't read story state '{s}': use FLAG_X, !FLAG_X, VAR_X=5 or ITEM_X*3")
+    return out
+
+
+class Constants:
+    """Values of FLAG_/VAR_/ITEM_ (any C constant) as *your* headers define them, by compiling a tiny file
+    with the project's own toolchain, so renumbered or added constants in a fork are always right."""
+
+    HEADERS = ("global.h", "constants/flags.h", "constants/vars.h", "constants/items.h")
+
+    def __init__(self, root: Path, cache_dir: Path):
+        self.root = Path(root)
+        self.cache_file = Path(cache_dir) / "constants.json"
+        self._cache: dict | None = None
+
+    def _signature(self) -> str:
+        files = list((self.root / "include" / "constants").glob("*.h")) + list((self.root / "include" / "config").glob("*.h"))
+        return str(max((f.stat().st_mtime for f in files), default=0))
+
+    def values(self, names: list[str], version: str = "EMERALD") -> dict[str, int]:
+        if self._cache is None:
+            try:
+                self._cache = json.loads(self.cache_file.read_text())
+            except (OSError, ValueError):
+                self._cache = {}
+        sig = f"{self._signature()}:{version}"
+        if self._cache.get("_sig") != sig:
+            self._cache = {"_sig": sig}
+        missing = [n for n in dict.fromkeys(names) if n not in self._cache]
+        if missing:
+            self._cache.update(self._compile(missing, version))
+            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
+            self.cache_file.write_text(json.dumps(self._cache))
+        return {n: self._cache[n] for n in names}
+
+    def _compile(self, names: list[str], version: str) -> dict[str, int]:
+        cc = shutil.which("arm-none-eabi-gcc")
+        if cc is None:
+            raise PlaytestError("arm-none-eabi-gcc is needed to read constant values (see `pae doctor`)")
+        for n in names:
+            if not re.fullmatch(r"[A-Z_][A-Z0-9_]*", n):
+                raise PlaytestError(f"not a constant name: {n}")
+        work = self.cache_file.parent / "consts"
+        work.mkdir(parents=True, exist_ok=True)
+        src = work / "pae_consts.c"
+        includes = "".join(f'#include "{h}"\n' for h in self.HEADERS if (self.root / "include" / h).exists())
+        src.write_text(includes + "const unsigned int pae_v[] = {\n" + "".join(f"    {n},\n" for n in names) + "};\n")
+        # the same target flags the repository's Makefile uses (apcs-gnu changes enum sizes)
+        cmd = [cc, "-mthumb", "-mthumb-interwork", "-mabi=apcs-gnu", "-mtune=arm7tdmi", "-march=armv4t",
+               "-std=gnu17", "-iquote", str(self.root / "include"), "-Wno-trigraphs", "-DMODERN=1",
+               "-DTESTING=0", f"-D{version}", "-O0", "-w", "-S", "-o", "-", str(src)]
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=self.root)
+        if r.returncode != 0:
+            bad = sorted(set(re.findall(r"'([A-Z_][A-Z0-9_]*)' undeclared", r.stderr)))
+            if bad:
+                raise PlaytestError(f"unknown constant(s): {', '.join(bad)}")
+            raise PlaytestError("could not evaluate constants:\n" + r.stderr[-1200:])
+        body = r.stdout.split("pae_v:", 1)[-1]
+        vals = [int(v, 0) for v in re.findall(r"\.(?:word|4byte|long)\s+(-?\w+)", body)][: len(names)]
+        if len(vals) != len(names):
+            raise PlaytestError("could not read the compiled constant values")
+        return dict(zip(names, vals))

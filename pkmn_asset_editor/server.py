@@ -321,6 +321,15 @@ def make_handler(state: _State):
             from .playtest import PlaytestError
             if proj.kind != "decomp":
                 raise ProjectError("play-testing needs a source tree")
+            if path == "/api/play/import_save":
+                with tempfile.NamedTemporaryFile(suffix=".sav", delete=False) as tmp:
+                    tmp.write(self._body())
+                try:
+                    return self._json({"ok": True, "checkpoint": proj.play.import_save(tmp.name, q.get("name", ""))})
+                except PlaytestError as e:
+                    return self._json({"ok": False, "error": str(e)})
+                finally:
+                    os.unlink(tmp.name)
             body = json.loads(self._body() or b"{}")
 
             def png_url(img):
@@ -336,9 +345,24 @@ def make_handler(state: _State):
                                  "output": "\n".join(rep.output.rstrip().splitlines()[-40:])}
                         if rep.returncode != 0:
                             return self._json({"ok": False, "build": build, "error": "make failed"})
-                    name = proj.maps.resolve(body["map"]) if proj.maps else body["map"]
-                    img = proj.play.start(name, body.get("x"), body.get("y"))
+                    name = body.get("map") or None
+                    if name and proj.maps:
+                        name = proj.maps.resolve(name)
+                    img = proj.play.start(name, body.get("x"), body.get("y"), checkpoint=body.get("checkpoint") or None,
+                                          state=body.get("state") or None, script=body.get("script") or None)
                     return self._json({"ok": True, "image": png_url(img), "where": proj.play.where, "build": build})
+                if path == "/api/play/checkpoints":
+                    return self._json({"ok": True, "checkpoints": proj.play.checkpoints()})
+                if path == "/api/play/checkpoint":
+                    return self._json({"ok": True, "checkpoint": proj.play.save_checkpoint(body["name"], body.get("note", ""))})
+                if path == "/api/play/checkpoint_delete":
+                    proj.play.delete_checkpoint(body["name"])
+                    return self._json({"ok": True})
+                if path == "/api/play/script":
+                    img = proj.play.run_script(body["label"], int(body.get("frames", 45)))
+                    return self._json({"ok": True, "image": png_url(img)})
+                if path == "/api/play/state":
+                    return self._json({"ok": True, "done": proj.play.apply_state(body.get("state", []))})
                 if path == "/api/play/press":
                     final, _ = proj.play.press(body.get("inputs", ""))
                     return self._json({"ok": True, "image": png_url(final)})
