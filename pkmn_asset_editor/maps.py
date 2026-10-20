@@ -98,6 +98,13 @@ class MapEditor:
         return self._tse
 
     @property
+    def story(self):
+        if not hasattr(self, "_story"):
+            from .story import Story
+            self._story = Story(self)
+        return self._story
+
+    @property
     def tileset_anims(self):
         if not hasattr(self, "_tsa"):
             from .tileset_anims import TilesetAnims
@@ -651,7 +658,7 @@ class MapEditor:
                     text = strip_comments(f.read_text(errors="replace"))
                 except OSError:
                     continue
-                for body in re.findall(r"enum\s*\w*\s*\{(.*?)\}", text, re.S):
+                for body in re.findall(r"\benum\b[^{;]*\{(.*?)\}", text, re.S):
                     names.update(re.findall(r"\b([A-Z][A-Z0-9_]{3,})\b\s*(?:=|,|$)", body))
             ptr = self._ow_tables()[0]
             names.update(ptr)

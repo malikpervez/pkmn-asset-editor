@@ -242,6 +242,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--state", action="append", default=[],
                    help="story state before arriving: FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5 (repeatable)")
     p.add_argument("--script", help="start this script label on arrival (e.g. a cutscene)")
+    p.add_argument("--chapter", type=int, help="start as if you had played up to the end of this story chapter "
+                                               "(see `pae story list`): gives the needed items and badges")
+    p.add_argument("--extras", action="store_true", help="with --chapter: also give the extra items (item balls, "
+                                                         "hidden items, gifts)")
+    p.add_argument("--team", action="append", default=[],
+                   help="add a Pokémon: 'SPECIES_MUDKIP lv20 ITEM_ORAN_BERRY MOVE_TACKLE' (repeatable)")
+    p.add_argument("--clear-team", action="store_true", help="empty the team before adding --team Pokémon")
     p.add_argument("--save-as", help="after the inputs, save the game as a checkpoint with this name")
     p.add_argument("--x", type=int)
     p.add_argument("--y", type=int)
@@ -250,6 +257,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--gif", help="also record the inputs as an animated GIF")
     p.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
     p.add_argument("--scale", type=int, default=2)
+
+    p = sub.add_parser("story", help="source tree: story chapters, for play-tests that start later in the game")
+    ssub = p.add_subparsers(dest="story_cmd", required=True)
+    with_project(ssub.add_parser("list", help="list the chapters and their maps"))
+    q = with_project(ssub.add_parser("items", help="items a player has by the end of a chapter"))
+    q.add_argument("chapter", type=int)
+    q.add_argument("--extras", action="store_true", help="include extra items, not just the needed ones")
+    q = with_project(ssub.add_parser("move", help="put a map (and its inside maps) in a chapter"))
+    q.add_argument("map")
+    q.add_argument("chapter", help="chapter number, or 'none' to take it out of the story")
+    q = with_project(ssub.add_parser("add", help="add a chapter"))
+    q.add_argument("name")
+    q.add_argument("--at", type=int, help="chapter number to insert at (default: the end)")
+    q.add_argument("--flag", action="append", default=[], help="flag that is on once the chapter is done "
+                                                                "(e.g. FLAG_BADGE01_GET)")
 
     p = with_project(sub.add_parser("checkpoint", help="source tree: saved games to start play-tests from"))
     p.add_argument("action", choices=["list", "import", "delete"])
@@ -503,7 +525,11 @@ def _run(args) -> int:
             print(f"built in {rep.seconds:.0f}s")
         try:
             name = (proj.maps.resolve(args.map) if proj.maps else args.map) if args.map else None
-            first = proj.play.start(name, args.x, args.y, checkpoint=args.checkpoint, state=args.state,
+            state = args.state
+            if proj.maps and (args.chapter is not None or args.team):
+                state = proj.maps.story.play_state(args.chapter - 1 if args.chapter else None, args.extras,
+                                                   team=args.team, clear_team=args.clear_team, state=args.state)
+            first = proj.play.start(name, args.x, args.y, checkpoint=args.checkpoint, state=state,
                                     script=args.script)
             for line in proj.play.where.get("state") or []:
                 print(f"state: {line}")
@@ -573,6 +599,35 @@ def _run(args) -> int:
         elif args.map_cmd == "link":
             m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
             print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")
+        return 0
+    if args.cmd == "story":
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("story chapters need a pokeemerald-style source tree")
+        st = m.story
+        c = args.story_cmd
+        if c == "list":
+            for i, ch in enumerate(st.chapters(), 1):
+                flags = f"  (then: {', '.join(ch['flags'])})" if ch["flags"] else ""
+                print(f"{i:>2}. {ch['name']}{flags}")
+                print(f"      {', '.join(ch['maps']) or '(no maps yet)'}")
+            rest = st.unplaced_maps()
+            print(f"\n{len(rest)} map(s) are not in any chapter (`pae story move MAP N` to place one)")
+        elif c == "items":
+            r = st.catch_up(args.chapter - 1, args.extras)
+            print(f"by the end of '{r['name']}':")
+            for it in r["items"]:
+                tag = "needed" if it["needed"] else "extra "
+                print(f"  {tag}  {it['name']:<20} x{it['qty']:<3} {it['kind']:<12} {it['map']}")
+            if r["flags"]:
+                print(f"  and turns on: {', '.join(r['flags'])}")
+        elif c == "move":
+            ch = None if args.chapter.lower() == "none" else int(args.chapter) - 1
+            st.set_chapter(args.map, ch)
+            print(f"{m.resolve(args.map)} -> " + ("not in the story" if ch is None else st.chapters()[ch]["name"]))
+        elif c == "add":
+            i = st.add_chapter(args.name, args.at - 1 if args.at else None, args.flag)
+            print(f"added chapter {i + 1}: {args.name}")
         return 0
     if args.cmd == "anim":
         m = getattr(proj, "maps", None)

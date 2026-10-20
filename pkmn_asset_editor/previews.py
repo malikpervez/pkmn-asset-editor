@@ -307,5 +307,10 @@ state=["FLAG_BADGE01_GET", "!FLAG_HIDE_X", "VAR_STORY=3", "ITEM_POTION*5"],
 script="Town_EventScript_Cutscene")`. `list_checkpoints` shows saves;
 `playtest_save_checkpoint(name)` saves the running game in place (overworld
 only). `playtest_set_state` / `playtest_run_script` work mid-session.
+
+To test a battle or a later part of the story without a save: `playtest_start(map, chapter=9, extras=False,
+team=["SPECIES_MARSHTOMP lv28 ITEM_MYSTIC_WATER MOVE_MUD_SHOT"], clear_team=True)`. `chapter` gives the badges
+and the needed items of the story so far (`list_story_chapters`, `story_items`); put new maps in a chapter with
+`set_map_chapter`. `playtest_team` shows the team.
 Always look at the result before telling the user an edit works.
 """
