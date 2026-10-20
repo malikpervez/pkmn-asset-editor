@@ -224,6 +224,10 @@ TOOLS = [
      _schema({"map": S, "name": S, "tile": I, "count": I, "frames": I, "speed": I}, ["map", "name", "tile", "count"])),
     ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
      "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
+    ("make_release", "Build a release (make release: no debug menus or Quickstart) and make BPS and UPS patches "
+     "against the original ROM (`base_rom`, remembered), a README and a zip in .pae/releases. Only when the user "
+     "asks for a release.", _schema({"name": S, "version": S, "author": S, "description": S, "base_rom": S,
+                                     "notes": S}, [])),
     ("list_save_points", "Save points (git commits) of the game folder, newest first, and the files changed since "
      "the last one.", _schema({})),
     ("make_save_point", "Commit every change as a save point with a plain-language message. Only when the user asks "
@@ -244,7 +248,7 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team",
              "list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species",
              "playtest_battle", "story_flag", "suggest_map_chapters", "list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
-             "get_teachable", "list_marts", "set_mart", "difficulty_report", "find_text", "replace_text"}
+             "get_teachable", "list_marts", "set_mart", "difficulty_report", "find_text", "replace_text", "make_release"}
 
 
 class Server:
@@ -488,6 +492,10 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
+        if name == "make_release":
+            settings = {k: args[k] for k in ("name", "version", "author", "description", "base_rom") if args.get(k)}
+            r = self.proj.release.build(notes=args.get("notes"), **settings)
+            return txt({k: v for k, v in r.items() if k != "build_log"})
         if name == "find_text":
             return txt(self.proj.textsearch.search(args["query"], bool(args.get("match_case")),
                                                    bool(args.get("whole_word")), limit=200))

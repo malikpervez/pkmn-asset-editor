@@ -100,6 +100,20 @@ def make_handler(state: _State):
                 return self._send((WEB / "help.html").read_bytes(), "text/html; charset=utf-8")
             if path in ("/story", "/story.html"):
                 return self._send((WEB / "story.html").read_bytes(), "text/html; charset=utf-8")
+            if path in ("/release", "/release.html"):
+                return self._send((WEB / "release.html").read_bytes(), "text/html; charset=utf-8")
+            if path == "/api/release":
+                rel = self._release()
+                return self._json({"settings": rel.settings(), "base": rel.base_info(), "checks": rel.checks(),
+                                   "changelog": rel.changelog(), "command": " ".join(rel.make_command())})
+            if path == "/api/release/file":
+                rel = self._release()
+                f = (rel.out_dir / q.get("name", "")).resolve()
+                if rel.out_dir.resolve() not in f.parents or not f.is_file():
+                    return self._error("not found", HTTPStatus.NOT_FOUND)
+                ctype = "text/plain; charset=utf-8" if f.suffix == ".txt" else "application/octet-stream"
+                hdr = {} if f.suffix == ".txt" else {"Content-Disposition": f'attachment; filename="{f.name}"'}
+                return self._send(f.read_bytes(), ctype, headers=hdr)
             if path in ("/history.js", "/findtext.js"):
                 return self._send((WEB / path[1:]).read_bytes(), "text/javascript; charset=utf-8")
             if path == "/api/text/search":
@@ -219,6 +233,12 @@ def make_handler(state: _State):
             if proj.kind != "decomp":
                 raise ProjectError("save points need a source tree (a git repository)")
             return History(proj)
+
+        def _release(self):
+            if proj.kind != "decomp":
+                raise ProjectError("releases are made from a pokeemerald-expansion source tree (ROM projects: use "
+                                   "Build ROM, which also writes patches)")
+            return proj.release
 
         def _gamedata(self):
             if proj.kind != "decomp":
@@ -586,6 +606,18 @@ def make_handler(state: _State):
                 return self._play_post(path, q)
             if path.startswith("/api/data/"):
                 return self._data_post(path, q)
+            if path.startswith("/api/release/"):
+                rel = self._release()
+                if path == "/api/release/base":
+                    rel.upload_base(self._body())
+                    return self._json({"base": rel.base_info(), "checks": rel.checks()})
+                body = json.loads(self._body() or b"{}")
+                if path == "/api/release/settings":
+                    rel.save_settings(body)
+                    return self._json({"settings": rel.settings(), "base": rel.base_info(), "checks": rel.checks()})
+                if path == "/api/release/build":
+                    return self._json(rel.build(notes=body.get("notes"), force=bool(body.get("force")),
+                                                formats=("bps", "ups") if body.get("ups") else ("bps",)))
             if path == "/api/text/replace":
                 body = json.loads(self._body() or b"{}")
                 return self._json(proj.textsearch.replace(

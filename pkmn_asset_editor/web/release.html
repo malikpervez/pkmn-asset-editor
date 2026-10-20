@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Release</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2' y='4' width='12' height='10' rx='2' fill='%23b7791f'/><rect x='2' y='4' width='12' height='3' fill='%23e3b341'/></svg>">
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --line: #dcdce2; --text: #1d1d24; --muted: #6b6b78;
+    --accent: #d23c3c; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b7791f; --chip: #ececf1; --sel: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+      --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+    --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  header a { color: var(--muted); }
+  main { max-width: 860px; margin: 0 auto; padding: 16px; }
+  main a { color: var(--sel); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin: 12px 0; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  button, input, textarea { font: inherit; color: var(--text); }
+  button { padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--chip); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; width: 100%; }
+  .field { display: grid; grid-template-columns: 130px 1fr; gap: 8px; align-items: center; margin: 6px 0; }
+  .field label { color: var(--muted); }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .check { padding: 4px 0; }
+  .check.error { color: var(--accent); }
+  .check.warning { color: var(--warn); }
+  pre { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; max-height: 320px; overflow: auto; }
+  code { font-size: 12px; }
+  @media (max-width: 600px) { .field { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>📦 Release</h1>
+  <a href="/">🎨 Graphics</a>
+  <a href="/maps">🗺️ Maps</a>
+  <a href="/data">🔴 Pokémon &amp; Trainers</a>
+  <a href="/story">📖 Story</a>
+  <a href="/help" target="_blank">❓ Help</a>
+  <span style="flex:1"></span>
+</header>
+<main>
+  <p class="muted">Make a patch of your game that other people can play. You can't share the game file itself, so players apply your patch to their own copy of the original game. The release build turns off debug menus and Quickstart.</p>
+  <div class="card"><h2>1. About your game</h2>
+    <div class="field"><label>name</label><input id="r-name"></div>
+    <div class="field"><label>version</label><input id="r-version" placeholder="1.0"></div>
+    <div class="field"><label>made by</label><input id="r-author" placeholder="your name"></div>
+    <div class="field"><label>description</label><textarea id="r-description" rows="3" placeholder="one or two sentences about your game"></textarea></div>
+  </div>
+  <div class="card"><h2>2. The original game</h2>
+    <p class="muted" style="margin-top:0">The patch is made from this file, and players need the same one. It stays on your computer.</p>
+    <div class="row"><input id="r-base" placeholder="path to the original .gba, e.g. /home/me/emerald.gba" style="flex:1">
+      <label class="muted"><input type="file" id="r-upload" accept=".gba" style="display:none"><button id="r-pick" type="button">Choose file…</button></label></div>
+    <div id="r-baseinfo" class="check muted"></div>
+  </div>
+  <div class="card"><h2>3. What's new</h2>
+    <p class="muted" style="margin-top:0">Your save points since the last release. Change the list however you like; one line each.</p>
+    <textarea id="r-notes" rows="6"></textarea>
+  </div>
+  <div class="card"><h2>4. Make it</h2>
+    <div id="r-checks"></div>
+    <label class="muted" title="UPS patches are much bigger; only for players whose patcher can't open BPS"><input type="checkbox" id="r-ups" style="width:auto"> also make a .ups patch</label>
+    <div class="row" style="margin-top:8px"><button id="r-build" class="primary" disabled>📦 Build release</button><span id="r-status" class="muted"></span></div>
+    <div id="r-result"></div>
+  </div>
+  <div class="card" id="r-history-card" style="display:none"><h2>Earlier releases</h2><div id="r-history"></div></div>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const api = async (path, body, raw) => {
+  const opts = body === undefined ? {} : { method: 'POST', body: raw ? body : JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.error || 'failed');
+  return d;
+};
+const size = (n) => n > 1048576 ? (n / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(n / 1024)) + ' KB';
+function showBase(b) {
+  const el = $('#r-baseinfo');
+  if (!b.ok) { el.className = 'check warning'; el.textContent = '⚠ ' + b.problem; return; }
+  el.className = 'check ' + (b.warning ? 'warning' : '');
+  el.innerHTML = (b.known ? `✅ ${esc(b.name)}` : '⚠ ' + esc(b.warning || 'not a ROM this project knows')) + ` <span class="muted">· ${size(b.size)} · CRC32 ${b.crc32}</span>`;
+}
+function showChecks(list) {
+  $('#r-checks').innerHTML = list.length ? list.map(c => `<div class="check ${c.level}">${c.level === 'error' ? '⛔' : '⚠'} ${esc(c.message)}</div>`).join('')
+    : '<div class="check" style="color:var(--ok)">✅ Ready to release.</div>';
+}
+async function load() {
+  const d = await api('/api/release');
+  $('#r-build').disabled = false;
+  for (const k of ['name', 'version', 'author', 'description']) $('#r-' + k).value = d.settings[k] || '';
+  $('#r-base').value = d.base.path || '';
+  showBase(d.base); showChecks(d.checks);
+  $('#r-notes').value = d.changelog.join('\n');
+  if (d.settings.releases && d.settings.releases.length) {
+    $('#r-history-card').style.display = '';
+    $('#r-history').innerHTML = d.settings.releases.map(r => `<div>${esc(r.version)} · <span class="muted">${esc(r.date)}</span> · <a href="/api/release/file?name=${encodeURIComponent(r.zip)}">${esc(r.zip)}</a></div>`).join('');
+  }
+}
+const settings = () => Object.fromEntries(['name', 'version', 'author', 'description'].map(k => [k, $('#r-' + k).value]).concat([['base_rom', $('#r-base').value]]));
+let saveTimer;
+document.querySelectorAll('#r-name, #r-version, #r-author, #r-description').forEach(el => el.oninput = () => {
+  clearTimeout(saveTimer); saveTimer = setTimeout(() => api('/api/release/settings', settings()).catch(() => {}), 600);
+});
+$('#r-base').onchange = async () => {
+  try { const d = await api('/api/release/settings', settings()); showBase(d.base); showChecks(d.checks); }
+  catch (e) { $('#r-baseinfo').textContent = e.message; }
+};
+$('#r-pick').onclick = () => $('#r-upload').click();
+$('#r-upload').onchange = async () => {
+  const f = $('#r-upload').files[0]; if (!f) return;
+  $('#r-baseinfo').textContent = 'Reading ' + f.name + '…';
+  try { const d = await api('/api/release/base', await f.arrayBuffer(), true); $('#r-base').value = d.base.path; showBase(d.base); showChecks(d.checks); }
+  catch (e) { $('#r-baseinfo').textContent = e.message; }
+};
+$('#r-build').onclick = async () => {
+  const btn = $('#r-build'); btn.disabled = true;
+  $('#r-status').textContent = 'Building the release… (the first release build can take several minutes)';
+  $('#r-result').innerHTML = '';
+  try {
+    await api('/api/release/settings', settings());
+    const r = await api('/api/release/build', { notes: $('#r-notes').value, ups: $('#r-ups').checked });
+    $('#r-status').textContent = `Done in ${r.seconds}s.`;
+    const link = (f, label) => `<a href="/api/release/file?name=${encodeURIComponent(r.zip_name.replace(/\.zip$/, '') + '/' + f)}">${esc(label || f)}</a>`;
+    $('#r-result').innerHTML = `<p><b>Share this:</b> <a href="/api/release/file?name=${encodeURIComponent(r.zip_name)}"><b>${esc(r.zip_name)}</b></a> <span class="muted">(${size(r.zip_size)}: the patch and the README)</span></p>
+      <p class="muted">Inside: ${r.files.map(f => link(f) + ` (${size(r.sizes[f])})`).join(', ')}. Saved in <code>${esc(r.dir)}</code>.</p>
+      <p class="muted">Don't share the .gba itself (<code>${esc(r.rom)}</code>): it contains the original game.</p>
+      <pre id="r-readme">Loading README…</pre>`;
+    fetch('/api/release/file?name=' + encodeURIComponent(r.zip_name.replace(/\.zip$/, '') + '/README.txt')).then(x => x.text()).then(t => { $('#r-readme').textContent = t; });
+    load();
+  } catch (e) { $('#r-status').textContent = ''; $('#r-result').innerHTML = `<pre style="color:var(--accent)">${esc(e.message)}</pre>`; }
+  finally { btn.disabled = false; }
+};
+load().catch(e => { document.querySelector('main').innerHTML = `<p>${esc(e.message)}</p>`; });
+</script>
+<script src="/history.js"></script>
+</body>
+</html>

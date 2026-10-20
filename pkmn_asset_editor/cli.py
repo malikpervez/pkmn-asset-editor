@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     p = with_project(sub.add_parser("build", help="write the edited ROM (ROM project) or run make (source tree)"))
     p.add_argument("--make", help="source tree: build command (default: make -jN; saved in .pae/config.json)")
     p.add_argument("-o", "--output", help="output ROM path (default: build/rom.gba)")
-    p.add_argument("--patch", action="append", choices=["ups", "ips"], help="patch format(s) to write")
+    p.add_argument("--patch", action="append", choices=["bps", "ups", "ips"], help="patch format(s) to write")
     p.add_argument("--no-patch", action="store_true")
     p.add_argument("--json", action="store_true")
 
@@ -361,6 +361,17 @@ def main(argv: list[str] | None = None) -> int:
 
     with_project(sub.add_parser("difficulty", help="source tree: trainer and wild levels per story chapter, and "
                                                    "what looks too hard or too easy"))
+    p = with_project(sub.add_parser("release", help="source tree: build a release and make BPS/UPS patches, a README "
+                                                    "and a zip to share"))
+    p.add_argument("--name")
+    p.add_argument("--version")
+    p.add_argument("--author")
+    p.add_argument("--description")
+    p.add_argument("--base", help="the original .gba the patch is for (remembered for next time)")
+    p.add_argument("--notes", help="what's new, one item per line (default: your save points since the last release)")
+    p.add_argument("--no-build", action="store_true", help="use the release ROM already built")
+    p.add_argument("--force", action="store_true", help="make it even if Check for problems found errors")
+    p.add_argument("--ups", action="store_true", help="also make a .ups patch (much bigger than the .bps)")
     p = sub.add_parser("story", help="source tree: story chapters, for play-tests that start later in the game")
     ssub = p.add_subparsers(dest="story_cmd", required=True)
     with_project(ssub.add_parser("list", help="list the chapters and their maps"))
@@ -478,7 +489,8 @@ def _run(args) -> int:
         from . import patch
         src = Path(args.rom).read_bytes()
         data = Path(args.patch).read_bytes()
-        out = patch.apply_ups(src, data) if data[:4] == b"UPS1" else patch.apply_ips(src, data)
+        out = patch.apply_bps(src, data) if data[:4] == b"BPS1" else patch.apply_ups(src, data) \
+            if data[:4] == b"UPS1" else patch.apply_ips(src, data)
         Path(args.out).write_bytes(out)
         print(f"wrote {args.out}")
         return 0
@@ -799,6 +811,24 @@ def _run(args) -> int:
                     print(f"{m.script_path(name).relative_to(proj.root)}:{t.line}: {t.label}: {msg}")
         print(f"{count} problem(s)" if count else "every text fits its box")
         return 1 if count else 0
+    if args.cmd == "release":
+        if not decomp:
+            raise ProjectError("releases are made from a pokeemerald-expansion source tree (ROM projects: pae build)")
+        rel = proj.release
+        settings = {k: getattr(args, k) for k in ("name", "version", "author", "description") if getattr(args, k)}
+        if args.base:
+            settings["base_rom"] = str(Path(args.base).resolve())
+        if settings:
+            rel.save_settings(settings)
+        for c in rel.checks():
+            print(("⛔ " if c["level"] == "error" else "⚠ ") + c["message"])
+        print(f"building with: {' '.join(rel.make_command())}" if not args.no_build else "using the built release ROM")
+        r = rel.build(notes=args.notes.replace("\\n", "\n") if args.notes else None, build=not args.no_build,
+                      force=args.force, formats=("bps", "ups") if args.ups else ("bps",))
+        print(f"made {r['zip']} ({r['zip_size'] // 1024} KB) in {r['seconds']}s")
+        for f in r["files"]:
+            print(f"  {f} ({r['sizes'][f] // 1024} KB)")
+        return 0
     if args.cmd == "difficulty":
         if not decomp:
             raise ProjectError("the difficulty curve needs a pokeemerald-expansion source tree")

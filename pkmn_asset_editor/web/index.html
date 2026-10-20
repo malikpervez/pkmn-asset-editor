@@ -160,7 +160,8 @@ async function init() {
     $('#btn-build').title = 'check your changes, then build the game with make';
     $('#btn-status').insertAdjacentHTML('beforebegin', '<a class="btn" href="/maps" title="towns, routes, people, doors and story">🗺️ Maps</a>' +
       '<a class="btn" href="/data" title="trainer teams, wild Pokémon and Pokémon stats">🔴 Pokémon &amp; Trainers</a>' +
-      '<a class="btn" href="/story" title="which events turn which flags on">📖 Story</a>');
+      '<a class="btn" href="/story" title="which events turn which flags on">📖 Story</a>' +
+      '<a class="btn" href="/release" title="make a patch of your game to share">📦 Release</a>');
   }
   $('#game').textContent = `${s.game.name} · ${s.game.code}`;
   const cats = Object.entries(s.categories).sort();

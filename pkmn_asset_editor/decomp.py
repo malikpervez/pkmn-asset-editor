@@ -640,6 +640,12 @@ class DecompProject:
         return self._maps
 
     @property
+    def release(self):
+        """Release builds, patches and a README to share the game (see release.py)."""
+        from .release import Release
+        return Release(self)
+
+    @property
     def textsearch(self):
         """Find and replace across dialogue, place names and trainer names (see textsearch.py)."""
         from .textsearch import TextSearch

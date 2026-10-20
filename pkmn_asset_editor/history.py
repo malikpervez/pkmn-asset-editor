@@ -34,6 +34,11 @@ class History:
             raise DecompError((r.stderr or r.stdout).strip() or f"git {args[0]} failed")
         return r.stdout
 
+    def my_emails(self) -> set[str]:
+        """Who makes this game's save points: the git identity, and the one save points use when there is none."""
+        r = subprocess.run(["git", "-C", str(self.root), "config", "user.email"], capture_output=True, text=True)
+        return {e for e in (r.stdout.strip(), AUTHOR[3].split("=", 1)[1]) if e}
+
     def _has_identity(self) -> bool:
         r = subprocess.run(["git", "-C", str(self.root), "config", "user.name"], capture_output=True, text=True)
         return r.returncode == 0 and bool(r.stdout.strip())
@@ -69,14 +74,14 @@ class History:
             return []
         out = []
         raw = self._git("log", f"-n{int(limit)}", "--date=format:%Y-%m-%d %H:%M", "--shortstat",
-                        "--pretty=format:\x1e%H\x1f%h\x1f%an\x1f%ad\x1f%s")
+                        "--pretty=format:\x1e%H\x1f%h\x1f%an\x1f%ad\x1f%s\x1f%ae")
         for chunk in raw.split("\x1e"):
             if not chunk.strip():
                 continue
             head, _, stat = chunk.partition("\n")
-            sha, short, author, date, subject = (head.split("\x1f") + [""] * 5)[:5]
+            sha, short, author, date, subject, email = (head.split("\x1f") + [""] * 6)[:6]
             m = re.search(r"(\d+) files? changed", stat)
-            out.append({"sha": sha, "short": short, "author": author, "date": date, "message": subject,
+            out.append({"sha": sha, "short": short, "author": author, "email": email, "date": date, "message": subject,
                         "files": int(m.group(1)) if m else 0})
         return out
 
