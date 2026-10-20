@@ -87,6 +87,31 @@ def _cpp_value(expr: str, defines: dict[str, str], depth: int = 0) -> int:
         return 0
 
 
+def _label_wild_variants(entries: list[dict]) -> None:
+    """Name the tables of a map that has several (sRoute1_FireRed, sRoute1_LeafGreen, sRoute1_FireRed_Night…):
+    what differs between their labels, e.g. "FireRed", "LeafGreen", "FireRed Night"."""
+    labels = [e.get("base_label") or "" for e in entries]
+    if len(labels) < 2:
+        for e in entries:
+            e["variant"] = ""
+        return
+    parts = [lb.split("_") for lb in labels]
+    common = 0
+    while all(len(x) > common for x in parts) and len({x[common] for x in parts}) == 1:
+        common += 1
+    for e, x in zip(entries, parts):
+        e["variant"] = " ".join(x[common:]) or "default"
+
+
+def _balanced(expr: str) -> bool:
+    depth = 0
+    for c in expr:
+        depth += (c == "(") - (c == ")")
+        if depth < 0:
+            return False
+    return depth == 0
+
+
 def active_lines(text: str, defines: dict[str, str]) -> list[bool]:
     """For each line: is it compiled, given the #if/#elif/#else/#endif around it?"""
     out, stack = [], []  # stack of (parent_active, this_branch_active, any_branch_taken)
@@ -433,6 +458,7 @@ class GameData:
                                 "mons": [dict(x, name=self.display(x["species"])) for x in (cur or {}).get("mons", [])]}
                 out["entries"].append({"base_label": e.get("base_label"), "kinds": kinds})
             out["slot_counts"] = {k: len(rates.get(k, {}).get("encounter_rates", [])) for k in WILD_KINDS}
+            _label_wild_variants(out["entries"])
             return out
         raise DecompError("wild_encounters.json has no group for maps")
 
@@ -604,15 +630,20 @@ class GameData:
             raise DecompError(f"unknown species {sid}")
         return self._entry_fields(idx[sid])
 
-    def _value(self, expr: str) -> int | None:
+    def _value(self, expr: str, depth: int = 0) -> int | None:
         expr = expr.strip()
+        while expr.startswith("(") and expr.endswith(")") and _balanced(expr[1:-1]):
+            expr = expr[1:-1].strip()
         m = re.fullmatch(r"(.+?)\?(.+?):(.+)", expr, re.S)
         if m:
-            return self._value(m.group(2) if _cpp_value(m.group(1), self.defines) else m.group(3))
+            return self._value(m.group(2) if _cpp_value(m.group(1), self.defines) else m.group(3), depth)
         if re.fullmatch(r"\d+", expr):
             return int(expr)
-        v = self.defines.get(expr)
-        return int(v) if v and v.isdigit() else None
+        # a macro, e.g. `.baseDefense = PIKACHU_DEFENSE` with the #define in the same file
+        v = getattr(self, "_local_defines", {}).get(expr) or self.defines.get(expr)
+        if v is None or depth > 8:
+            return None
+        return self._value(v, depth + 1)
 
     def species_list(self, query: str = "") -> list[dict]:
         q = query.lower()

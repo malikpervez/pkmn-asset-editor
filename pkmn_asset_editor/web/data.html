@@ -257,7 +257,7 @@ async function open(id) {
   history.replaceState(null, '', `?tab=${S.tab}&id=${encodeURIComponent(id)}`);
   try {
     if (S.tab === 'trainers') await openTrainer(id);
-    else if (S.tab === 'wild') await openWild(id);
+    else if (S.tab === 'wild') { S.wildEntry = 0; await openWild(id); }
     else if (S.tab === 'items') await openItem(id);
     else if (S.tab === 'moves') await openMove(id);
     else if (S.tab === 'tms') await openTms();
@@ -347,7 +347,9 @@ function renderWild(w, map) {
     w.entries.push({ kinds: Object.fromEntries(Object.entries({ land_mons: 'Grass & caves', water_mons: 'Surfing', rock_smash_mons: 'Rock Smash', fishing_mons: 'Fishing' }).map(([k, label]) => [k, { label, encounter_rate: 0, mons: [], slot_rates: [] }])), new: true });
     h += '<p class="muted">No wild Pokémon here yet. Press <b>Add</b> on a kind to start.</p>';
   }
-  const e = w.entries[0];
+  const ei = Math.min(S.wildEntry || 0, w.entries.length - 1), e = w.entries[ei];
+  if (w.entries.length > 1)  // e.g. FireRed / LeafGreen / night tables of one map
+    h += `<div class="row" style="margin:8px 0">${w.entries.map((x, i) => `<button data-entry="${i}" class="${i === ei ? 'primary' : ''}" title="${esc(x.base_label)}">${esc(x.variant || x.base_label)}</button>`).join('')}</div>`;
   for (const [kind, k] of Object.entries(e.kinds)) {
     const n = w.slot_counts[kind] || k.slot_rates.length;
     const rates = k.slot_rates.length ? k.slot_rates : Array(n).fill(0);
@@ -368,6 +370,10 @@ function renderWild(w, map) {
   }
   $('#main').innerHTML = h;
   const main = $('#main');
+  main.querySelectorAll('[data-entry]').forEach(b => b.onclick = () => {
+    if (S.dirty && !confirm('Switch tables? Changes to this one that are not saved yet are lost.')) return;
+    S.wildEntry = +b.dataset.entry; setDirty(false); openWild(map);
+  });
   main.querySelectorAll('[data-w]').forEach(inp => inp.oninput = () => {
     const tr = inp.closest('tr'), m = e.kinds[tr.dataset.kind].mons[+tr.dataset.i];
     m[inp.dataset.w] = inp.dataset.w === 'species' ? constOf('SPECIES_', inp.value) : +inp.value;
@@ -685,10 +691,10 @@ $('#save').onclick = async () => {
       S.cur = await api('/api/data/trainer?id=' + encodeURIComponent(t.id), { fields: t.fields, mons: t.mons });
       toast(`Saved ${t.id}. Build the game (or test the battle) to see it.`);
     } else if (S.tab === 'wild') {
-      const e = S.cur.entries[0];
+      const entry = Math.min(S.wildEntry || 0, S.cur.entries.length - 1), e = S.cur.entries[entry];
       for (const [kind, k] of Object.entries(e.kinds)) {
         if (!k.changed) continue;
-        await api('/api/data/wild?map=' + encodeURIComponent(S.sel), { kind, encounter_rate: k.encounter_rate, mons: k.mons });
+        await api('/api/data/wild?map=' + encodeURIComponent(S.sel), { kind, encounter_rate: k.encounter_rate, mons: k.mons, entry });
       }
       toast('Saved the wild Pokémon of ' + S.sel);
     } else if (S.tab === 'items') {

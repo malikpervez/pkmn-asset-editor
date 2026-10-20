@@ -120,7 +120,8 @@ def _source_of(built: str, root: Path) -> str:
     parent = p.parent
     if rest.startswith(".bin"):
         return str(parent / (stem + ".bin"))
-    for ext in (".png", ".pal"):
+    # `%.gbapal: %.pal` comes before `%.gbapal: %.png` in the Makefile, so a .pal next to the PNG wins
+    for ext in ((".pal", ".png") if rest.startswith(".gbapal") else (".png", ".pal")):
         cand = parent / (stem + ext)
         if (root / cand).exists():
             return str(cand)
@@ -241,6 +242,24 @@ def _is_pal_symbol(sym: str) -> bool:
     return any(w in pre for w in PAL_WORDS)
 
 
+def default_build_command(root: Path) -> str:
+    """`make -jN`, plus the Makefile target of the ROM you built last when it isn't the default one: in a tree that
+    builds several games (``make firered``) the play-test should keep building the same game."""
+    jobs = f"-j{os.cpu_count() or 2}"
+    roms = sorted((p for p in Path(root).glob("poke*.gba") if p.with_suffix(".elf").exists()),
+                  key=lambda p: p.stat().st_mtime)
+    if roms:
+        target = roms[-1].stem[len("poke"):]
+        try:
+            mk = (Path(root) / "Makefile").read_text(errors="replace")
+        except OSError:
+            mk = ""
+        if target and re.search(rf"\({re.escape(target)},\s*\$\(or \$\(BUILD\), \$\(MAKECMDGOALS\)\)\)|^{re.escape(target)}\s*:",
+                                mk, re.M):
+            return f"make {target} {jobs}"
+    return f"make {jobs}"
+
+
 class DecompProject:
     kind = "decomp"
 
@@ -251,7 +270,7 @@ class DecompProject:
         self.log = log or (lambda *a: None)
         self.state_dir = self.root / ".pae"
         self.config = {"game": {"name": f"{self.root.name} (source tree)", "code": "decomp"},
-                       "build": {"command": os.environ.get("PAE_MAKE", f"make -j{os.cpu_count() or 2}")}}
+                       "build": {"command": os.environ.get("PAE_MAKE", default_build_command(self.root))}}
         cfg = self.state_dir / "config.json"
         if cfg.exists():
             try:
@@ -1261,6 +1280,9 @@ class DecompProject:
         if not only_changed:
             for f in self.refs_by_file:
                 if f.endswith((".png", ".pal", ".bin")) and not (self.root / f).exists() and f not in self.generated:
+                    stem = (self.root / f).with_suffix("")
+                    if any(stem.with_suffix(ext).exists() for ext in (".4bpp", ".8bpp", ".1bpp", ".gbapal", ".bin")):
+                        continue  # shipped already converted (no source image in the repository)
                     rep.issues.append(Issue("warning", f, "referenced in source but the file does not exist"))
         for f in sorted(files):
             p = self.root / f
