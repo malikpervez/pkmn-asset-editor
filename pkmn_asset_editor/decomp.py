@@ -1252,6 +1252,11 @@ class DecompProject:
                 and self.maps is not None:
             for level, f, msg in self.maps.tileset_editor.check():
                 rep.issues.append(Issue(level, f, msg))
+        if self.maps is not None and any(f.startswith(("src/tileset_anims.c", "src/data/tilesets/headers.h"))
+                                         or "/anim/" in f for f in changed):
+            for level, f, msg in self.maps.tileset_anims.check(only_changed):
+                rep.issues.append(Issue(level, f, msg))
+            rep.checked += 1
         return rep
 
     def _check_png(self, f: str, a: Asset | None, rep: CheckReport) -> None:

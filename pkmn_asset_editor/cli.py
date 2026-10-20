@@ -193,6 +193,48 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("dest_map")
     q.add_argument("dest_warp", type=int)
 
+    p = sub.add_parser("anim", help="source tree: tileset animations - water, flowers, waterfalls… (see `pae anim -h`)")
+    asub = p.add_subparsers(dest="anim_cmd", required=True)
+    q = with_project(asub.add_parser("list", help="list tileset animations (all, or those a map shows)"))
+    q.add_argument("--map")
+    q = with_project(asub.add_parser("show", help="render an animation's frames in their in-game colours"))
+    q.add_argument("id")
+    q.add_argument("-o", "--out", required=True)
+    q.add_argument("--map", help="map whose palettes to use (default: one that uses the tileset)")
+    q = with_project(asub.add_parser("preview", help="record a map's animations as an animated GIF"))
+    q.add_argument("map")
+    q.add_argument("-o", "--out", required=True)
+    q.add_argument("--region", help="x,y,w,h in blocks (default: the whole map)")
+    q.add_argument("--scale", type=int, default=1)
+    q = with_project(asub.add_parser("speed", help="game frames each animation frame stays up (60 = 1 s)"))
+    q.add_argument("id")
+    q.add_argument("frames", type=int)
+    q = with_project(asub.add_parser("order", help="set the play order, e.g. 0,1,0,2"))
+    q.add_argument("id")
+    q.add_argument("order")
+    q = with_project(asub.add_parser("frame", help="replace a frame's art with an image"))
+    q.add_argument("id")
+    q.add_argument("frame", type=int)
+    q.add_argument("image")
+    q.add_argument("--map", help="map whose palettes the image's colours are matched to")
+    q = with_project(asub.add_parser("add-frame", help="add a frame (copy of one, or an image)"))
+    q.add_argument("id")
+    q.add_argument("--image")
+    q.add_argument("--copy", type=int, help="frame to copy (default: the last)")
+    q.add_argument("--at", type=int, help="position in the play order (default: the end)")
+    q.add_argument("--map")
+    q = with_project(asub.add_parser("remove-frame", help="take a frame out of an animation"))
+    q.add_argument("id")
+    q.add_argument("frame", type=int)
+    q = with_project(asub.add_parser("new", help="animate tiles of a map's tileset (e.g. your own water)"))
+    q.add_argument("map")
+    q.add_argument("name", help="e.g. PondWater")
+    q.add_argument("--tile", required=True, help="first tile id, as the metatile editor shows it")
+    q.add_argument("--count", type=int, required=True, help="number of tiles animated")
+    q.add_argument("--frames", type=int, default=2, help="frames (copies of the current tiles, to redraw)")
+    q.add_argument("--speed", type=int, default=16, help="game frames per animation frame")
+    q.add_argument("--images", nargs="*", help="frame images instead of copies")
+
     p = with_project(sub.add_parser("play", help="source tree: build, then play-test a map headlessly and save "
                                                   "screenshots (needs libmgba)"))
     p.add_argument("map", nargs="?", help="map name, e.g. PetalburgCity (optional with --from)")
@@ -531,6 +573,54 @@ def _run(args) -> int:
         elif args.map_cmd == "link":
             m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
             print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")
+        return 0
+    if args.cmd == "anim":
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("tileset animations need a pokeemerald-style source tree")
+        ta = m.tileset_anims
+        c = args.anim_cmd
+        if c == "list":
+            for a in ta.list(args.map):
+                speed = f"every {a['period']:>3}f" if a["period"] else "custom    "
+                tiles = ", ".join(f"{s['dest']}" for s in a["slots"][:2]) + ("…" if len(a["slots"]) > 2 else "")
+                print(f"{a['id']:<38} {len(a['frames']):>2} frames  plays {len(a['sequence']):>2}  {speed}  "
+                      f"{a['count']:>3} tiles @ {tiles:<10} {', '.join(t.replace('gTileset_', '') for t in a['tilesets'])}")
+            for pa in ta.parse()["palette"] if args.map is None else []:
+                print(f"{pa['function']:<38} palette animation (not editable here)")
+        elif c == "show":
+            ta.frames_image(args.id, args.map).save(args.out)
+            print(f"wrote {args.out}")
+        elif c == "preview":
+            region = tuple(int(v) for v in args.region.split(",")) if args.region else None
+            frames, ms = ta.map_frames(args.map, region)
+            from PIL import Image
+            if args.scale > 1:
+                frames = [f.resize((f.width * args.scale, f.height * args.scale), Image.NEAREST) for f in frames]
+            frames[0].save(args.out, save_all=True, append_images=frames[1:], duration=ms, loop=0, disposal=1)
+            print(f"wrote {args.out} ({len(frames)} frames)")
+        elif c == "speed":
+            a = ta.set_speed(args.id, args.frames)
+            print(f"{a.id}: a new frame every {a.period} game frames")
+        elif c == "order":
+            a = ta.set_sequence(args.id, [None if v.strip() in ("-", "NULL") else int(v) for v in args.order.split(",")])
+            print(f"{a.id}: plays {' '.join('-' if i is None else str(i) for i in a.sequence)}")
+        elif c == "frame":
+            for n in ta.set_frame(args.id, args.frame, args.image, args.map):
+                print(f"note: {n}")
+            print(f"updated frame {args.frame} of {args.id}")
+        elif c == "add-frame":
+            r = ta.add_frame(args.id, args.image, args.copy, args.at, args.map)
+            print(f"added frame {r['frame']} ({r['png']}); plays {r['anim']['sequence']}")
+        elif c == "remove-frame":
+            for n in ta.remove_frame(args.id, args.frame):
+                print(f"note: {n}")
+            print(f"removed frame {args.frame} from {args.id}")
+        elif c == "new":
+            r = ta.create(args.map, args.name, int(args.tile, 0), args.count, args.frames, args.speed, args.images)
+            for n in r["notes"]:
+                print(f"note: {n}")
+            print(f"created {r['anim']['id']}: frames in {', '.join(r['pngs'])}")
         return 0
     if args.cmd == "guide":
         from .previews import agents_guide, decomp_guide

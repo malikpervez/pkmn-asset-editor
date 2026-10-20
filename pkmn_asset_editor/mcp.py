@@ -125,6 +125,25 @@ TOOLS = [
      "paint collision. Then playtest to see it in game.",
      _schema({"name": S, "path": S, "png_base64": S, "base_metatile": I, "bank": I, "new_palette": B,
               "behavior": S}, ["name"])),
+    ("list_tileset_anims", "Tileset animations (water, flowers, waterfalls…), all or those `map` shows: id, frames "
+     "(PNG files), play order, speed (game frames per animation frame, 60 = 1 s), animated tile range.",
+     _schema({"map": S})),
+    ("view_tileset_anim", "Image of an animation's frames in their in-game colours, plus its details and (with "
+     "`map`) which metatiles it animates.", _schema({"id": S, "map": S}, ["id"])),
+    ("edit_tileset_anim", "Change an animation's speed (game frames per animation frame) and/or play order "
+     "(indexes into its frames, e.g. [0,1,0,2]).",
+     _schema({"id": S, "speed": I, "order": {"type": "array", "items": I}}, ["id"])),
+    ("set_anim_frame", "Replace one frame's art (an image the size of the frame; colours are matched to the "
+     "palettes the animated tiles use on `map`).", _schema({"id": S, "frame": I, "path": S, "png_base64": S,
+                                                             "map": S}, ["id", "frame"])),
+    ("add_anim_frame", "Add a frame to an animation: a copy of frame `copy_of` (default the last) or an image; "
+     "inserted in the play order at `position` (default the end).",
+     _schema({"id": S, "copy_of": I, "position": I, "path": S, "png_base64": S, "map": S}, ["id"])),
+    ("remove_anim_frame", "Remove a frame from an animation's play order.", _schema({"id": S, "frame": I},
+                                                                                     ["id", "frame"])),
+    ("create_tileset_anim", "Animate `count` tiles starting at global tile id `tile` (see view_tiles) of the map's "
+     "tilesets, e.g. your own water. Frames start as copies of the current tiles; redraw them with set_anim_frame.",
+     _schema({"map": S, "name": S, "tile": I, "count": I, "frames": I, "speed": I}, ["map", "name", "tile", "count"])),
     ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
      "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
     ("status", "List assets that were edited.", _schema({})),
@@ -138,7 +157,9 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "get_script", "write_script", "new_script", "duplicate_map", "link_warps", "resize_map",
              "find_constants", "playtest_start", "playtest_press", "tileset_info", "get_metatile", "set_metatile",
              "add_metatiles", "view_tiles", "import_art_as_metatiles", "playtest_save_checkpoint",
-             "list_checkpoints", "playtest_run_script", "playtest_set_state"}
+             "list_checkpoints", "playtest_run_script", "playtest_set_state", "list_tileset_anims",
+             "view_tileset_anim", "edit_tileset_anim", "set_anim_frame", "add_anim_frame", "remove_anim_frame",
+             "create_tileset_anim"}
 
 
 class Server:
@@ -397,11 +418,55 @@ class Server:
                 return out + txt("ok")
             except PlaytestError as e:
                 raise ProjectError(str(e))
+        if name in ("list_tileset_anims", "view_tileset_anim", "edit_tileset_anim", "set_anim_frame", "add_anim_frame",
+                    "remove_anim_frame", "create_tileset_anim"):
+            return self.anim_call(m, name, args, txt)
         if name == "find_constants":
             q = (args.get("query") or "").upper()
             hits = [c for c in m.constants(args["prefix"]) if q in c]
             return txt({"total": len(hits), "constants": hits[:300]})
         raise ProjectError(f"unknown tool {name}")
+
+    def anim_call(self, m, name: str, args: dict, txt) -> list[dict]:
+        ta = m.tileset_anims
+        mp = m.resolve(args["map"]) if args.get("map") else None
+        if name == "list_tileset_anims":
+            keep = ("id", "frames", "sequence", "period", "count", "slots", "tilesets", "staggered", "custom", "notes")
+            return txt([{k: a[k] for k in keep} for a in ta.list(mp)])
+        if name == "view_tileset_anim":
+            a = ta.get(args["id"]).as_dict()
+            if mp:
+                a["animated_metatiles"] = [f"{i:03x}" for i in ta.animated_metatiles(mp, args["id"])]
+            return [self._png(ta.frames_image(args["id"], mp)), *txt(a)]
+        if name == "edit_tileset_anim":
+            if args.get("speed"):
+                ta.set_speed(args["id"], int(args["speed"]))
+            if args.get("order"):
+                ta.set_sequence(args["id"], [int(i) for i in args["order"]])
+            return txt(ta.get(args["id"]).as_dict())
+        if name == "remove_anim_frame":
+            return txt({"notes": ta.remove_frame(args["id"], int(args["frame"])),
+                        "anim": ta.get(args["id"]).as_dict()})
+        if name == "create_tileset_anim":
+            return txt(ta.create(m.resolve(args["map"]), args["name"], int(args["tile"]), int(args["count"]),
+                                 int(args.get("frames") or 2), int(args.get("speed") or 16)))
+        src, tmp = args.get("path"), None
+        if not src and args.get("png_base64"):
+            tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+            tmp.write(base64.b64decode(args["png_base64"]))
+            tmp.close()
+            src = tmp.name
+        try:
+            if name == "set_anim_frame":
+                if not src:
+                    raise ProjectError("give either path or png_base64")
+                notes = ta.set_frame(args["id"], int(args["frame"]), src, mp)
+                return [self._png(ta.frames_image(args["id"], mp)), *txt({"ok": True, "notes": notes})]
+            r = ta.add_frame(args["id"], src, args.get("copy_of"), args.get("position"), mp)
+            return [self._png(ta.frames_image(args["id"], mp)), *txt(r)]
+        finally:
+            if tmp:
+                Path(tmp.name).unlink(missing_ok=True)
 
     # ------------------------------------------------------------------ protocol
     def handle(self, msg: dict) -> dict | None:

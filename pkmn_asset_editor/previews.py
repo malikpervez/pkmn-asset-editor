@@ -279,6 +279,19 @@ a warp on the door. Metatile behaviors (`MB_*`) such as `MB_DOOR` and
 layer types (normal = top layer drawn over the player) are set with
 `set_metatile` or in the map editor.
 
+## Tileset animations
+
+```
+pae anim list --map Route109                 # water, flowers… on this map
+pae anim show General_Water -o water.png     # its frames in the in-game colours
+pae anim speed General_Water 12              # game frames per animation frame (60 = 1 s)
+pae anim frame General_Water 0 new.png       # replace a frame (same size as the frame)
+pae anim new PetalburgCity PondWater --tile 532 --count 4 --frames 4
+```
+An animation copies `count` tiles from the current frame over tile `tile`
+onwards; every metatile that uses those tiles animates. New frames start as
+copies of the tiles: redraw them, then play-test the map to see them move.
+
 ## See it in the game
 
 ```

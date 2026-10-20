@@ -46,6 +46,7 @@ class _State:
 
 def make_handler(state: _State):
     proj = state.proj
+    anim_sheets: dict[str, bytes] = {}  # map -> animation preview sheet from the last /api/map/anims
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt, *args):  # keep the console quiet
@@ -242,6 +243,29 @@ def make_handler(state: _State):
                 return self._send(m.png_bytes(im), "image/png")
             if path == "/api/map/tile":
                 return self._json(m.tileset_editor.get_tile(q["name"], int(q["id"], 0)))
+            if path == "/api/map/anims":
+                name = m.resolve(q["name"])
+                ta = m.tileset_anims
+                sheet, info = ta.preview(name)
+                anim_sheets[name] = m.png_bytes(sheet) if sheet is not None else b""
+                anims = ta.list(name)
+                for a in anims:
+                    a["metatiles"] = ta.animated_metatiles(name, a["id"])
+                return self._json({"anims": anims, "preview": info,
+                                   "palette": [p for p in ta.parse()["palette"]
+                                               if any(cb in ta.parse()["callbacks"] for cb in p["callbacks"])]})
+            if path == "/api/map/anim_sheet":
+                name = m.resolve(q["name"])
+                if name not in anim_sheets:
+                    sheet, _ = m.tileset_anims.preview(name)
+                    anim_sheets[name] = m.png_bytes(sheet) if sheet is not None else b""
+                if not anim_sheets[name]:
+                    return self._error("no animations", HTTPStatus.NOT_FOUND)
+                return self._send(anim_sheets[name], "image/png")
+            if path == "/api/map/anim_frames":
+                im = m.tileset_anims.frames_image(q["id"], m.resolve(q["name"]) if q.get("name") else None,
+                                                  scale=int(q.get("scale", 3)), labels=q.get("labels", "1") == "1")
+                return self._send(m.png_bytes(im), "image/png")
             if path == "/api/constants":
                 return self._json(m.constants(q.get("prefix", "")))
             if path == "/api/labels":
@@ -265,7 +289,38 @@ def make_handler(state: _State):
                 finally:
                     os.unlink(tmp.name)
                 return self._json(r)
+            ta = m.tileset_anims
+            if path in ("/api/map/anim_frame", "/api/map/anim_add_frame"):
+                raw = self._body()
+                tmp = None
+                if raw:
+                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+                        tmp.write(raw)
+                try:
+                    mp = m.resolve(q["name"]) if q.get("name") else None
+                    if path == "/api/map/anim_frame":
+                        if tmp is None:
+                            return self._error("send the frame image as the request body")
+                        return self._json({"ok": True, "notes": ta.set_frame(q["id"], int(q["frame"]), tmp.name, mp)})
+                    return self._json(ta.add_frame(q["id"], tmp.name if tmp else None,
+                                                   int(q["copy"]) if q.get("copy") else None,
+                                                   int(q["at"]) if q.get("at") else None, mp))
+                finally:
+                    if tmp:
+                        os.unlink(tmp.name)
             body = json.loads(self._body() or b"{}")
+            if path == "/api/map/anim":
+                if body.get("speed"):
+                    ta.set_speed(body["id"], int(body["speed"]))
+                if body.get("order"):
+                    ta.set_sequence(body["id"], [None if i is None else int(i) for i in body["order"]])
+                return self._json(ta.get(body["id"]).as_dict())
+            if path == "/api/map/anim_remove_frame":
+                return self._json({"notes": ta.remove_frame(body["id"], int(body["frame"]))})
+            if path == "/api/map/anim_new":
+                return self._json(ta.create(m.resolve(q["name"]), body["name"], int(str(body["tile"]), 0),
+                                            int(body["count"]), int(body.get("frames") or 2),
+                                            int(body.get("speed") or 16)))
             te = m.tileset_editor
             if path == "/api/map/metatile":
                 te.set_metatile(q["name"], int(q["id"], 0), body.get("entries"), body.get("behavior"),

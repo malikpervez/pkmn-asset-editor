@@ -49,6 +49,9 @@
   #side { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
   .tabs { display: flex; border-bottom: 1px solid var(--line); }
   .tabs button { flex: 1; border: 0; border-radius: 0; background: transparent; padding: 8px 4px; }
+  .anim-card { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin: 8px 0; }
+  .anim-card img { max-width: 100%; image-rendering: pixelated; display: block; margin: 6px 0; background: #222; }
+  .anim-card input[type=number] { width: 64px; }
   .tabs button.on { border-bottom: 2px solid var(--accent); font-weight: 600; }
   .tab { flex: 1; overflow: auto; padding: 10px; display: none; }
   .tab.on { display: block; }
@@ -125,6 +128,7 @@
       <label><input type="checkbox" id="showgrid"> grid</label>
       <label><input type="checkbox" id="showev" checked> events</label>
       <label><input type="checkbox" id="showcol"> collision</label>
+      <label title="play the tileset animations (water, flowers…) on the map"><input type="checkbox" id="animate"> animate</label>
       <span id="colopts" hidden>
         <select id="colval"><option value="0">passable</option><option value="1">impassable</option></select>
         elevation <select id="elev"></select>
@@ -139,6 +143,7 @@
       <button data-tab="event">Events</button>
       <button data-tab="header">Map</button>
       <button data-tab="scripts">Scripts</button>
+      <button data-tab="anims" title="tileset animations: water, flowers, waterfalls…">Anims</button>
     </div>
     <div class="tab on" id="tab-tiles">
       <div class="muted" style="margin-bottom:6px">Click a metatile, or drag to pick a multi-block stamp (e.g. a whole house). On the map, use <b>Copy</b> to grab blocks you've already placed.</div>
@@ -178,6 +183,18 @@
       <div id="evform"></div>
     </div>
     <div class="tab" id="tab-header"><div id="hdrform"></div></div>
+    <div class="tab" id="tab-anims">
+      <div class="muted" style="font-size:12px">Tileset animations this map shows. Tick <b>animate</b> above the map to play them. Speed is in game frames per animation frame (60 = 1 second).</div>
+      <div id="anim-list"></div>
+      <h3>New animation</h3>
+      <div class="muted" style="font-size:12px">Animates a run of tiles of this map's tilesets (e.g. your own water). Select a metatile and use <b>From selected metatile</b>, then redraw the frames.</div>
+      <div class="field"><label>name</label><input id="an-name" placeholder="e.g. PondWater"></div>
+      <div class="field"><label>first tile id</label><input id="an-tile" type="number" min="0" max="1023"></div>
+      <div class="field"><label>number of tiles</label><input id="an-count" type="number" min="1" max="128" value="4"></div>
+      <div class="field"><label>frames</label><input id="an-frames" type="number" min="1" max="64" value="4"></div>
+      <div class="field"><label>speed</label><input id="an-speed" type="number" min="1" max="255" value="16"></div>
+      <div class="row"><button id="an-from-mt">From selected metatile</button><button id="an-create" class="primary">Create animation</button></div>
+    </div>
     <div class="tab" id="tab-scripts">
       <div class="row">
         <select id="labelsel" style="flex:1"></select>
@@ -290,6 +307,8 @@ async function openMap(name, keepSel = false) {
     (m.shared_layout.length ? ` · layout shared with ${m.shared_layout.length} map(s)` : '');
   $('#st-hint').textContent = m.shared_layout.length ? 'Block edits also change: ' + m.shared_layout.slice(0, 4).join(', ') : '';
   renderMapList(); drawAtlas(); drawBase(); drawOver(); renderEvents(); renderHeader(); loadScript(); updateButtons();
+  AN = null;
+  if ($('#animate').checked || $('#tab-anims').classList.contains('on')) loadAnims().then(() => { if (AN) AN.forMap = name; }).catch(e => toast(e.message, 'err'));
 }
 const Z = () => +$('#zoom').value;
 function sizeCanvas(c, w, h) { c.width = w; c.height = h; c.style.width = w * Z() + 'px'; c.style.height = h * Z() + 'px'; }
@@ -300,6 +319,7 @@ function drawBase() {
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, c.width, c.height);
   for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) drawBlock(ctx, x, y);
+  if (AN) AN.row = -1;  // the animation loop repaints animated blocks on its next tick
 }
 function drawBlock(ctx, x, y) {
   const id = S.cur.blocks[y * S.cur.layout.width + x] & 0x3FF;
@@ -702,7 +722,122 @@ document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab
 function showTab(t) {
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
   document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + t));
+  if (t === 'anims' && S.cur && (!AN || AN.forMap !== S.cur.name)) loadAnims().then(() => { if (AN) AN.forMap = S.cur.name; }).catch(e => toast(e.message, 'err'));
 }
+
+// ------------------------------------------------------------------ tileset animations
+let AN = null;  // {anims, preview, sheet, rows}
+async function loadAnims() {
+  if (!S.cur) return;
+  const name = S.cur.name;
+  const r = await api('/api/map/anims?name=' + encodeURIComponent(name));
+  if (!S.cur || S.cur.name !== name) return;
+  let sheet = null;
+  if (r.preview.metatiles.length) {
+    sheet = new Image();
+    sheet.src = '/api/map/anim_sheet?name=' + encodeURIComponent(name) + '&t=' + Date.now();
+    await sheet.decode();
+  }
+  AN = { ...r, sheet, row: -1, t0: performance.now(), idx: new Map(r.preview.metatiles.map((m, i) => [m, i])) };
+  renderAnims();
+}
+function animRow(now) {
+  const p = AN.preview, f = Math.floor((now - AN.t0) * 60 / 1000) % p.cycle;
+  let lo = 0, hi = p.times.length - 1;
+  while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (p.times[mid] <= f) lo = mid; else hi = mid - 1; }
+  return lo;
+}
+function animTick(now) {
+  if (!$('#animate').checked || !AN || !S.cur) return;
+  if (AN.sheet && !S.drag) {
+    const r = animRow(now);
+    if (r !== AN.row) {
+      AN.row = r;
+      const ctx = $('#base').getContext('2d'), W = S.cur.layout.width, b = S.cur.blocks;
+      for (let i = 0; i < b.length; i++) {
+        const k = AN.idx.get(b[i] & 0x3FF);
+        if (k === undefined) continue;
+        const x = i % W, y = (i / W) | 0;
+        ctx.drawImage(AN.sheet, k * 16, r * 16, 16, 16, x * 16, y * 16, 16, 16);
+      }
+    }
+  }
+  requestAnimationFrame(animTick);
+}
+$('#animate').onchange = async () => {
+  if ($('#animate').checked) {
+    if (!AN || AN.forMap !== S.cur.name) { await loadAnims(); AN.forMap = S.cur.name; }
+    if (!AN.sheet) toast('no tileset animations on this map', 'warn');
+    requestAnimationFrame(animTick);
+  } else if (S.cur) drawBase();
+};
+function renderAnims() {
+  const host = $('#anim-list'); host.innerHTML = '';
+  if (!AN) return;
+  if (!AN.anims.length) host.innerHTML = '<div class="muted">This map\'s tilesets have no tile animations.</div>';
+  for (const a of AN.anims) {
+    const d = document.createElement('div'); d.className = 'anim-card';
+    const tiles = a.slots.map(s => `${s.dest}–${s.dest + a.count - 1}`).slice(0, 2).join(', ') + (a.slots.length > 2 ? '…' : '');
+    const order = a.sequence.map(i => i === null ? '-' : i).join(' ');
+    const opts = a.frames.map((f, i) => `<option value="${i}">frame ${i}</option>`).join('');
+    d.innerHTML = `<b>${esc(a.id)}</b> <span class="muted">· ${esc(a.tilesets.map(t => t.replace('gTileset_', '')).join(', '))} · tiles ${tiles} · ${a.metatiles.length} metatile(s)</span>
+      <img alt="frames" src="/api/map/anim_frames?name=${encodeURIComponent(S.cur.name)}&id=${encodeURIComponent(a.id)}&t=${Date.now()}">
+      <div class="row">${a.editable_speed ? `speed <input type="number" min="1" max="255" data-f="speed" value="${a.period}"> <button data-act="speed">Set</button>` : `<span class="muted">custom timing (every ${a.period ?? '?'} frames)</span>`}</div>
+      <div class="row">play order <input data-f="order" value="${order}" style="flex:1"> <button data-act="order">Set</button></div>
+      <div class="row"><select data-f="frame">${opts}</select>
+        <label class="btn" title="replace this frame's art with an image of the same size">Replace art…<input type="file" accept="image/*" data-act="replace" hidden></label>
+        <button data-act="remove">Remove</button></div>
+      <div class="row"><button data-act="add" title="copy the selected frame and add it at the end of the play order">Add frame (copy)</button>
+        <label class="btn">Add frame from image…<input type="file" accept="image/*" data-act="addimg" hidden></label>
+        <button data-act="show" title="select its metatiles in the picker">Show metatiles</button></div>
+      ${a.notes.map(n => `<div class="muted" style="font-size:12px">${esc(n)}</div>`).join('')}`;
+    const val = (f) => d.querySelector(`[data-f="${f}"]`).value;
+    const done = async (msg, r) => { toast(msg + ((r && r.notes && r.notes.length) ? ' · ' + r.notes.join(' · ') : '')); await loadAnims(); if ($('#animate').checked) { AN.forMap = S.cur.name; drawBase(); } };
+    const q = (extra) => `name=${encodeURIComponent(S.cur.name)}&id=${encodeURIComponent(a.id)}` + extra;
+    const on = (act, ev, fn) => { const el = d.querySelector(`[data-act="${act}"]`); if (el) el[ev] = async (e) => { try { await fn(e); } catch (err) { toast(err.message, 'err', 6000); } }; };
+    on('speed', 'onclick', async () => done(`${a.id}: a new frame every ${val('speed')} game frames`, await api('/api/map/anim?' + q(''), { id: a.id, speed: +val('speed') })));
+    on('order', 'onclick', async () => {
+      const order = val('order').trim().split(/[\s,]+/).map(v => v === '-' ? null : +v);
+      await done(`${a.id}: play order set`, await api('/api/map/anim?' + q(''), { id: a.id, order }));
+    });
+    on('remove', 'onclick', async () => { if (confirm(`Remove frame ${val('frame')} from ${a.id}?`)) await done('frame removed', await api('/api/map/anim_remove_frame?' + q(''), { id: a.id, frame: +val('frame') })); });
+    on('add', 'onclick', async () => {
+      const r = await fetch('/api/map/anim_add_frame?' + q('&copy=' + val('frame')), { method: 'POST' });
+      const j = await r.json(); if (!r.ok) throw new Error(j.error); await done(`added frame ${j.frame} (${j.png}) — now replace its art`);
+    });
+    const upload = async (e, url, msg) => {
+      const f = e.target.files[0]; if (!f) return; e.target.value = '';
+      const r = await fetch(url, { method: 'POST', body: f }); const j = await r.json();
+      if (!r.ok) throw new Error(j.error); await done(msg, j);
+    };
+    on('replace', 'onchange', (e) => upload(e, '/api/map/anim_frame?' + q('&frame=' + val('frame')), `frame ${val('frame')} updated`));
+    on('addimg', 'onchange', (e) => upload(e, '/api/map/anim_add_frame?' + q(''), 'frame added'));
+    on('show', 'onclick', async () => {
+      if (!a.metatiles.length) return toast('no metatile on this map uses these tiles', 'warn');
+      const m = a.metatiles[0]; S.stamp = { w: 1, h: 1, ids: [m], fromAtlas: true }; showStamp(); drawAtlas();
+      toast(`animated metatiles: ${a.metatiles.slice(0, 24).map(i => i.toString(16).padStart(3, '0')).join(' ')}${a.metatiles.length > 24 ? '…' : ''}`, 'ok', 8000);
+    });
+    host.appendChild(d);
+  }
+  for (const pa of AN.palette || []) host.insertAdjacentHTML('beforeend', `<div class="muted" style="font-size:12px">${esc(pa.function)}: palette animation (edit it in src/tileset_anims.c)</div>`);
+}
+$('#an-from-mt').onclick = async () => {
+  const id = selectedSingle();
+  if (id === null) return toast('select one metatile in the picker first', 'warn');
+  const mt = await api(`/api/map/metatile?name=${encodeURIComponent(S.cur.name)}&id=${id}`);
+  const tiles = mt.entries.map(e => e.tile).filter(t => t > 0);
+  if (!tiles.length) return toast('that metatile has no tiles', 'warn');
+  const lo = Math.min(...tiles), hi = Math.max(...tiles);
+  $('#an-tile').value = lo; $('#an-count').value = Math.min(128, hi - lo + 1);
+};
+$('#an-create').onclick = async () => {
+  try {
+    const r = await api('/api/map/anim_new?name=' + encodeURIComponent(S.cur.name), { name: $('#an-name').value.trim(), tile: $('#an-tile').value,
+      count: +$('#an-count').value, frames: +$('#an-frames').value, speed: +$('#an-speed').value });
+    toast(`created ${r.anim.id}: redraw its frames with "Replace art…"` + (r.notes.length ? ' · ' + r.notes.join(' · ') : ''), 'ok', 8000);
+    await loadAnims();
+  } catch (e) { toast(e.message, 'err', 8000); }
+};
 
 // ------------------------------------------------------------------ scripts
 async function loadScript() {

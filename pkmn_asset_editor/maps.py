@@ -97,6 +97,13 @@ class MapEditor:
             self._tse = TilesetEditor(self)
         return self._tse
 
+    @property
+    def tileset_anims(self):
+        if not hasattr(self, "_tsa"):
+            from .tileset_anims import TilesetAnims
+            self._tsa = TilesetAnims(self)
+        return self._tsa
+
     # ------------------------------------------------------------------ index
     def reload(self) -> None:
         root = self.root
