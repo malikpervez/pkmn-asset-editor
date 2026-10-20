@@ -308,6 +308,46 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--abilities", help="up to 3, e.g. ABILITY_TORRENT,,ABILITY_DAMP")
     q.add_argument("--learn", action="append", help="replace the level-up moves: '1:Tackle' (repeatable)")
 
+    p = sub.add_parser("item", help="source tree: items (name, price, description, pocket)")
+    isub = p.add_subparsers(dest="item_cmd", required=True)
+    q = with_project(isub.add_parser("list", help="list items"))
+    q.add_argument("query", nargs="?", default="")
+    q = with_project(isub.add_parser("show", help="show an item"))
+    q.add_argument("id")
+    q = with_project(isub.add_parser("set", help="change an item"))
+    q.add_argument("id")
+    q.add_argument("--name")
+    q.add_argument("--price", type=int)
+    q.add_argument("--description", help="use \\n for a new line")
+    q.add_argument("--pocket", help="e.g. POCKET_ITEMS")
+    p = sub.add_parser("move", help="source tree: moves (power, accuracy, PP, type, description)")
+    vsub = p.add_subparsers(dest="move_cmd", required=True)
+    q = with_project(vsub.add_parser("list", help="list moves"))
+    q.add_argument("query", nargs="?", default="")
+    q = with_project(vsub.add_parser("show", help="show a move"))
+    q.add_argument("id")
+    q = with_project(vsub.add_parser("set", help="change a move"))
+    q.add_argument("id")
+    q.add_argument("--name")
+    for k in ("power", "accuracy", "pp", "priority"):
+        q.add_argument(f"--{k}", type=int)
+    q.add_argument("--type", help="e.g. TYPE_FIRE")
+    q.add_argument("--category", help="DAMAGE_CATEGORY_PHYSICAL, _SPECIAL or _STATUS")
+    q.add_argument("--description", help="use \\n for a new line")
+    p = sub.add_parser("tm", help="source tree: which move each TM and HM teaches")
+    msub = p.add_subparsers(dest="tm_cmd", required=True)
+    with_project(msub.add_parser("list", help="list TMs, HMs and move tutors"))
+    q = with_project(msub.add_parser("set", help="set TM NUMBER (or HM NUMBER) to teach a move"))
+    q.add_argument("kind", choices=["tm", "hm"])
+    q.add_argument("number", type=int)
+    q.add_argument("move")
+    p = sub.add_parser("mart", help="source tree: what Poké Marts sell")
+    ksub = p.add_subparsers(dest="mart_cmd", required=True)
+    with_project(ksub.add_parser("list", help="list the shops and what they sell"))
+    q = with_project(ksub.add_parser("set", help="set what a shop list sells"))
+    q.add_argument("label", help="the list's label, e.g. OldaleTown_Mart_Pokemart_Basic")
+    q.add_argument("items", nargs="+")
+
     p = sub.add_parser("story", help="source tree: story chapters, for play-tests that start later in the game")
     ssub = p.add_subparsers(dest="story_cmd", required=True)
     with_project(ssub.add_parser("list", help="list the chapters and their maps"))
@@ -729,6 +769,71 @@ def _run(args) -> int:
                     print(f"{m.script_path(name).relative_to(proj.root)}:{t.line}: {t.label}: {msg}")
         print(f"{count} problem(s)" if count else "every text fits its box")
         return 1 if count else 0
+    if args.cmd in ("item", "move", "tm", "mart"):
+        if not decomp:
+            raise ProjectError("game data editing needs a pokeemerald-expansion source tree")
+        gd = proj.gamedata
+        if args.cmd == "item":
+            if args.item_cmd == "list":
+                for it in gd.items(args.query):
+                    print(f"{it['id']:32} {it['name']}")
+                return 0
+            if args.item_cmd == "set":
+                ch = {k: getattr(args, k) for k in ("name", "price", "pocket") if getattr(args, k) is not None}
+                if args.description is not None:
+                    ch["description"] = args.description.replace("\\n", "\n")
+                gd.set_item(args.id, ch)
+            d = gd.get_item(args.id)
+            print(f"{d['name']} ({d['id']})  price {d['price']}  {d['pocket']}")
+            print("  " + d["description"].replace("\n", "\n  "))
+            if d["sold_in"]:
+                print("  sold in: " + ", ".join(sorted({m['map'] for m in d['sold_in']})))
+            return 0
+        if args.cmd == "move":
+            if args.move_cmd == "list":
+                for mv in gd.moves(args.query):
+                    print(f"{mv['id']:32} {mv['name']}")
+                return 0
+            if args.move_cmd == "set":
+                ch = {k: getattr(args, k) for k in ("name", "power", "accuracy", "pp", "priority", "type", "category")
+                      if getattr(args, k) is not None}
+                if args.description is not None:
+                    ch["description"] = args.description.replace("\\n", "\n")
+                gd.set_move(args.id, ch)
+            d = gd.get_move(args.id)
+            print(f"{d['name']} ({d['id']})  {d['type'].replace('TYPE_', '').title()}  "
+                  f"{d['category'].replace('DAMAGE_CATEGORY_', '').title()}{'  ' + d['tm'] if d['tm'] else ''}")
+            print(f"  power {d['power']}  accuracy {d['accuracy']}  PP {d['pp']}  priority {d['priority']}")
+            print("  " + d["description"].replace("\n", "\n  "))
+            if d["learned_by"]:
+                print("  learned by: " + ", ".join(f"{x['name']} (lv {x['level']})" for x in d["learned_by"][:20]))
+            return 0
+        if args.cmd == "tm":
+            t = gd.tms()
+            if args.tm_cmd == "set":
+                key = args.kind + "s"
+                moves = [x["move"] for x in t[key]]
+                i = args.number - 1
+                if not 0 <= i <= len(moves):
+                    raise ProjectError(f"{args.kind.upper()}{args.number:02d}: there are {len(moves)}; "
+                                       f"use {len(moves) + 1} to add one")
+                from .gamedata import const_of
+                moves[i:i + 1] = [const_of("MOVE", args.move)]
+                t = gd.set_tms(**{key: moves})
+            for kind in ("tms", "hms"):
+                for i, x in enumerate(t[kind], 1):
+                    print(f"{kind[:2].upper()}{i:02d}  {x['name']}")
+            tut = gd.tutors()
+            if tut:
+                print("tutors: " + ", ".join(f"{x['name']} ({x['map'] or 'extra'})" for x in tut))
+            return 0
+        if args.mart_cmd == "set":
+            gd.set_mart(args.label, args.items)
+        for m in gd.marts():
+            if args.mart_cmd == "set" and m["label"] != args.label:
+                continue
+            print(f"{m['label']} ({m['map']}): " + ", ".join(gd.display(i) for i in m["items"]))
+        return 0
     if args.cmd in ("trainer", "wild", "species"):
         if not decomp:
             raise ProjectError("game data editing needs a pokeemerald-expansion source tree")

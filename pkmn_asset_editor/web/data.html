@@ -73,6 +73,12 @@
   .teamrow { display: grid; grid-template-columns: 1.4fr 56px 1.2fr 1fr 1fr 1fr 1fr; gap: 4px; margin: 3px 0; }
   .teamrow input { width: 100%; }
   .pad button { min-width: 44px; }
+  .tmgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 2px 10px; max-width: 900px; }
+  .tmgrid label { display: flex; gap: 4px; align-items: center; font-size: 12px; }
+  .tmgrid small { color: var(--muted); width: 38px; }
+  .hint { color: var(--muted); font-size: 11px; }
+  .chips a { display: inline-block; background: var(--chip); border-radius: 10px; padding: 1px 8px; margin: 2px; color: var(--text); text-decoration: none; font-size: 12px; }
+  .itemicon { width: 48px; height: 48px; image-rendering: pixelated; background: var(--chip); border-radius: 8px; }
 </style>
 </head>
 <body>
@@ -86,6 +92,10 @@
     <button data-tab="trainers" class="on" title="the teams trainers and gym leaders use">Trainers</button>
     <button data-tab="wild" title="which Pokémon you find in grass, water and caves">Wild Pokémon</button>
     <button data-tab="species" title="stats, types, abilities, evolutions and moves of each Pokémon">Pokémon</button>
+    <button data-tab="items" title="names, prices and descriptions of items">Items</button>
+    <button data-tab="moves" title="power, accuracy, type and description of moves">Moves</button>
+    <button data-tab="tms" title="which move each TM and HM teaches">TMs</button>
+    <button data-tab="marts" title="what each Poké Mart sells">Shops</button>
   </div>
   <span style="flex:1"></span>
   <label class="muted" title="show every setting, with the names the game's files use"><input type="checkbox" id="expert"> Expert mode</label>
@@ -114,6 +124,7 @@
 <div id="toast"></div>
 <datalist id="dl-SPECIES"></datalist><datalist id="dl-MOVE"></datalist><datalist id="dl-ITEM"></datalist>
 <datalist id="dl-ABILITY"></datalist><datalist id="dl-maps"></datalist><datalist id="dl-EVO"></datalist>
+<datalist id="dl-EFFECT"></datalist>
 
 <script>
 const $ = (s) => document.querySelector(s);
@@ -169,7 +180,7 @@ let listTimer;
 $('#search').oninput = () => { clearTimeout(listTimer); listTimer = setTimeout(renderList, 200); };
 async function renderList() {
   const q = $('#search').value.trim(), host = $('#list');
-  $('#search').placeholder = { trainers: 'Search trainers (name, class)…', wild: 'Search maps…', species: 'Search Pokémon…' }[S.tab];
+  $('#search').placeholder = { trainers: 'Search trainers (name, class)…', wild: 'Search maps…', species: 'Search Pokémon…', items: 'Search items…', moves: 'Search moves…', tms: 'TMs, HMs and tutors', marts: 'Search shops (town)…' }[S.tab];
   let rows = [];
   if (S.tab === 'trainers') {
     const r = await api('/api/data/trainers?q=' + encodeURIComponent(q));
@@ -177,12 +188,25 @@ async function renderList() {
   } else if (S.tab === 'wild') {
     if (!S.maps) S.maps = (await api('/api/maps')).maps.map(m => m.name);
     rows = S.maps.filter(m => !q || m.toLowerCase().includes(q.toLowerCase())).slice(0, 500).map(m => ({ id: m, html: esc(m) }));
+  } else if (S.tab === 'items') {
+    const r = await api('/api/data/items?q=' + encodeURIComponent(q));
+    rows = r.slice(0, 600).map(t => ({ id: t.id, html: `<div>${esc(t.name)}<br><small>${esc(t.id)}</small></div>` }));
+  } else if (S.tab === 'moves') {
+    const r = await api('/api/data/moves?q=' + encodeURIComponent(q));
+    rows = r.slice(0, 600).map(t => ({ id: t.id, html: `<div>${esc(t.name)}<br><small>${esc(t.id)}</small></div>` }));
+  } else if (S.tab === 'tms') {
+    rows = [{ id: 'tms', html: '<div><b>TMs &amp; HMs</b><br><small>which move each one teaches</small></div>' }];
+  } else if (S.tab === 'marts') {
+    if (!S.marts) S.marts = await api('/api/data/marts');
+    const ql = q.toLowerCase();
+    rows = S.marts.filter(m => !ql || (m.map + ' ' + m.label).toLowerCase().includes(ql)).map(m => ({ id: m.label, html: `<div><b>${esc(m.map)}</b><br><small>${esc(m.label)} · ${m.items.length} items</small></div>` }));
   } else {
     const r = await api('/api/data/species_list?q=' + encodeURIComponent(q));
     rows = r.slice(0, 500).map(s => ({ id: s.id, html: `${icon(s.id)}<div>${esc(s.name)}<br><small>${esc(s.id)}</small></div>` }));
   }
   host.innerHTML = rows.map(r => `<div class="item${r.id === S.sel ? ' sel' : ''}" data-id="${esc(r.id)}">${r.html}</div>`).join('') || '<p class="muted" style="padding:10px">Nothing found.</p>';
   host.querySelectorAll('.item').forEach(el => el.onclick = () => open(el.dataset.id));
+  if (S.tab === 'tms' && !S.sel) open('tms');
 }
 async function open(id) {
   if (S.dirty && !confirm('Discard unsaved changes?')) return;
@@ -192,6 +216,10 @@ async function open(id) {
   try {
     if (S.tab === 'trainers') await openTrainer(id);
     else if (S.tab === 'wild') await openWild(id);
+    else if (S.tab === 'items') await openItem(id);
+    else if (S.tab === 'moves') await openMove(id);
+    else if (S.tab === 'tms') await openTms();
+    else if (S.tab === 'marts') await openMart(id);
     else await openSpecies(id);
   } catch (e) { $('#main').innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
 }
@@ -329,6 +357,7 @@ async function openSpecies(id) {
   let h = `<div class="row" style="align-items:flex-start;gap:14px">
     ${d.front_pic ? `<img class="pic" alt="" src="/api/image?id=${encodeURIComponent(d.front_pic)}" style="width:128px;height:128px;object-fit:cover;object-position:top">` : ''}
     <div><h2>${esc(d.name)}</h2><div class="muted">${esc(d.id)} · ${esc(d.file)}:${d.line}</div>
+    <div class="row">name <input data-sp="name" value="${esc(d.species_name)}" maxlength="12" style="width:150px" title="the name the game shows (at most 12 letters)"></div>
     <div class="row">type <select data-type="0">${typeOpts(d.types[0])}</select><select data-type="1">${typeOpts(d.types[1] !== d.types[0] ? d.types[1] : '')}</select></div></div></div>
     <h3>Base stats <span class="muted" id="bst">total ${d.total}</span></h3>`;
   for (const k of Object.keys(STAT_LABEL)) {
@@ -343,8 +372,17 @@ async function openSpecies(id) {
     <div class="row"><button id="evo-add">+ Add an evolution</button></div>
     <h3>Moves it learns by level</h3><table id="learn"><tr><th>level</th><th>move</th><th></th></tr>
     ${d.learnset.map((m, i) => `<tr data-i="${i}"><td><input type="number" min="0" max="100" data-l="level" value="${m.level}" style="width:64px"></td><td><input data-l="move" list="dl-MOVE" value="${esc(m.name)}"></td><td><button data-ldel="${i}">✕</button></td></tr>`).join('')}</table>
-    <div class="row"><button id="learn-add">+ Add a move</button></div>`;
+    <div class="row"><button id="learn-add">+ Add a move</button></div>
+    <h3>Pokédex</h3>
+    <div class="field"><label title="categoryName: shown as '… Pokémon'">kind of Pokémon</label><input data-sp="category" value="${esc(d.dex.category)}" maxlength="12"></div>
+    <div class="field"><label title="height, in metres">height (m)</label><input data-sp="height" type="number" step="0.1" min="0.1" value="${d.dex.height != null ? d.dex.height / 10 : ''}"></div>
+    <div class="field"><label title="weight, in kilograms">weight (kg)</label><input data-sp="weight" type="number" step="0.1" min="0.1" value="${d.dex.weight != null ? d.dex.weight / 10 : ''}"></div>
+    <div class="field" style="max-width:720px"><label>Pokédex text</label><div><textarea data-sp="description" rows="4" style="width:100%">${esc(d.dex.description)}</textarea>
+      <div class="hint">Fits about ${d.dex.fits[0]} lines of ${d.dex.fits[1]} letters, like the other entries.</div></div></div>
+    <h3>TMs, HMs and tutors it can learn</h3><div id="teach" class="muted">Loading…</div>
+    <h3>Egg moves</h3><div id="eggs" class="muted">Loading…</div>`;
   $('#main').innerHTML = h;
+  main_species_extra(d);
   const ed = S.cur.edit, main = $('#main');
   main.querySelectorAll('[data-stat]').forEach(inp => inp.oninput = () => {
     ed[inp.dataset.stat] = +inp.value; inp.nextElementSibling.style.width = Math.round((+inp.value || 0) / 255 * 100) + '%';
@@ -364,6 +402,138 @@ async function openSpecies(id) {
   $('#learn-add').onclick = () => { $('#learn').insertAdjacentHTML('beforeend', `<tr data-i="new"><td><input type="number" min="0" max="100" data-l="level" value="1" style="width:64px"></td><td><input data-l="move" list="dl-MOVE"></td><td></td></tr>`); bindLearn(); };
 }
 
+function main_species_extra(d) {
+  const ed = S.cur.edit, main = $('#main');
+  main.querySelectorAll('[data-sp]').forEach(inp => inp.oninput = () => {
+    const k = inp.dataset.sp;
+    ed[k] = (k === 'height' || k === 'weight') ? Math.round(+inp.value * 10) : inp.value;
+    setDirty();
+  });
+  api('/api/data/teachable?id=' + encodeURIComponent(d.id)).then(t => {
+    if (S.cur !== d) return;
+    const lockAll = d.teaching_type === 'ALL_TEACHABLES';
+    $('#teach').className = '';
+    $('#teach').innerHTML = (lockAll ? '<p class="hint">This Pokémon learns every TM and tutor move (teachingType ALL_TEACHABLES).</p>' : '')
+      + `<div class="tmgrid">${t.moves.map((m, i) => `<label title="${esc(m.move)}"><input type="checkbox" data-tm="${i}" ${m.can ? 'checked' : ''} ${lockAll ? 'disabled' : ''}><small>${esc(m.how)}</small>${esc(m.name)}</label>`).join('')}</div>`
+      + `<div class="hint">Saved in ${esc(t.source)}.${d.teaching_type === 'TM_ILLITERATE' ? ' This Pokémon is "TM illiterate": it only learns TMs it could also learn another way.' : ''}</div>`;
+    $('#teach').querySelectorAll('[data-tm]').forEach(cb => cb.onchange = () => {
+      ed.teachable = ed.teachable || {}; ed.teachable[t.moves[+cb.dataset.tm].move] = cb.checked; setDirty();
+    });
+    const eggs = t.egg_moves;
+    if (!eggs.found) { $('#eggs').textContent = 'No egg move list for this Pokémon.'; return; }
+    $('#eggs').className = '';
+    $('#eggs').innerHTML = `<table id="egg"><tr><th>move</th><th></th></tr>${eggs.moves.map(m => `<tr data-i="1"><td><input data-g list="dl-MOVE" value="${esc(m.name)}"></td><td><button data-gdel>✕</button></td></tr>`).join('')}</table>
+      <div class="row"><button id="egg-add">+ Add an egg move</button></div>`;
+    const eggRows = () => [...$('#eggs').querySelectorAll('[data-g]')].map(x => constOf('MOVE_', x.value)).filter(Boolean);
+    const bind = () => { $('#eggs').querySelectorAll('[data-g]').forEach(x => x.oninput = () => { ed.egg_moves = eggRows(); setDirty(); });
+      $('#eggs').querySelectorAll('[data-gdel]').forEach(b => b.onclick = () => { b.closest('tr').remove(); ed.egg_moves = eggRows(); setDirty(); }); };
+    bind();
+    $('#egg-add').onclick = () => { $('#egg').insertAdjacentHTML('beforeend', '<tr><td><input data-g list="dl-MOVE"></td><td><button data-gdel>✕</button></td></tr>'); bind(); };
+  }).catch(e => { $('#teach').textContent = e.message; $('#eggs').textContent = ''; });
+}
+
+// ------------------------------------------------------------------ items
+async function constants(prefix) {
+  S.consts = S.consts || {};
+  if (!S.consts[prefix]) S.consts[prefix] = await api('/api/constants?prefix=' + prefix);
+  return S.consts[prefix];
+}
+const optList = (list, sel, strip) => list.map(c => `<option value="${esc(c)}" ${c === sel ? 'selected' : ''}>${esc(strip ? c.replace(strip, '').replace(/_/g, ' ').toLowerCase() : c)}</option>`).join('');
+function descField(key, value, fits, label) {
+  return `<div class="field" style="max-width:720px"><label>${label}</label><div><textarea data-x="${key}" rows="${Math.max(2, fits[0])}" style="width:100%;font-family:ui-monospace,monospace">${esc(value)}</textarea>
+    <div class="hint" data-fit="${key}">Fits about ${fits[0]} lines of ${fits[1]} letters, like the others.</div></div></div>`;
+}
+function bindX(fits) {
+  $('#main').querySelectorAll('[data-x]').forEach(inp => inp.oninput = () => {
+    const k = inp.dataset.x, v = inp.type === 'number' ? (inp.value === '' ? null : +inp.value) : inp.type === 'checkbox' ? inp.checked : inp.value;
+    S.cur.edit[k] = v; setDirty();
+    if (k === 'description' && fits) {
+      const lines = inp.value.split('\n'), long = lines.find(l => l.length > fits[1]);
+      const el = $(`[data-fit="description"]`);
+      el.style.color = lines.length > fits[0] || long ? 'var(--accent)' : '';
+      el.textContent = lines.length > fits[0] ? `${lines.length} lines: other descriptions use at most ${fits[0]}.`
+        : long ? `"${long}" is ${long.length} letters; others are at most ${fits[1]}.` : `Fits about ${fits[0]} lines of ${fits[1]} letters, like the others.`;
+    }
+  });
+  $('#main').querySelectorAll('select[data-x]').forEach(sel => sel.onchange = sel.oninput);
+}
+async function openItem(id) {
+  const [d, pockets] = await Promise.all([api('/api/data/item?id=' + encodeURIComponent(id)), constants('POCKET_')]);
+  S.cur = d; d.edit = {};
+  let h = `<div class="row" style="align-items:flex-start;gap:14px">${d.icon_file ? `<img class="itemicon" alt="" src="/api/image?id=${encodeURIComponent(d.icon_file)}">` : ''}
+    <div><h2>${esc(d.name)}</h2><div class="muted">${esc(d.id)} · ${esc(d.file)}:${d.line}</div></div></div>
+    <div class="field"><label>name</label><input data-x="name" value="${esc(d.name)}" maxlength="20"></div>
+    <div class="field"><label title="${esc(d.price_expr)}">price (₽)</label><input data-x="price" type="number" min="0" value="${d.price ?? ''}"></div>
+    <div class="field"><label>bag pocket</label><select data-x="pocket">${optList(pockets.filter(p => !/COUNT|NONE|DUMMY/.test(p)), d.pocket, 'POCKET_')}</select></div>
+    ${descField('description', d.description, d.description_fits, 'description')}
+    <div class="field adv"><label title="holdEffectParam">hold effect amount</label><input data-x="holdEffectParam" type="number" min="0" max="255" value="${d.holdEffectParam ?? ''}"></div>
+    <h3>Sold in</h3><div class="chips">${d.sold_in.length ? d.sold_in.map(m => `<a href="?tab=marts&id=${encodeURIComponent(m.label)}">${esc(m.map)}</a>`).join('') : '<span class="muted">No shop sells it.</span>'}</div>
+    <div class="adv"><h3>All fields</h3><table>${Object.entries(d.fields).map(([k, v]) => `<tr><td class="muted">${esc(k)}</td><td><code>${esc(v)}</code></td></tr>`).join('')}</table></div>`;
+  $('#main').innerHTML = h;
+  bindX(d.description_fits);
+}
+
+// ------------------------------------------------------------------ moves
+async function openMove(id) {
+  const [d, types, cats] = await Promise.all([api('/api/data/move?id=' + encodeURIComponent(id)), constants('TYPE_'), constants('DAMAGE_CATEGORY_')]);
+  if (!S.effects) { S.effects = await constants('EFFECT_'); $('#dl-EFFECT').innerHTML = S.effects.map(c => `<option value="${esc(c)}">`).join(''); }
+  S.cur = d; d.edit = {};
+  const num = (k, label, tip, min, max) => `<div class="field"><label title="${esc(tip)} (${esc(d.exprs[k])})">${label}</label><input data-x="${k}" type="number" min="${min}" max="${max}" value="${d[k] ?? ''}"></div>`;
+  let h = `<h2>${esc(d.name)} ${d.tm ? `<span class="muted" style="font-size:13px">${esc(d.tm)}</span>` : ''}</h2><div class="muted">${esc(d.id)} · ${esc(d.file)}:${d.line}</div>
+    <div class="field"><label>name</label><input data-x="name" value="${esc(d.name)}" maxlength="16"></div>
+    <div class="field"><label>type</label><select data-x="type">${optList(types.filter(t => !/COUNT|NUMBER/.test(t)), d.type, 'TYPE_')}</select></div>
+    <div class="field"><label title="physical uses Attack, special uses Sp. Atk, status does no damage">kind</label><select data-x="category">${optList(cats.filter(c => !/COUNT/.test(c)), d.category, 'DAMAGE_CATEGORY_')}</select></div>
+    ${num('power', 'power', 'how much damage; 0 for status moves', 0, 255)}
+    ${num('accuracy', 'accuracy (%)', '0 = never misses', 0, 100)}
+    ${num('pp', 'PP (uses)', 'how many times it can be used', 1, 64)}
+    ${num('priority', 'priority', 'higher goes first; Quick Attack is 1', -7, 7)}
+    ${descField('description', d.description, d.description_fits, 'description')}
+    <div class="field adv"><label>effect</label><input data-x="effect" list="dl-EFFECT" value="${esc(d.effect)}"></div>
+    <div class="field adv"><label>makes contact</label><input data-x="makesContact" type="checkbox" ${d.makesContact ? 'checked' : ''} style="justify-self:start"></div>
+    <h3>Learned by level up (${d.learned_by.length})</h3><div class="chips">${d.learned_by.filter((x, i, a) => a.findIndex(y => y.name === x.name && y.level === x.level) === i).slice(0, 200).map(x => `<a href="?tab=species&id=${encodeURIComponent(x.species)}">${esc(x.name)} · ${x.level}</a>`).join('') || '<span class="muted">No Pokémon.</span>'}</div>
+    <div class="adv"><h3>All fields</h3><table>${Object.entries(d.fields).map(([k, v]) => `<tr><td class="muted">${esc(k)}</td><td><code>${esc(v)}</code></td></tr>`).join('')}</table></div>`;
+  $('#main').innerHTML = h;
+  bindX(d.description_fits);
+}
+
+// ------------------------------------------------------------------ TMs, HMs, tutors
+async function openTms() {
+  await loadNames('MOVE_');
+  const d = await api('/api/data/tms');
+  S.cur = d; d.edit = {};
+  const table = (kind) => `<table id="t-${kind}"><tr><th>${kind.toUpperCase().slice(0, 2)}</th><th>move</th><th></th></tr>${d[kind].map((x, i) => `<tr><td class="muted">${kind.slice(0, 2).toUpperCase()}${String(i + 1).padStart(2, '0')}</td><td><input data-tmk="${kind}" list="dl-MOVE" value="${esc(x.name)}"></td><td><button data-tdel="${kind}">✕</button></td></tr>`).join('')}</table>
+    <div class="row"><button data-tadd="${kind}">+ Add a${kind === 'hms' ? 'n HM' : ' TM'}</button><span class="hint">the game has ${d['max_' + kind]} ${kind.slice(0, 2).toUpperCase()} items</span></div>`;
+  $('#main').innerHTML = `<h2>TMs &amp; HMs</h2><p class="muted">Which move each TM and HM teaches. Changing one also renames its item everywhere (item balls, shops, gym rewards) and gives it the move's description.</p>
+    <div class="row" style="align-items:flex-start;gap:40px"><div><h3>TMs</h3>${table('tms')}</div><div><h3>HMs</h3>${table('hms')}</div>
+    <div><h3>Move tutors</h3><p class="hint">People in scripts who teach a move. Change them in their script.</p>${d.tutors.map(t => `<div>${esc(t.name)} · ${t.map ? `<a href="/maps?map=${encodeURIComponent(t.map)}&label=${encodeURIComponent(t.label || '')}">${esc(t.map)}</a>` : '<span class="muted">extraTutors</span>'}</div>`).join('') || '<span class="muted">None.</span>'}</div></div>`;
+  const collect = (kind) => [...$('#main').querySelectorAll(`[data-tmk="${kind}"]`)].map(x => constOf('MOVE_', x.value)).filter(Boolean);
+  const bind = () => {
+    $('#main').querySelectorAll('[data-tmk]').forEach(x => x.oninput = () => { d.edit[x.dataset.tmk] = collect(x.dataset.tmk); setDirty(); });
+    $('#main').querySelectorAll('[data-tdel]').forEach(b => b.onclick = () => { const k = b.dataset.tdel; b.closest('tr').remove(); renumber(k); d.edit[k] = collect(k); setDirty(); });
+  };
+  const renumber = (kind) => $('#main').querySelectorAll(`#t-${kind} tr td:first-child`).forEach((td, i) => { td.textContent = kind.slice(0, 2).toUpperCase() + String(i + 1).padStart(2, '0'); });
+  $('#main').querySelectorAll('[data-tadd]').forEach(b => b.onclick = () => {
+    const k = b.dataset.tadd; $('#t-' + k).insertAdjacentHTML('beforeend', `<tr><td class="muted"></td><td><input data-tmk="${k}" list="dl-MOVE"></td><td><button data-tdel="${k}">✕</button></td></tr>`); renumber(k); bind();
+  });
+  bind();
+}
+
+// ------------------------------------------------------------------ shops
+async function openMart(label) {
+  await loadNames('ITEM_');
+  if (!S.marts) S.marts = await api('/api/data/marts');
+  const m = S.marts.find(x => x.label === label); if (!m) throw new Error('no shop ' + label);
+  S.cur = m; m.edit = {};
+  $('#main').innerHTML = `<h2>${esc(m.map)}</h2><div class="muted">${esc(m.label)} · ${esc(m.file)}:${m.line} · <a href="/maps?map=${encodeURIComponent(m.map)}&label=${encodeURIComponent(m.clerk || '')}">open the clerk's script</a></div>
+    <h3>Sells</h3><table id="mart"><tr><th>item</th><th></th></tr>${m.items.map(it => `<tr><td><input data-mi list="dl-ITEM" value="${esc(nameOf('ITEM_', it))}" style="width:240px"></td><td><button data-mdel>✕</button></td></tr>`).join('')}</table>
+    <div class="row"><button id="mart-add">+ Add an item</button></div><p class="hint">Prices are set on each item (Items tab).</p>`;
+  const collect = () => [...$('#main').querySelectorAll('[data-mi]')].map(x => constOf('ITEM_', x.value)).filter(Boolean);
+  const bind = () => { $('#main').querySelectorAll('[data-mi]').forEach(x => x.oninput = () => { m.edit.items = collect(); setDirty(); });
+    $('#main').querySelectorAll('[data-mdel]').forEach(b => b.onclick = () => { b.closest('tr').remove(); m.edit.items = collect(); setDirty(); }); };
+  bind();
+  $('#mart-add').onclick = () => { $('#mart').insertAdjacentHTML('beforeend', '<tr><td><input data-mi list="dl-ITEM" style="width:240px"></td><td><button data-mdel>✕</button></td></tr>'); bind(); };
+}
+
 // ------------------------------------------------------------------ save
 $('#save').onclick = async () => {
   try {
@@ -378,6 +548,14 @@ $('#save').onclick = async () => {
         await api('/api/data/wild?map=' + encodeURIComponent(S.sel), { kind, encounter_rate: k.encounter_rate, mons: k.mons });
       }
       toast('Saved the wild Pokémon of ' + S.sel);
+    } else if (S.tab === 'items') {
+      await api('/api/data/item?id=' + encodeURIComponent(S.cur.id), S.cur.edit); toast('Saved ' + S.cur.name);
+    } else if (S.tab === 'moves') {
+      await api('/api/data/move?id=' + encodeURIComponent(S.cur.id), S.cur.edit); toast('Saved ' + S.cur.name);
+    } else if (S.tab === 'tms') {
+      await api('/api/data/tms', S.cur.edit); toast('Saved the TM and HM lists');
+    } else if (S.tab === 'marts') {
+      await api('/api/data/mart?label=' + encodeURIComponent(S.cur.label), S.cur.edit); S.marts = null; toast('Saved ' + S.cur.map + "'s shop");
     } else {
       await api('/api/data/species?id=' + encodeURIComponent(S.cur.id), S.cur.edit);
       toast('Saved ' + S.cur.name);

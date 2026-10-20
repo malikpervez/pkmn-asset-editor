@@ -246,6 +246,20 @@ def make_handler(state: _State):
                 return self._send(buf.getvalue(), "image/png", headers={"Cache-Control": "max-age=300"})
             if path == "/api/data/trainer_battles":
                 return self._json(gd.trainer_maps(q["id"]))
+            if path == "/api/data/items":
+                return self._json(gd.items(q.get("q", "")))
+            if path == "/api/data/item":
+                return self._json(gd.get_item(q["id"]))
+            if path == "/api/data/moves":
+                return self._json(gd.moves(q.get("q", "")))
+            if path == "/api/data/move":
+                return self._json(gd.get_move(q["id"]))
+            if path == "/api/data/tms":
+                return self._json(dict(gd.tms(), tutors=gd.tutors()))
+            if path == "/api/data/marts":
+                return self._json(gd.marts())
+            if path == "/api/data/teachable":
+                return self._json(dict(gd.teachable(q["id"]), egg_moves=gd.egg_moves(q["id"])))
             return self._error("not found", HTTPStatus.NOT_FOUND)
 
         def _data_post(self, path, q):
@@ -258,6 +272,14 @@ def make_handler(state: _State):
                                               body.get("mons") or [], int(body.get("entry") or 0)))
             if path == "/api/data/species":
                 return self._json(gd.set_species(q["id"], body))
+            if path == "/api/data/item":
+                return self._json(gd.set_item(q["id"], body))
+            if path == "/api/data/move":
+                return self._json(gd.set_move(q["id"], body))
+            if path == "/api/data/tms":
+                return self._json(gd.set_tms(body.get("tms"), body.get("hms")))
+            if path == "/api/data/mart":
+                return self._json(gd.set_mart(q["label"], body.get("items") or []))
             return self._error("not found", HTTPStatus.NOT_FOUND)
 
         def _maps(self):

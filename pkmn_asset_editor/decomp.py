@@ -770,7 +770,7 @@ class DecompProject:
     def _changed_files(self) -> dict[str, str]:
         r = self._run_git("status", "--porcelain", "-uall", "--", "graphics", "data/tilesets", "data/maps",
                           "data/layouts", "data/text", "data/scripts", "src/data", "src/tileset_anims.c",
-                          "include/tileset_anims.h")
+                          "include/tileset_anims.h", "include/constants/tms_hms.h")
         out = {}
         if r is not None and r.returncode == 0:
             for line in r.stdout.decode(errors="replace").splitlines():
@@ -1274,7 +1274,10 @@ class DecompProject:
         if text_files:
             for level, f, msg in self.textbox.check_changed(self, text_files):
                 rep.issues.append(Issue(level, f, msg))
-        if any(f.endswith(".party") or f == "src/data/wild_encounters.json" for f in changed):
+        data_files = {"src/data/wild_encounters.json", "src/data/items.h", "src/data/moves_info.h",
+                      "include/constants/tms_hms.h"}
+        if any(f.endswith(".party") or f in data_files or (f.endswith(".inc") and f.startswith("data/"))
+               for f in changed):
             for level, f, msg in self.gamedata.check(changed):
                 rep.issues.append(Issue(level, f, msg))
             rep.checked += 1

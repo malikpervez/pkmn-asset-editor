@@ -160,12 +160,36 @@ TOOLS = [
      "(get_wild shows how many). Empty mons removes that kind.",
      _schema({"map": S, "kind": S, "encounter_rate": I, "mons": {"type": "array", "items": {"type": "object"}}},
              ["map", "kind"])),
-    ("get_species", "A Pokémon's data: base stats, types, abilities, catch rate, EXP, evolutions and level-up moves.",
+    ("get_species", "A Pokémon's data: name, base stats, types, abilities, catch rate, EXP, evolutions, level-up "
+     "moves and its Pokédex entry (category, height, weight, description).",
      _schema({"id": S}, ["id"])),
     ("set_species", "Change a Pokémon: baseHP/baseAttack/baseDefense/baseSpAttack/baseSpDefense/baseSpeed, "
      "catchRate, expYield, types [TYPE_X, TYPE_Y], abilities [3], evolutions [{method, param, target}], "
-     "learnset [{level, move}] (replaces the level-up moves).",
+     "learnset [{level, move}] (replaces the level-up moves), name, category, height, weight, description "
+     "(Pokédex), teachable {MOVE_X: true/false} (TM/HM/tutor moves), egg_moves [MOVE_X].",
      _schema({"id": S, "changes": {"type": "object"}}, ["id", "changes"])),
+    ("list_items", "Items (id, name), optionally filtered by text.", _schema({"query": S})),
+    ("get_item", "One item: name, price, description, pocket, hold effect, its icon and the shops that sell it.",
+     _schema({"item": S}, ["item"])),
+    ("set_item", "Change an item: name, price, description (real newlines; keep to the lines and width other "
+     "descriptions use), pocket (POCKET_X), holdEffectParam.", _schema({"item": S, "changes": {"type": "object"}},
+                                                                     ["item", "changes"])),
+    ("list_moves", "Moves (id, name), optionally filtered by text.", _schema({"query": S})),
+    ("get_move", "One move: name, description, power, accuracy, pp, priority, type, category, effect, target, "
+     "its TM/HM number and which Pokémon learn it by level.", _schema({"move": S}, ["move"])),
+    ("set_move", "Change a move: name, description, power, accuracy, pp, priority, type (TYPE_X), category "
+     "(DAMAGE_CATEGORY_X), effect (EFFECT_X), target, makesContact.",
+     _schema({"move": S, "changes": {"type": "object"}}, ["move", "changes"])),
+    ("get_tms", "Which move each TM and HM teaches, the move tutors in scripts, and how many TM/HM items exist.",
+     _schema({})),
+    ("set_tms", "Replace the TM list and/or the HM list (moves in order: the first is TM01). TM items, item balls "
+     "and shops that use them are renamed to match.", _schema({"tms": {"type": "array", "items": S},
+                                                              "hms": {"type": "array", "items": S}})),
+    ("get_teachable", "Which TM/HM and tutor moves a Pokémon can learn (change with set_species "
+     "{teachable: {MOVE_X: true}}); also its egg moves.", _schema({"id": S}, ["id"])),
+    ("list_marts", "Every Poké Mart list (label, map, items).", _schema({})),
+    ("set_mart", "Set what a Poké Mart list sells (items in order).",
+     _schema({"label": S, "items": {"type": "array", "items": S}}, ["label", "items"])),
     ("playtest_battle", "In the running play-test, start a battle now: against `trainer` (TRAINER_X) or a wild "
      "`species` at `level`, with the current team. Returns the screen; continue with playtest_press.",
      _schema({"trainer": S, "species": S, "level": I}, [])),
@@ -209,7 +233,8 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "view_tileset_anim", "edit_tileset_anim", "set_anim_frame", "add_anim_frame", "remove_anim_frame",
              "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team",
              "list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species",
-             "playtest_battle", "story_flag", "suggest_map_chapters"}
+             "playtest_battle", "story_flag", "suggest_map_chapters", "list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
+             "get_teachable", "list_marts", "set_mart"}
 
 
 class Server:
@@ -453,6 +478,30 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
+        if name in ("list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
+                    "get_teachable", "list_marts", "set_mart"):
+            gd = self.proj.gamedata
+            if name == "list_items":
+                return txt(gd.items(args.get("query", ""))[:400])
+            if name == "get_item":
+                return txt(gd.get_item(args["item"]))
+            if name == "set_item":
+                return txt(gd.set_item(args["item"], args["changes"]))
+            if name == "list_moves":
+                return txt(gd.moves(args.get("query", ""))[:400])
+            if name == "get_move":
+                return txt(gd.get_move(args["move"]))
+            if name == "set_move":
+                return txt(gd.set_move(args["move"], args["changes"]))
+            if name == "get_tms":
+                return txt(dict(gd.tms(), tutors=gd.tutors()))
+            if name == "set_tms":
+                return txt(gd.set_tms(args.get("tms"), args.get("hms")))
+            if name == "get_teachable":
+                return txt(dict(gd.teachable(args["id"]), egg_moves=gd.egg_moves(args["id"])))
+            if name == "list_marts":
+                return txt({"marts": gd.marts()})
+            return txt(gd.set_mart(args["label"], args["items"]))
         if name in ("list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species"):
             gd = self.proj.gamedata
             if name == "list_trainers":
