@@ -383,6 +383,29 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--evolves-from", help="SPECIES:LEVEL, e.g. pichu:12 (adds an EVO_LEVEL evolution)")
     for k in ("front", "back", "icon"):
         p.add_argument(f"--{k}", help=f"a picture for its {k} sprite (any PNG; fitted and recoloured)")
+    p = sub.add_parser("world", help="source tree: all maps joined by their connections, the town map and fly spots")
+    wsub2 = p.add_subparsers(dest="world_cmd")
+    with_project(p)
+    q = with_project(wsub2.add_parser("render", help="a picture of a whole area (Hoenn, Kanto…)"))
+    q.add_argument("--area", type=int, default=0, help="0 = the biggest")
+    q.add_argument("--scale", type=float, default=0.25, help="0.25 = 4 pixels per block")
+    q.add_argument("-o", "--out", required=True)
+    q = with_project(wsub2.add_parser("region", help="the town map picture"))
+    q.add_argument("-o", "--out", required=True)
+    q = with_project(wsub2.add_parser("attach", help="add a new map next to one, joined both ways"))
+    q.add_argument("existing")
+    q.add_argument("side", choices=["up", "down", "left", "right"])
+    q.add_argument("template", help="the map to copy, e.g. Route101")
+    q.add_argument("name", help="the new map's name, e.g. Route135")
+    q.add_argument("--offset", type=int, default=0, help="how far along the side it starts, in blocks")
+    q = with_project(wsub2.add_parser("fly", help="make a town map place a fly spot"))
+    q.add_argument("section", help="e.g. MAPSEC_SUNNY_TOWN")
+    q.add_argument("map")
+    q.add_argument("x", type=int)
+    q.add_argument("y", type=int)
+    q.add_argument("--flag", help="you can fly there once this flag is on (the map turns it on when you arrive)")
+    q = with_project(wsub2.add_parser("add-place", help="add a place to the town map"))
+    q.add_argument("name")
     p = sub.add_parser("story", help="source tree: story chapters, for play-tests that start later in the game")
     ssub = p.add_subparsers(dest="story_cmd", required=True)
     with_project(ssub.add_parser("list", help="list the chapters and their maps"))
@@ -822,6 +845,45 @@ def _run(args) -> int:
                     print(f"{m.script_path(name).relative_to(proj.root)}:{t.line}: {t.label}: {msg}")
         print(f"{count} problem(s)" if count else "every text fits its box")
         return 1 if count else 0
+    if args.cmd == "world":
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("the world view needs a pokeemerald-style source tree")
+        w = m.world
+        cmd = args.world_cmd
+        if cmd == "render":
+            area = w.layout()["areas"][args.area]
+            w.render_area(area, args.scale).save(args.out)
+            print(f"wrote {args.out} ({len(area['maps'])} maps)")
+            return 0
+        if cmd == "region":
+            im = w.region_map_image()
+            if im is None:
+                raise ProjectError("no town map picture (graphics/pokenav/region_map/map.png)")
+            im.save(args.out)
+            print(f"wrote {args.out}")
+            return 0
+        if cmd == "attach":
+            r = w.attach_map(args.existing, args.side, args.template, args.name, args.offset)
+            print(f"added {r['map']} to the {r['side']} of {r['connected_to']}")
+            return 0
+        if cmd == "fly":
+            r = w.set_fly_spot(args.section, args.map, args.x, args.y, args.flag)
+            print(f"{r['section']} is a fly spot: you land on {r['map']} ({args.x}, {args.y})"
+                  + (f" once {args.flag} is on" if args.flag else ""))
+            return 0
+        if cmd == "add-place":
+            print(w.add_section(args.name)["id"])
+            return 0
+        L = w.layout()
+        for i, a in enumerate(L["areas"]):
+            print(f"{i}. {a['first']}: {len(a['maps'])} maps, {a['w']}x{a['h']} blocks")
+        for p in L["problems"]:
+            print("⚠ " + p["message"])
+        rm = w.region_map()
+        fly = [s for s in rm["sections"] if s["fly"] and s["fly"]["flyable"]]
+        print(f"town map: {len(rm['sections'])} places, fly spots: " + ", ".join(s["name"] for s in fly))
+        return 0
     if args.cmd == "new-pokemon":
         if not decomp:
             raise ProjectError("adding Pokémon needs a pokeemerald-expansion source tree")

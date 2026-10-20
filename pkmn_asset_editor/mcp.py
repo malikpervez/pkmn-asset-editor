@@ -224,6 +224,17 @@ TOOLS = [
      _schema({"map": S, "name": S, "tile": I, "count": I, "frames": I, "speed": I}, ["map", "name", "tile", "count"])),
     ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
      "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
+    ("view_world", "A picture of a whole area of the world (all maps joined by their connections; area 0 is the "
+     "biggest), with each map's position and size in blocks, and connection problems.",
+     _schema({"area": I, "scale": {"type": "number"}})),
+    ("region_map", "The town map: its picture, which place (MAPSEC) each square is, the places with their maps, and "
+     "the fly spots.", _schema({})),
+    ("attach_map", "Add a new map (a copy of `template`) next to `existing` on `side` (up/down/left/right), joined "
+     "both ways; `offset` moves it along that side in blocks.",
+     _schema({"existing": S, "side": S, "template": S, "name": S, "offset": I}, ["existing", "side", "template", "name"])),
+    ("set_fly_spot", "Make a town map place (MAPSEC_X) a fly spot landing on `map` at (x, y); with `flag` you can "
+     "fly there once it's on (the map's arrival script turns it on). `add_place` first adds a new place.",
+     _schema({"section": S, "map": S, "x": I, "y": I, "flag": S, "add_place": S}, ["map", "x", "y"])),
     ("create_pokemon", "Add a brand-new Pokémon by copying `template` (e.g. SPECIES_PICHU): species and Pokédex "
      "constants, its species entry, graphics folder and INCGFX lines, follower sprite, learnsets, TM/tutor moves. "
      "`changes` are set_species fields (stats, types, abilities, category, height, weight, description, learnset); "
@@ -254,7 +265,8 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team",
              "list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species",
              "playtest_battle", "story_flag", "suggest_map_chapters", "list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
-             "get_teachable", "list_marts", "set_mart", "difficulty_report", "find_text", "replace_text", "make_release", "create_pokemon"}
+             "get_teachable", "list_marts", "set_mart", "difficulty_report", "find_text", "replace_text", "make_release", "create_pokemon", "view_world", "region_map", "attach_map",
+             "set_fly_spot"}
 
 
 class Server:
@@ -498,6 +510,28 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
+        if name in ("view_world", "region_map", "attach_map", "set_fly_spot"):
+            w = self.proj.maps.world
+            if name == "view_world":
+                L = w.layout()
+                if not L["areas"]:
+                    return txt("no maps are connected to each other")
+                area = L["areas"][int(args.get("area") or 0)]
+                im = w.render_area(area, float(args.get("scale") or 0.125))
+                return [self._png(im), *txt({"maps": area["maps"], "problems": L["problems"],
+                                             "areas": [(a["first"], len(a["maps"])) for a in L["areas"]]})]
+            if name == "region_map":
+                rm = w.region_map()
+                im = w.region_map_image()
+                out = txt({k: rm[k] for k in ("grid", "origin", "sections")})
+                return ([self._png(im.resize((480, 320), Image.NEAREST))] if im else []) + out
+            if name == "attach_map":
+                return txt(w.attach_map(args["existing"], args["side"], args["template"], args["name"],
+                                        int(args.get("offset") or 0)))
+            section = args.get("section")
+            if args.get("add_place"):
+                section = w.add_section(args["add_place"])["id"]
+            return txt(w.set_fly_spot(section, args["map"], int(args["x"]), int(args["y"]), args.get("flag")))
         if name == "create_pokemon":
             return txt(self.proj.newmon.create(args["name"], args["template"], args.get("changes") or {},
                                                args.get("evolves_from")))

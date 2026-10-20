@@ -100,6 +100,24 @@ def make_handler(state: _State):
                 return self._send((WEB / "help.html").read_bytes(), "text/html; charset=utf-8")
             if path in ("/story", "/story.html"):
                 return self._send((WEB / "story.html").read_bytes(), "text/html; charset=utf-8")
+            if path in ("/world", "/world.html"):
+                return self._send((WEB / "world.html").read_bytes(), "text/html; charset=utf-8")
+            if path.startswith("/api/world/"):
+                w = self._maps().world
+                if path == "/api/world/layout":
+                    return self._json(w.layout())
+                if path == "/api/world/area.png":
+                    area = w.layout()["areas"][int(q.get("i", 0))]
+                    im = w.render_area(area, float(q.get("scale", 0.25)))
+                    return self._send(self._maps().png_bytes(im), "image/png", headers={"Cache-Control": "max-age=30"})
+                if path == "/api/world/region":
+                    return self._json(w.region_map())
+                if path == "/api/world/region.png":
+                    im = w.region_map_image()
+                    if im is None:
+                        return self._error("no region map picture", HTTPStatus.NOT_FOUND)
+                    im = im.resize((im.width * 3, im.height * 3), Image.NEAREST)
+                    return self._send(self._maps().png_bytes(im), "image/png")
             if path in ("/release", "/release.html"):
                 return self._send((WEB / "release.html").read_bytes(), "text/html; charset=utf-8")
             if path == "/api/release":
@@ -614,6 +632,21 @@ def make_handler(state: _State):
                 return self._play_post(path, q)
             if path.startswith("/api/data/"):
                 return self._data_post(path, q)
+            if path.startswith("/api/world/"):
+                w = self._maps().world
+                body = json.loads(self._body() or b"{}")
+                if path == "/api/world/attach":
+                    return self._json(w.attach_map(body["existing"], body["side"], body["template"], body["name"],
+                                                   int(body.get("offset") or 0)))
+                if path == "/api/world/region_grid":
+                    return self._json(w.set_region_grid(body["grid"]))
+                if path == "/api/world/section_name":
+                    return self._json(w.rename_section(body["section"], body["name"]))
+                if path == "/api/world/section_add":
+                    return self._json(w.add_section(body["name"]))
+                if path == "/api/world/fly":
+                    return self._json(w.set_fly_spot(body["section"], body["map"], int(body["x"]), int(body["y"]),
+                                                     body.get("flag")))
             if path.startswith("/api/release/"):
                 rel = self._release()
                 if path == "/api/release/base":
