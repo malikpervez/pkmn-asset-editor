@@ -116,6 +116,8 @@ class Story:
         best, best_len = None, -1
         for i, c in enumerate(chapters if chapters is not None else self.chapters()):
             for m in c["maps"]:
+                if map_name != m and map_name.endswith("_Frlg") and not m.endswith("_Frlg"):
+                    continue  # Kanto's VictoryRoad_1F_Frlg is not part of Hoenn's VictoryRoad
                 if (map_name == m or map_name.startswith(m + "_")) and len(m) > best_len:
                     best, best_len = i, len(m)
         return best
@@ -299,6 +301,159 @@ class Story:
         lines = [f"{item}*{n}" for item, n in totals.items()]
         lines += list(dict.fromkeys([*flags, *(s.flag for s in items if s.flag)]))
         return lines
+
+
+    # ------------------------------------------------------------------ story flow
+    def flow(self, include_temp: bool = False) -> dict:
+        """Which events change and check which flags/vars, map by map in chapter order.
+
+        {"chapters": [{name, maps: [{map, events: [{label, trigger, sets, clears, needs, vars_set, vars_checked}]}]}],
+         "unplaced": [...], "flags": {FLAG_X: {"set_by": [..], "checked_by": [..]}}}"""
+        chapters = self.chapters()
+        triggers_by_map: dict[str, dict[str, str]] = {}
+        names = {v: k for k, v in self.maps.map_by_id.items()}
+        per_map: dict[str, list[dict]] = {}
+        usage: dict[str, dict[str, list]] = {}
+        temp = re.compile(r"^(FLAG_TEMP_|VAR_TEMP_|FLAG_HIDE_MAP_NAME_POPUP$|VAR_RESULT$|VAR_0x)")
+
+        def use(name, how, ref):
+            if not include_temp and temp.match(name):
+                return
+            usage.setdefault(name, {"set_by": [], "checked_by": []})[how].append(ref)
+
+        for map_name in self.maps.maps:
+            try:
+                data = self.maps.get_map(map_name)
+            except (OSError, ValueError, DecompError):
+                continue
+            trig: dict[str, str] = {}
+            for e in data.get("object_events", []) or []:
+                if e.get("script"):
+                    who = str(e.get("graphics_id", "")).replace("OBJ_EVENT_GFX_", "").replace("_", " ").title()
+                    trig.setdefault(e["script"], f"talk to {who} at ({e.get('x')}, {e.get('y')})")
+                    fl = e.get("flag")
+                    if fl and str(fl).startswith("FLAG_"):
+                        use(fl, "checked_by", {"map": map_name, "label": e["script"],
+                                               "how": f"{who} disappears while it is on"})
+            for e in data.get("coord_events", []) or []:
+                if e.get("script"):
+                    trig.setdefault(e["script"], f"step on ({e.get('x')}, {e.get('y')})")
+                    if str(e.get("var", "")).startswith("VAR_"):
+                        use(e["var"], "checked_by", {"map": map_name, "label": e["script"],
+                                                     "how": f"step trigger works while it is {e.get('var_value')}"})
+            for e in data.get("bg_events", []) or []:
+                if e.get("script") and e.get("type", "sign") == "sign":
+                    trig.setdefault(e["script"], f"read the sign at ({e.get('x')}, {e.get('y')})")
+            triggers_by_map[map_name] = trig
+            events = []
+            for label, body in self._script_blocks(map_name):
+                ev = {"label": label, "trigger": trig.get(label, ""), "sets": [], "clears": [], "needs": [],
+                      "vars_set": [], "vars_checked": []}
+                if label.endswith(("_OnTransition", "_OnLoad", "_OnResume", "_OnFrame", "_OnWarp", "_MapScripts")):
+                    ev["trigger"] = "when the map loads"
+                for m in re.finditer(r"\bsetflag\s*\(?\s*(FLAG_\w+)", body):
+                    ev["sets"].append(m.group(1))
+                for m in re.finditer(r"\bclearflag\s*\(?\s*(FLAG_\w+)", body):
+                    ev["clears"].append(m.group(1))
+                for m in re.finditer(r"\b(?:goto|call)_if_(set|unset)\s*\(?\s*(FLAG_\w+)", body):
+                    ev["needs"].append(f"{m.group(2)} {'on' if m.group(1) == 'set' else 'off'}")
+                for m in re.finditer(r"\b(?:setvar|addvar)\s*\(?\s*(VAR_\w+)\s*,\s*(\w+)", body):
+                    ev["vars_set"].append(f"{m.group(1)} = {m.group(2)}")
+                for m in re.finditer(r"\b(?:goto|call)_if_(eq|ne|lt|le|gt|ge)\s*\(?\s*(VAR_\w+)\s*,\s*(\w+)", body):
+                    op = {"eq": "=", "ne": "≠", "lt": "<", "le": "≤", "gt": ">", "ge": "≥"}[m.group(1)]
+                    ev["vars_checked"].append(f"{m.group(2)} {op} {m.group(3)}")
+                for m in re.finditer(r"\bmap_script_2\s+(VAR_\w+)\s*,\s*(\w+)\s*,\s*(\w+)", body):
+                    ev["vars_checked"].append(f"{m.group(1)} = {m.group(2)} → {m.group(3)}")
+                    use(m.group(1), "checked_by", {"map": map_name, "label": m.group(3),
+                                                   "how": f"starts when it is {m.group(2)}"})
+                for k in ev:
+                    if isinstance(ev[k], list):
+                        ev[k] = list(dict.fromkeys(ev[k]))
+                if not include_temp:
+                    for k in ("sets", "clears", "needs", "vars_set", "vars_checked"):
+                        ev[k] = [x for x in ev[k] if not temp.match(x)]
+                ref = {"map": map_name, "label": label}
+                for f in ev["sets"]:
+                    use(f, "set_by", dict(ref, how="turns it on"))
+                for f in ev["clears"]:
+                    use(f, "set_by", dict(ref, how="turns it off"))
+                for f in ev["needs"]:
+                    use(f.split()[0], "checked_by", dict(ref, how=f"needs it {f.split()[1]}"))
+                for v in ev["vars_set"]:
+                    use(v.split()[0], "set_by", dict(ref, how=f"sets it to {v.split()[-1]}"))
+                for v in ev["vars_checked"]:
+                    if "→" not in v:
+                        use(v.split()[0], "checked_by", dict(ref, how="checks " + " ".join(v.split()[1:])))
+                if any(ev[k] for k in ("sets", "clears", "needs", "vars_set", "vars_checked")):
+                    events.append(ev)
+            if events:
+                per_map[map_name] = events
+        out_chapters = []
+        placed = set()
+        for i, c in enumerate(chapters):
+            maps_here = [n for n in self.maps.maps if self.chapter_of(n, chapters) == i]
+            placed.update(maps_here)
+            out_chapters.append({"name": c["name"], "flags": c.get("flags", []),
+                                 "maps": [{"map": n, "events": per_map.get(n, [])} for n in maps_here]})
+        unplaced = [{"map": n, "events": per_map.get(n, [])} for n in self.maps.maps if n not in placed]
+        del names
+        return {"chapters": out_chapters, "unplaced": unplaced, "usage": usage}
+
+    def suggest_chapters(self) -> list[dict]:
+        """For maps not in a chapter: the chapter of the nearest map they connect to by doors or edges."""
+        chapters = self.chapters()
+        by_id = self.maps.map_by_id
+        links: dict[str, set[str]] = {n: set() for n in self.maps.maps}
+        for n in self.maps.maps:
+            try:
+                data = self.maps.get_map(n)
+            except (OSError, ValueError, DecompError):
+                continue
+            for w in data.get("warp_events", []) or []:
+                dest = by_id.get(w.get("dest_map", ""))
+                if dest and dest != n:
+                    links[n].add(dest)
+                    links.setdefault(dest, set()).add(n)
+            for c in data.get("connections", []) or []:
+                dest = by_id.get(c.get("map", ""))
+                if dest:
+                    links[n].add(dest)
+                    links.setdefault(dest, set()).add(n)
+        known = {n: self.chapter_of(n, chapters) for n in self.maps.maps}
+        out = []
+        for n, ch in known.items():
+            if ch is not None:
+                continue
+            seen, frontier, found = {n}, [n], None
+            for _ in range(6):  # up to 6 doors away
+                nxt = []
+                for x in frontier:
+                    if x != n and len(links.get(x, ())) > 8:
+                        continue  # hubs like the cable club rooms link every Pokémon Center: don't walk through them
+                    for y in links.get(x, ()):
+                        if y in seen:
+                            continue
+                        seen.add(y)
+                        if known.get(y) is not None:
+                            found = (known[y], y) if found is None or known[y] < found[0] else found
+                        nxt.append(y)
+                if found:
+                    break
+                frontier = nxt
+            if found:
+                out.append({"map": n, "chapter": found[0], "chapter_name": chapters[found[0]]["name"], "via": found[1]})
+        return out
+
+    def apply_suggestions(self, maps: list[str] | None = None) -> int:
+        sugg = self.suggest_chapters()
+        if maps is not None:
+            sugg = [s for s in sugg if s["map"] in set(maps)]
+        chapters = self.chapters()
+        for s in sugg:
+            if self.chapter_of(s["map"], chapters) != s["chapter"]:
+                chapters[s["chapter"]]["maps"].append(s["map"])
+        self.save_chapters(chapters)
+        return len(sugg)
 
 
 def _key(s: ItemSource) -> str:

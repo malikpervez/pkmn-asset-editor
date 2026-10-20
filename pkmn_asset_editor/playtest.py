@@ -486,6 +486,70 @@ class PlaySession:
             pass
         return f"added {label or species} lv{level} to {where}"
 
+    # -- battles
+    def start_battle(self, trainer: str | None = None, species: str | None = None, level: int = 5,
+                     item: str | None = None, double: bool = False, frames: int = 240) -> Image.Image:
+        """Start a battle right now: against ``trainer`` (TRAINER_X, using its team from trainers.party) or a wild
+        ``species`` at ``level``. The player uses their current team."""
+        g = self._require()
+        if not g.in_overworld():
+            raise PlaytestError("battles can only be started while walking around in the overworld")
+        if self.clear_team_needed():
+            raise PlaytestError("you have no Pokémon: add some to your team first")
+        version = game_version(g.rom)
+        if trainer:
+            tid = trainer.upper() if trainer.upper().startswith("TRAINER_") else "TRAINER_" + trainer.upper()
+            need = ["BattleSetup_StartTrainerBattle_Debug", "CreateNPCTrainerPartyFromTrainer", "gTrainers",
+                    "gTrainerBattleParameter", "gBattleTypeFlags", "CalculateEnemyPartyCount"]
+            missing = [n for n in need if n not in g.sym]
+            if missing:
+                raise PlaytestError(f"this build can't start trainer battles directly (missing {', '.join(missing)}; "
+                                    "it needs pokeemerald-expansion)")
+            v = self.constants.values([tid, "TRAINERS_COUNT", "DIFFICULTY_COUNT"], version)
+            n_tr, n_diff = v["TRAINERS_COUNT"], max(1, v["DIFFICULTY_COUNT"])
+            size = g.sym_size.get("gTrainers", 0) // (n_tr * n_diff)
+            if size <= 0 or not 0 <= v[tid] < n_tr:
+                raise PlaytestError(f"{tid} is not a regular trainer (partners and debug trainers can't be battled here)")
+            diff = g.call("GetTrainerDifficultyLevel", v[tid]) & 0xFF if "GetTrainerDifficultyLevel" in g.sym else 0
+            tr_ptr = g.sym["gTrainers"] + (min(diff, n_diff - 1) * n_tr + v[tid]) * size
+            param = g.sym["gTrainerBattleParameter"]
+            for i in range(g.sym_size.get("gTrainerBattleParameter", 40)):
+                g.emu.write(param + i, 0, 1)
+            g.emu.write(param + 2, v[tid] & 0xFF, 1)       # params.opponentA (packed struct)
+            g.emu.write(param + 3, v[tid] >> 8, 1)
+            g.emu.write(param + 17, 0xFF, 1)                # params.opponentB = 0xFFFF
+            g.emu.write(param + 18, 0xFF, 1)
+            g.emu.write(g.sym["gBattleTypeFlags"], (1 << 3) | (1 if double else 0), 4)  # BATTLE_TYPE_TRAINER (+DOUBLE)
+            base, mon_size = self._party()
+            g.call("CreateNPCTrainerPartyFromTrainer", base + 6 * mon_size, tr_ptr)
+            if "BattleSetup_GetEnvironmentId" in g.sym and "gBattleEnvironment" in g.sym:
+                g.emu.write(g.sym["gBattleEnvironment"], g.call("BattleSetup_GetEnvironmentId") & 0xFF, 1)
+            g.call("CalculateEnemyPartyCount")
+            g.call("BattleSetup_StartTrainerBattle_Debug")
+            what = tid
+        elif species:
+            sp = species.upper() if species.upper().startswith("SPECIES_") else "SPECIES_" + species.upper()
+            names = [sp] + ([item] if item else [])
+            v = self.constants.values(names, version)
+            if not 1 <= int(level) <= 100:
+                raise PlaytestError("level must be 1-100")
+            g.call("CreateScriptedWildMon", v[sp], int(level), v.get(item, 0) if item else 0)
+            g.call("BattleSetup_StartWildBattle")
+            what = f"a wild {sp} lv{level}"
+        else:
+            raise PlaytestError("give a trainer, or a species for a wild battle")
+        g.emu.frames(frames)
+        self.where = {**self.where, "battle": what}
+        return g.emu.screenshot()
+
+    def clear_team_needed(self) -> bool:
+        g = self._require()
+        return (g.call("CalculatePlayerPartyCount") & 0xFF) == 0
+
+    def in_battle(self) -> bool:
+        g = self._require()
+        return not g.in_overworld() and g.sym.get("BattleMainCB2") == g.callback2
+
     def team(self) -> list[dict]:
         """The current team: species / level / held item / moves, as numbers (see team_names for names)."""
         g = self._require()
@@ -714,7 +778,7 @@ class Constants:
     with the project's own toolchain, so renumbered or added constants in a fork are always right."""
 
     HEADERS = ("global.h", "constants/flags.h", "constants/vars.h", "constants/items.h", "constants/species.h",
-               "constants/moves.h", "pokemon.h")
+               "constants/moves.h", "pokemon.h", "constants/opponents.h", "constants/difficulty.h")
 
     def __init__(self, root: Path, cache_dir: Path):
         self.root = Path(root)

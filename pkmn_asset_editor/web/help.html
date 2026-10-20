@@ -56,6 +56,8 @@
   <h1>❓ Help &amp; guides</h1>
   <a href="/">🎨 Graphics</a>
   <a href="/maps">🗺️ Maps</a>
+  <a href="/data">🔴 Pokémon &amp; Trainers</a>
+  <a href="/story">📖 Story</a>
 </header>
 <div class="wrap">
 <nav>
@@ -73,6 +75,12 @@
   <a href="#later">Test later in the story</a>
   <a href="#team">Test a battle with your own team</a>
   <a href="#animate">Make water and flowers move</a>
+  <a href="#trainer">Change a trainer's team</a>
+  <a href="#wild">Change the wild Pokémon</a>
+  <a href="#species">Change a Pokémon's stats and moves</a>
+  <a href="#dialogue">Make dialogue fit the text box</a>
+  <a href="#story">Follow the story</a>
+  <a href="#savepoints">Save points: go back in time</a>
   <a href="#build">Check and build your game</a>
   <a href="#ai">Get help from an AI</a>
   <b>Reference</b>
@@ -240,6 +248,85 @@
   </ol>
 </section>
 
+<section id="trainer">
+  <h2>Change a trainer's team</h2>
+  <ol>
+    <li>Open <a href="/data">🔴 Pokémon &amp; Trainers</a> and search for the trainer, like <code>roxanne</code>.</li>
+    <li>Change their Pokémon, levels, held items and moves. Leave the moves empty and they know the moves they'd
+      have at that level. <span class="ui">+ Add a Pokémon</span> adds one (up to 6).</li>
+    <li>Press <span class="ui">Save</span>.</li>
+    <li>Press <span class="ui">⚔️ Test this battle</span>, pick your own team, then
+      <span class="ui">Build &amp; battle</span>. The battle starts right away, no walking needed.</li>
+  </ol>
+  <div class="tip">In the map test window you can also start any battle with <b>Battle now</b>: type a trainer
+    (like <code>TRAINER_ROXANNE_1</code>) or a wild Pokémon and its level.</div>
+</section>
+
+<section id="wild">
+  <h2>Change the wild Pokémon</h2>
+  <ol>
+    <li>Open <a href="/data">🔴 Pokémon &amp; Trainers</a> → <span class="ui">Wild Pokémon</span> and pick a map.</li>
+    <li>Each row is a <b>slot</b>. The <b>chance</b> column says how often that slot shows up, so put rare
+      Pokémon in the slots with small chances.</li>
+    <li><b>How often you meet one</b>: bigger = more battles (20 is normal grass).</li>
+    <li>Press <span class="ui">Save</span>, then the ⚔️ button on a row to battle that Pokémon straight away.</li>
+  </ol>
+</section>
+
+<section id="species">
+  <h2>Change a Pokémon's stats and moves</h2>
+  <ol>
+    <li>Open <a href="/data">🔴 Pokémon &amp; Trainers</a> → <span class="ui">Pokémon</span> and pick one.</li>
+    <li>Change its types, <b>base stats</b> (how strong it is), abilities, how easy it is to catch, and the
+      EXP it gives.</li>
+    <li><b>Evolves into</b>: how and when it evolves, like <code>EVO_LEVEL</code> at <code>16</code>.</li>
+    <li><b>Moves it learns by level</b>: add, remove or change the level of each move.</li>
+    <li>Press <span class="ui">Save</span>. <span class="ui">Check for problems</span> tells you if a name is
+      misspelled.</li>
+  </ol>
+</section>
+
+<section id="dialogue">
+  <h2>Make dialogue fit the text box</h2>
+  <p>The game's text box is small: two lines of about 35 letters. Text that is too long gets cut off.</p>
+  <ol>
+    <li>Open a map's <b>Scripts</b> tab. Under <b>💬 How the dialogue looks in game</b> every text is drawn in the
+      game's own font, one picture per box.</li>
+    <li>Red means a problem the game would show, like a line that is too wide. The message says where to fix it.</li>
+    <li>In the text, <code>\n</code> goes to the second line, <code>\l</code> scrolls to a new line,
+      <code>\p</code> starts a new box, and <code>$</code> ends the text.</li>
+  </ol>
+  <div class="tip">When you use <span class="ui">New script…</span>, the tool splits your text into lines and boxes
+    for you.</div>
+</section>
+
+<section id="story">
+  <h2>Follow the story</h2>
+  <p>The story is a chain of <b>flags</b> (on/off switches) and <b>variables</b> (numbers). One event turns a
+    flag on, and later events wait for it.</p>
+  <ol>
+    <li>Open <a href="/story">📖 Story</a>. Chapters are on the left, and each map lists its events.</li>
+    <li>Coloured chips show what each event does: <b>turns on</b>, <b>turns off</b>, <b>needs</b>, or sets a
+      <b>variable</b>.</li>
+    <li>Click a chip (or search, like <code>BADGE01</code>) to see every event that changes it and every event
+      that waits for it.</li>
+    <li>Made new maps? Press <span class="ui">Suggest chapters</span>: maps behind a door or next to a route are put
+      in the same chapter as that place.</li>
+  </ol>
+</section>
+
+<section id="savepoints">
+  <h2>Save points: go back in time</h2>
+  <ul>
+    <li>Press <span class="ui">💾 Save point</span> when something works, and give it a name like
+      <i>"Gave Roxanne an Aron"</i>.</li>
+    <li><span class="ui">🕘 History</span> lists your save points. <span class="ui">What changed</span> shows the
+      files, and <span class="ui">Go back to this</span> puts everything back how it was then.</li>
+    <li>Going back never deletes anything. It becomes a new save point, so you can always come forward again.</li>
+  </ul>
+  <div class="tip">Save points are git commits. If you use git already, you'll see them in your history.</div>
+</section>
+
 <section id="build">
   <h2>Check and build your game</h2>
   <ul>
@@ -277,6 +364,10 @@
     <dt>Height level (elevation)</dt><dd>Which height something is at (bridges and ledges use it). 3 is normal ground.</dd>
     <dt>Layout</dt><dd>The blocks of a map. Several maps can share one layout (most houses do).</dd>
     <dt>Checkpoint</dt><dd>A saved game you can start tests from.</dd>
+    <dt>Save point</dt><dd>A snapshot of all your game's files you can go back to (not the same as a checkpoint,
+      which is a saved game).</dd>
+    <dt>Base stats</dt><dd>How strong a kind of Pokémon is at HP, Attack, Defense, Sp. Atk, Sp. Def and Speed.</dd>
+    <dt>Slot</dt><dd>One line of a map's wild Pokémon list. Each slot has its own chance of appearing.</dd>
     <dt>Chapter</dt><dd>A part of the story (like "Badge 1"), used to start tests later in the game.</dd>
     <dt>Build</dt><dd>Turning all the files into a playable game.</dd>
     <dt>ROM</dt><dd>The game file (<code>.gba</code>) an emulator plays.</dd>
