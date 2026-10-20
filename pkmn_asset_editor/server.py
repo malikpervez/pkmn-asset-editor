@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import tempfile
 import threading
 from http import HTTPStatus
@@ -132,6 +133,24 @@ def make_handler(state: _State):
                         return self._error("no region map picture", HTTPStatus.NOT_FOUND)
                     im = im.resize((im.width * 3, im.height * 3), Image.NEAREST)
                     return self._send(self._maps().png_bytes(im), "image/png")
+            if path in ("/tests", "/tests.html"):
+                return self._send((WEB / "tests.html").read_bytes(), "text/html; charset=utf-8")
+            if path == "/api/tests":
+                t = self._tests()
+                return self._json({"tests": t.list(), "ci": (proj.root / ".github" / "workflows" / "pae.yml").exists(),
+                                   "recording": proj.play.started is not None and proj.play.game is not None})
+            if path == "/api/tests/image":
+                t = self._tests()
+                name, kind = q.get("name", ""), q.get("kind", "expected")
+                f = t._path(name, ".png") if kind == "expected" else t.results_dir / f"{name}.{'got' if kind == 'got' else 'diff'}.png"
+                if not f.is_file():
+                    return self._error("not found", HTTPStatus.NOT_FOUND)
+                return self._send(f.read_bytes(), "image/png", headers={"Cache-Control": "no-store"})
+            if path == "/api/tests/result":
+                t = self._tests()
+                f = t.results_dir / f"{q.get('name', '')}.json"
+                t._path(q.get("name", ""))  # checks the name
+                return self._json(json.loads(f.read_text()) if f.is_file() else None)
             if path in ("/release", "/release.html"):
                 return self._send((WEB / "release.html").read_bytes(), "text/html; charset=utf-8")
             if path == "/api/release":
@@ -265,6 +284,11 @@ def make_handler(state: _State):
             if proj.kind != "decomp":
                 raise ProjectError("save points need a source tree (a git repository)")
             return History(proj)
+
+        def _tests(self):
+            if proj.kind != "decomp":
+                raise ProjectError("replay tests need a source tree (they play the ROM that `make` builds)")
+            return proj.tests
 
         def _release(self):
             if proj.kind != "decomp":
@@ -589,6 +613,45 @@ def make_handler(state: _State):
                 return self._json({"ok": True})
             return self._error("not found", HTTPStatus.NOT_FOUND)
 
+        def _tests_post(self, path):
+            from .playtest import PlaytestError
+            from .replay import write_workflow
+            t = self._tests()
+            body = json.loads(self._body() or b"{}")
+            words = lambda v: [x for x in re.split(r"[\s,]+", v) if x] if isinstance(v, str) else list(v or [])
+            try:
+                if path == "/api/tests/record":
+                    with proj.play.lock:
+                        test = t.record(proj.play, body.get("name", "").strip(), body.get("note", ""),
+                                        words(body.get("flags")), words(body.get("vars")), words(body.get("trainers")),
+                                        float(body.get("threshold") or 0.01), bool(body.get("overwrite")))
+                    return self._json({"ok": True, "test": {k: test[k] for k in ("name", "expect", "watch")}})
+                if path == "/api/tests/run":
+                    build = None
+                    if body.get("build", True):
+                        rep = proj.build_rom()
+                        build = {"returncode": rep.returncode, "seconds": round(rep.seconds, 1),
+                                 "output": "\n".join(rep.output.rstrip().splitlines()[-40:])}
+                        if rep.returncode != 0:
+                            return self._json({"ok": False, "build": build, "error": "make failed"})
+                    return self._json({"ok": True, "build": build, "results": t.run_all(body.get("names") or None)})
+                if path == "/api/tests/accept":
+                    t.accept(body["name"])
+                    return self._json({"ok": True})
+                if path == "/api/tests/watch":
+                    t.set_watch(body["name"], words(body.get("flags")), words(body.get("vars")),
+                                words(body.get("trainers")), body.get("threshold"))
+                    return self._json({"ok": True})
+                if path == "/api/tests/delete":
+                    t.delete(body["name"])
+                    return self._json({"ok": True})
+                if path == "/api/tests/ci":
+                    p = write_workflow(proj.root, bool(body.get("force")))
+                    return self._json({"ok": True, "path": str(p.relative_to(proj.root))})
+            except PlaytestError as e:
+                return self._json({"ok": False, "error": str(e)})
+            return self._error("not found", HTTPStatus.NOT_FOUND)
+
         def _play_post(self, path, q):
             if proj.kind != "decomp":
                 raise ProjectError("play-testing needs a source tree")
@@ -690,6 +753,8 @@ def make_handler(state: _State):
                 if path == "/api/world/fly":
                     return self._json(w.set_fly_spot(body["section"], body["map"], int(body["x"]), int(body["y"]),
                                                      body.get("flag")))
+            if path.startswith("/api/tests/"):
+                return self._tests_post(path)
             if path.startswith("/api/release/"):
                 rel = self._release()
                 if path == "/api/release/base":

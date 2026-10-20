@@ -162,7 +162,8 @@ async function init() {
       '<a class="btn" href="/data" title="trainer teams, wild Pokémon and Pokémon stats">🔴 Pokémon &amp; Trainers</a>' +
       '<a class="btn" href="/story" title="which events turn which flags on">📖 Story</a>' +
       '<a class="btn" href="/world" title="all your towns and routes joined together">🌍 World</a>' +
-      '<a class="btn" href="/release" title="make a patch of your game to share">📦 Release</a>');
+      '<a class="btn" href="/release" title="make a patch of your game to share">📦 Release</a>' +
+      '<a class="btn" href="/tests" title="replay what you played after every change">🧪 Tests</a>');
   }
   $('#game').textContent = `${s.game.name} · ${s.game.code}`;
   const cats = Object.entries(s.categories).sort();

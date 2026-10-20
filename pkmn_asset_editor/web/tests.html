@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Replay Tests</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M6 2h4v4l3 7a1.5 1.5 0 0 1-1.4 2H4.4A1.5 1.5 0 0 1 3 13l3-7z' fill='%231f8a4c'/></svg>">
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --line: #dcdce2; --text: #1d1d24; --muted: #6b6b78;
+    --accent: #d23c3c; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b7791f; --chip: #ececf1; --sel: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+      --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+    --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; }
+  header a { color: var(--muted); }
+  main { max-width: 1000px; margin: 0 auto; padding: 16px; }
+  main a { color: var(--sel); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 16px; margin: 12px 0; }
+  h2 { font-size: 15px; margin: 0 0 8px; }
+  button, input, textarea { font: inherit; color: var(--text); }
+  button { padding: 6px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--chip); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; width: 100%; }
+  .field { display: grid; grid-template-columns: 130px 1fr; gap: 8px; align-items: center; margin: 6px 0; }
+  .field label { color: var(--muted); }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .check { padding: 4px 0; }
+  .check.error { color: var(--accent); }
+  .check.warning { color: var(--warn); }
+  pre { white-space: pre-wrap; background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 12px; max-height: 320px; overflow: auto; }
+  code { font-size: 12px; }
+  @media (max-width: 600px) { .field { grid-template-columns: 1fr; } }
+  .test { border-top: 1px solid var(--line); padding: 10px 0; }
+  .test:first-child { border-top: 0; }
+  .test .name { font-weight: 600; }
+  .badge { display: inline-block; border-radius: 999px; padding: 1px 8px; font-size: 12px; background: var(--chip); }
+  .badge.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .badge.bad { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .shots { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .shots figure { margin: 0; }
+  .shots img { width: 240px; height: 160px; image-rendering: pixelated; border-radius: 6px; border: 1px solid var(--line); display: block; max-width: 100%; }
+  .shots figcaption { font-size: 12px; color: var(--muted); }
+  table.checks { border-collapse: collapse; margin-top: 6px; font-size: 12px; }
+  table.checks td { padding: 2px 10px 2px 0; }
+  table.checks tr.bad td { color: var(--accent); }
+  details summary { cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🧪 Replay tests</h1>
+  <a href="/">🎨 Graphics</a>
+  <a href="/maps">🗺️ Maps</a>
+  <a href="/data">🔴 Pokémon &amp; Trainers</a>
+  <a href="/story">📖 Story</a>
+  <a href="/world">🌍 World</a>
+  <a href="/release">📦 Release</a>
+  <a href="/help#tests" target="_blank">❓ Help</a>
+  <span style="flex:1"></span>
+</header>
+<main>
+  <p class="muted">Play something once (walk through a town, beat a gym leader, watch a cutscene) and save it as a test. After every change, replay all tests: they press exactly the same buttons and tell you if the game now ends somewhere else, shows a different screen, or a trainer is no longer beaten.</p>
+  <div class="card"><h2>Your tests</h2>
+    <div class="row"><button id="t-run" class="primary">▶ Build &amp; run all tests</button><button id="t-run-nb" title="use the game as last built">Run without building</button><span id="t-status" class="muted"></span></div>
+    <div id="t-list" style="margin-top:8px">Loading…</div>
+  </div>
+  <div class="card"><h2>How to make a test</h2>
+    <ol class="muted" style="margin:0;padding-left:20px">
+      <li>On <a href="/maps">🗺️ Maps</a>, open <b>▶ Test in game</b> and start where the test should begin (a map, a checkpoint, a chapter, a team).</li>
+      <li>Play what the test should check: walk, talk, start a battle and win it…</li>
+      <li>Press <b>🔴 Save as a test</b>. What the game shows at that moment is what every replay must show.</li>
+    </ol>
+    <p class="muted">Or from the command line: <code>pae test record "beat roxanne" RustboroCity --team "SPECIES_MUDKIP lv20" --battle TRAINER_ROXANNE_1 --inputs "A, wait 20, …" --watch-trainer TRAINER_ROXANNE_1</code></p>
+  </div>
+  <div class="card"><h2>Check every change on GitHub</h2>
+    <p class="muted" style="margin-top:0">Adds <code>.github/workflows/pae.yml</code> to your game. When you push to GitHub (or someone opens a pull request), GitHub builds the game, runs <code>pae check</code> and replays these tests, and shows ✅ or ❌ next to the commit. The screens are kept as a download on the run's page.</p>
+    <div class="row"><button id="t-ci">Set up GitHub checks</button><span id="t-ci-status" class="muted"></span></div>
+  </div>
+  <pre id="t-build" hidden></pre>
+</main>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const api = async (path, body) => {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) });
+  const d = await r.json();
+  if (!r.ok || d.ok === false) throw Object.assign(new Error(d.error || 'failed'), { data: d });
+  return d;
+};
+const img = (name, kind) => `/api/tests/image?name=${encodeURIComponent(name)}&kind=${kind}&t=${Date.now()}`;
+const fmt = (v) => Array.isArray(v) ? v.join(', ') : (v === true ? 'yes' : v === false ? 'no' : String(v ?? ''));
+const results = {};
+function startText(s) {
+  const bits = [];
+  bits.push(s.map ? `on ${s.map}` + (s.x != null ? ` (${s.x}, ${s.y})` : '') : `from checkpoint ${s.from_checkpoint || s.save}`);
+  if (s.from_checkpoint && s.map) bits.push(`from checkpoint ${s.from_checkpoint}`);
+  if ((s.state || []).length) bits.push(`${s.state.length} story/team lines`);
+  if (s.script) bits.push(`script ${s.script}`);
+  return bits.join(' · ');
+}
+function resultHtml(t, r) {
+  if (!r) return '';
+  if (r.error) return `<pre style="color:var(--accent)">${esc(r.error)}</pre>`;
+  const rows = (r.checks || []).map(c => `<tr class="${c.ok ? '' : 'bad'}"><td>${c.ok ? '✅' : '❌'} ${esc(c.what)}</td><td>expected ${esc(fmt(c.expected))}</td><td>got ${esc(fmt(c.got))}</td></tr>`).join('');
+  const shots = r.ok ? '' : `<div class="shots"><figure><img src="${img(t.name, 'diff')}" style="width:100%;max-width:744px;height:auto" alt="expected, got and the difference"><figcaption>expected · what it shows now · changed pixels in red</figcaption></figure></div>`;
+  return `<table class="checks">${rows}</table>${shots}`;
+}
+function render(list) {
+  if (!list.length) { $('#t-list').innerHTML = '<p class="muted">No tests yet. See “How to make a test” below.</p>'; return; }
+  $('#t-list').innerHTML = list.map(t => {
+    const r = results[t.name];
+    const last = r ? r : t.last;
+    const badge = !last ? '<span class="badge">not run yet</span>' : last.ok ? '<span class="badge ok">✅ passed</span>' : '<span class="badge bad">❌ changed</span>';
+    const watch = [...(t.watch.trainers || []).map(x => '⚔ ' + x), ...(t.watch.flags || []).map(x => '⚑ ' + x), ...(t.watch.vars || []).map(x => '# ' + x)];
+    return `<div class="test" data-name="${esc(t.name)}">
+      <div class="row"><span class="name">${esc(t.name)}</span>${badge}<span class="muted">${esc(startText(t.start))} · ${Math.round(t.frames / 60)} s of play</span><span style="flex:1"></span>
+        <button data-act="run">Run</button>${last && !last.ok ? '<button data-act="accept" title="the change was on purpose: from now on, expect what the game shows now">✔ It\'s fine, keep the new result</button>' : ''}<button data-act="delete" title="delete this test">🗑</button></div>
+      ${t.note ? `<div class="muted">${esc(t.note)}</div>` : ''}
+      ${last && !last.ok && !r ? `<div class="muted">${esc(last.summary)}</div>` : ''}
+      ${resultHtml(t, r)}
+      <details><summary class="muted">Expected screen and what it watches${watch.length ? ': ' + esc(watch.join(', ')) : ''}</summary>
+        <div class="shots"><figure><img src="${img(t.name, 'expected')}" alt="expected screen"><figcaption>the screen it should end on</figcaption></figure></div>
+        <div class="row" style="margin-top:6px"><label class="muted">trainers beaten</label><input data-w="trainers" value="${esc((t.watch.trainers || []).join(' '))}" placeholder="TRAINER_ROXANNE_1" style="flex:1;width:auto">
+          <label class="muted">flags</label><input data-w="flags" value="${esc((t.watch.flags || []).join(' '))}" placeholder="FLAG_BADGE01_GET" style="flex:1;width:auto">
+          <label class="muted">variables</label><input data-w="vars" value="${esc((t.watch.vars || []).join(' '))}" placeholder="VAR_..." style="flex:1;width:auto">
+          <button data-act="watch" title="replays the test to read their values now">Save</button></div>
+      </details>
+    </div>`;
+  }).join('');
+}
+async function load() {
+  const d = await api('/api/tests');
+  render(d.tests);
+  $('#t-ci').textContent = d.ci ? 'GitHub checks are set up ✅ (write again)' : 'Set up GitHub checks';
+  $('#t-ci').dataset.exists = d.ci ? '1' : '';
+}
+async function run(names, build) {
+  $('#t-status').textContent = build ? 'Building your game, then replaying…' : 'Replaying…';
+  document.querySelectorAll('button').forEach(b => b.disabled = true);
+  $('#t-build').hidden = true;
+  try {
+    const d = await api('/api/tests/run', { names, build });
+    for (const r of d.results) results[r.name] = r;
+    const bad = d.results.filter(r => !r.ok).length;
+    $('#t-status').textContent = d.results.length ? (bad ? `${bad} of ${d.results.length} changed.` : `All ${d.results.length} passed.`) : '';
+  } catch (e) {
+    $('#t-status').textContent = e.message;
+    if (e.data && e.data.build) { $('#t-build').hidden = false; $('#t-build').textContent = e.data.build.output; }
+  } finally {
+    document.querySelectorAll('button').forEach(b => b.disabled = false);
+    await load();
+  }
+}
+$('#t-run').onclick = () => run(null, true);
+$('#t-run-nb').onclick = () => run(null, false);
+$('#t-list').onclick = async (ev) => {
+  const btn = ev.target.closest('button[data-act]'); if (!btn) return;
+  const box = btn.closest('.test'), name = box.dataset.name, act = btn.dataset.act;
+  try {
+    if (act === 'run') return run([name], false);
+    if (act === 'delete') { if (!confirm(`Delete the test “${name}”?`)) return; await api('/api/tests/delete', { name }); delete results[name]; }
+    if (act === 'accept') { btn.disabled = true; btn.textContent = 'Replaying…'; await api('/api/tests/accept', { name }); delete results[name]; }
+    if (act === 'watch') {
+      btn.disabled = true; btn.textContent = 'Replaying…';
+      const w = (k) => box.querySelector(`[data-w="${k}"]`).value;
+      await api('/api/tests/watch', { name, trainers: w('trainers'), flags: w('flags'), vars: w('vars') }); delete results[name];
+    }
+    await load();
+  } catch (e) { alert(e.message); await load(); }
+};
+$('#t-ci').onclick = async () => {
+  try {
+    const d = await api('/api/tests/ci', { force: !!$('#t-ci').dataset.exists });
+    $('#t-ci-status').innerHTML = `Wrote <code>${esc(d.path)}</code>. Make a save point and push it to GitHub; the results show on the repository's <b>Actions</b> tab.`;
+    load();
+  } catch (e) { $('#t-ci-status').textContent = e.message; }
+};
+load().catch(e => { $('#t-list').textContent = e.message; });
+</script>
+<script src="/history.js"></script>
+</body>
+</html>

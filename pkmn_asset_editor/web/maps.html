@@ -116,6 +116,7 @@
   <a href="/story" title="which events turn which flags on, chapter by chapter">📖 Story</a>
   <a href="/world" title="all your towns and routes joined together, the town map and fly spots">🌍 World</a>
   <a href="/release" title="make a patch of your game to share">📦 Release</a>
+  <a href="/tests" title="replay what you played after every change">🧪 Tests</a>
   <a href="/help" target="_blank" title="step-by-step guides and what all the words mean">❓ Help</a>
   <span class="muted" id="mapname">no map open</span>
   <span style="flex:1"></span>
@@ -262,7 +263,8 @@
       <div class="row">script on arrival <input id="play-script" list="dl-labels" style="flex:1" placeholder="e.g. PetalburgCity_EventScript_WallyTutorial"></div>
     </details>
     <div class="row"><button id="play-start" class="primary" title="build your game with your latest changes, then start">▶ Build &amp; play</button><button id="play-restart" title="start again without building (faster)">Play again</button>
-      <span style="flex:1"></span><button id="play-ckpt" title="save the game right here, so you can start from this spot next time">Save checkpoint…</button></div>
+      <span style="flex:1"></span><button id="play-ckpt" title="save the game right here, so you can start from this spot next time">Save checkpoint…</button>
+      <button id="play-test" title="save everything you did since ▶ as a replay test: after each change, 🧪 Tests replays it and tells you if the game now ends differently">🔴 Save as a test…</button></div>
     <div id="play-status" class="muted">Pick where to start, then press ▶ Build &amp; play. The first build can take a few minutes.</div>
     <img id="play-screen" alt="game screen" width="480" height="320">
     <canvas id="play-live" width="480" height="320" hidden style="image-rendering:pixelated;background:#000;display:block;margin:8px 0"></canvas>
@@ -1275,6 +1277,19 @@ $('#play-ckpt').onclick = async () => {
   if (!r.ok) return toast(r.error, 'err', 6000);
   await loadCheckpoints(); toast(`Saved checkpoint ${name} at ${r.checkpoint.map} (${r.checkpoint.x}, ${r.checkpoint.y})`);
 };
+let lastTrainer = '';
+$('#play-test').onclick = async () => {
+  if (!$('#play-screen').src) return toast('Start the game and play what the test should check first', 'warn');
+  const name = prompt('Name for this test (e.g. beat roxanne)', lastTrainer ? 'beat ' + lastTrainer.replace(/^TRAINER_/, '').replace(/_\d+$/, '').toLowerCase() : '');
+  if (!name) return;
+  const trainers = prompt('Also check that these trainers are beaten (optional, separated by spaces)', lastTrainer);
+  if (trainers === null) return;
+  let r = await api('/api/tests/record', { name, trainers });
+  if (!r.ok && /already a test/.test(r.error || '') && confirm(r.error + '. Replace it?')) r = await api('/api/tests/record', { name, trainers, overwrite: true });
+  if (!r.ok) return toast(r.error, 'err', 6000);
+  const e = r.test.expect;
+  toast(`Saved test “${name}”: it must end on ${e.map} (${e.x}, ${e.y})${e.in_battle ? ' in a battle' : ''}. Run it on 🧪 Tests.`, 'ok', 6000);
+};
 $('#play-runscript-go').onclick = async () => {
   const label = $('#play-runscript').value.trim(); if (!label) return;
   const r = await api('/api/play/script', { label });
@@ -1422,7 +1437,7 @@ $('#play-battle').onclick = async () => {
   playBusy = true;
   try {
     const r = await api('/api/play/battle', trainer ? { trainer } : { species: constName('SPECIES_', wild), level: +$('#play-wildlv').value || 5 });
-    if (r.ok) { $('#play-screen').src = r.image; $('#play-status').textContent = 'Battling ' + r.where.battle; }
+    if (r.ok) { $('#play-screen').src = r.image; $('#play-status').textContent = 'Battling ' + r.where.battle; if (trainer) lastTrainer = r.where.battle; }
     else $('#play-status').textContent = friendlyError(r.error);
   } catch (e) { $('#play-status').textContent = e.message; }
   finally { playBusy = false; }

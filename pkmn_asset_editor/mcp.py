@@ -257,6 +257,17 @@ TOOLS = [
      "against the original ROM (`base_rom`, remembered), a README and a zip in .pae/releases. Only when the user "
      "asks for a release.", _schema({"name": S, "version": S, "author": S, "description": S, "base_rom": S,
                                      "notes": S}, [])),
+    ("save_replay_test", "Save the running play-test (everything since playtest_start: presses, battles, scripts) as "
+     "a replay test in pae_tests/. What the game shows now (screen, map, position, in battle, and the watched "
+     "`trainers` beaten / `flags` / `vars`) is what every replay must show.",
+     _schema({"name": S, "note": S, "trainers": {"type": "array", "items": S}, "flags": {"type": "array", "items": S},
+              "vars": {"type": "array", "items": S}, "overwrite": {"type": "boolean"}}, ["name"])),
+    ("run_replay_tests", "Build (unless build=false) and replay the tests in pae_tests/ (all, or `names`); says per "
+     "test what changed (map, position, battle, trainers, flags, vars, screen) and returns the difference pictures "
+     "of failed tests (expected | now | changed pixels in red).",
+     _schema({"names": {"type": "array", "items": S}, "build": {"type": "boolean"}}, [])),
+    ("accept_replay_test", "The change a replay test found was intended: replay it and keep what the game shows now "
+     "as its new expectation. Only when the user agrees the change is fine.", _schema({"name": S}, ["name"])),
     ("list_save_points", "Save points (git commits) of the game folder, newest first, and the files changed since "
      "the last one.", _schema({})),
     ("make_save_point", "Commit every change as a save point with a plain-language message. Only when the user asks "
@@ -286,6 +297,29 @@ class Server:
         self.proj = proj
 
     # ------------------------------------------------------------------ tools
+    def replay_call(self, name, args, txt):
+        if self.proj.kind != "decomp":
+            raise ProjectError("replay tests need a source tree")
+        t = self.proj.tests
+        if name == "save_replay_test":
+            with self.proj.play.lock:
+                r = t.record(self.proj.play, args["name"], args.get("note", ""), args.get("flags") or [],
+                             args.get("vars") or [], args.get("trainers") or [], overwrite=bool(args.get("overwrite")))
+            return txt({"saved": args["name"], "expect": r["expect"], "steps": len(r["steps"])})
+        if name == "accept_replay_test":
+            return txt({"accepted": args["name"], "expect": t.accept(args["name"])["expect"]})
+        if args.get("build", True):
+            rep = self.proj.build_rom()
+            if rep.returncode != 0:
+                return txt({"ok": False, "error": "make failed", "output": rep.output[-3000:]})
+        results = t.run_all(args.get("names") or None)
+        content = [{"type": "text", "text": json.dumps(results, indent=1)}]
+        for r in results:
+            f = t.results_dir / f"{r['name']}.diff.png"
+            if not r.get("ok") and f.exists():
+                content.append(self._png(Image.open(f)))
+        return content
+
     def _png(self, im: Image.Image) -> dict:
         buf = io.BytesIO()
         im.save(buf, "PNG")
@@ -554,6 +588,8 @@ class Server:
         if name == "create_pokemon":
             return txt(self.proj.newmon.create(args["name"], args["template"], args.get("changes") or {},
                                                args.get("evolves_from")))
+        if name in ("save_replay_test", "run_replay_tests", "accept_replay_test"):
+            return self.replay_call(name, args, txt)
         if name == "make_release":
             settings = {k: args[k] for k in ("name", "version", "author", "description", "base_rom") if args.get(k)}
             r = self.proj.release.build(notes=args.get("notes"), **settings)

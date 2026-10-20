@@ -145,7 +145,7 @@ class Emulator:
 # ---------------------------------------------------------------------- game-level control
 
 def parse_inputs(spec: str | list) -> list[tuple[int, int]]:
-    """'A, wait 30, DOWN*16, A+B 4' -> [(keys, frames)].
+    """'A, wait 30, DOWN*16, A+B 4' -> [(keys, frames)]. A list may also hold (keys, frames) pairs.
 
     Each step is ``KEY[+KEY..][*FRAMES]`` or ``wait FRAMES``. A bare key is a short press
     (6 frames held, then 10 released). ``*N`` holds for N frames (16 frames = one step walking).
@@ -153,6 +153,9 @@ def parse_inputs(spec: str | list) -> list[tuple[int, int]]:
     steps: list[tuple[int, int]] = []
     items = spec if isinstance(spec, list) else [s for s in spec.replace("\n", ",").split(",")]
     for raw in items:
+        if isinstance(raw, (tuple, list)):  # already (keys, frames), e.g. from a recorded test
+            steps.append((int(raw[0]) & 0x3FF, int(raw[1])))
+            continue
         s = str(raw).strip().upper()
         if not s:
             continue
@@ -276,6 +279,14 @@ class Game:
         self.emu.save_state(state)
         self.log(f"booted into the overworld in {time.time() - t0:.1f}s (cached)")
 
+    def seed_random(self) -> None:
+        """Set the random number generators to a fixed state. Without this the game's randomness (wandering
+        people, wild encounters, damage rolls) comes from the boot, which changes with every build."""
+        for i, name in enumerate(("gRngValue", "gRng2Value")):
+            if name in self.sym:
+                for w in range(max(1, self.sym_size.get(name, 4) // 4)):
+                    self.emu.write(self.sym[name] + 4 * w, (0x9E3779B9 * (4 * i + w + 1)) & 0xFFFFFFFF, 4)
+
     # -- warp
     def warp(self, group: int, num: int, x: int, y: int) -> None:
         sb1 = self.emu.read(self.sym["gSaveBlock1Ptr"])
@@ -331,17 +342,37 @@ class PlaySession:
     """A long-lived play-test: start at a map (fresh game or from a checkpoint save), set story state,
     press buttons, run scripts, save checkpoints, look at the screen."""
 
-    def __init__(self, root: Path, cache_dir: Path | None = None, log=None):
-        self.root = Path(root)
-        self.cache_dir = cache_dir or self.root / ".pae" / "cache"
+    def __init__(self, root: Path, cache_dir: Path | None = None, log=None, scratch: Path | None = None):
+        self.root = Path(root).absolute()
+        self.cache_dir = Path(cache_dir).absolute() if cache_dir else self.root / ".pae" / "cache"
         self.checkpoint_dir = self.root / ".pae" / "checkpoints"
         self.log = log or (lambda *_: None)
         self.game: Game | None = None
         self._stamp = None
         self.where: dict = {}
-        self.scratch = self.cache_dir / "session.sav"
+        self.scratch = Path(scratch) if scratch else self.cache_dir / "session.sav"
         self._constants: Constants | None = None
         self.lock = threading.RLock()  # live play runs frames from another thread
+        # what happened since start(), so it can be saved as a replay test (see replay.py)
+        self.started: dict | None = None
+        self.steps: list[dict] = []
+
+    def _record(self, step: dict) -> None:
+        if self.started is not None:
+            self.steps.append(step)
+
+    def note_frames(self, keys: int, n: int) -> None:
+        """Record frames run outside press() (live play), merged with the frames before them."""
+        if self.started is None:
+            return
+        last = self.steps[-1] if self.steps else None
+        if last is None or last["op"] != "press":
+            last = {"op": "press", "inputs": []}
+            self.steps.append(last)
+        if last["inputs"] and last["inputs"][-1][0] == keys:
+            last["inputs"][-1][1] += n
+        else:
+            last["inputs"].append([keys, n])
 
     # -- checkpoints (cartridge saves kept by name)
     def checkpoints(self) -> list[dict]:
@@ -382,14 +413,8 @@ class PlaySession:
     def save_checkpoint(self, name: str, note: str = "") -> dict:
         """Save the running game exactly like the in-game Save, and keep the save as a named checkpoint."""
         g = self._require()
-        if not g.in_overworld():
-            raise PlaytestError("checkpoints can only be saved while walking around in the overworld")
-        if "SaveMapView" in g.sym:
-            g.call("SaveMapView")
-        status = g.call("TrySavingData", 0)  # SAVE_NORMAL
-        g.emu.frames(30)  # let the emulator flush the flash writes to the save file
-        if status != 1:
-            raise PlaytestError(f"the game reported a save error (status {status})")
+        self.save_game()
+        self._record({"op": "save"})
         dst = self._checkpoint_path(name)
         dst.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(self.scratch, dst)
@@ -398,6 +423,18 @@ class PlaySession:
                 "map": where.get("map"), "x": where.get("x"), "y": where.get("y"), "rom": g.rom.name}
         dst.with_suffix(".json").write_text(json.dumps(meta, indent=2))
         return {"name": name, **meta}
+
+    def save_game(self) -> None:
+        """Save like the in-game Save (to the session's save file)."""
+        g = self._require()
+        if not g.in_overworld():
+            raise PlaytestError("checkpoints can only be saved while walking around in the overworld")
+        if "SaveMapView" in g.sym:
+            g.call("SaveMapView")
+        status = g.call("TrySavingData", 0)  # SAVE_NORMAL
+        g.emu.frames(30)  # let the emulator flush the flash writes to the save file
+        if status != 1:
+            raise PlaytestError(f"the game reported a save error (status {status})")
 
     def location(self) -> dict:
         g = self._require()
@@ -417,6 +454,7 @@ class PlaySession:
         """Story state lines (see :func:`parse_state`): flags, vars, items and Pokémon for the team."""
         g = self._require()
         parsed = parse_state(ops)
+        self._record({"op": "state", "state": list(ops) if not isinstance(ops, str) else [ops]})
         names = [name for kind, name, _ in parsed if name]
         names += [x for kind, _, arg in parsed if kind == "mon" for x in [arg["item"], *arg["moves"]] if x]
         values = self.constants.values(list(dict.fromkeys(names)), game_version(g.rom))
@@ -542,6 +580,8 @@ class PlaySession:
             raise PlaytestError("give a trainer, or a species for a wild battle")
         g.emu.frames(frames)
         self.where = {**self.where, "battle": what}
+        self._record({"op": "battle", "trainer": trainer, "species": species, "level": int(level), "item": item,
+                      "double": bool(double), "frames": frames})
         return g.emu.screenshot()
 
     def clear_team_needed(self) -> bool:
@@ -568,6 +608,26 @@ class PlaySession:
                         "moves": [get(self._mon_field(f"MON_DATA_MOVE{k}")) for k in range(1, 5)]})
         return out
 
+    # -- reading story progress (for replay tests)
+    def flags(self, names: list[str]) -> dict[str, bool]:
+        g = self._require()
+        v = self.constants.values(names, game_version(g.rom)) if names else {}
+        return {n: bool(g.call("FlagGet", v[n]) & 0xFF) for n in names}
+
+    def vars(self, names: list[str]) -> dict[str, int]:
+        g = self._require()
+        v = self.constants.values(names, game_version(g.rom)) if names else {}
+        return {n: g.call("VarGet", v[n]) & 0xFFFF for n in names}
+
+    def trainers_beaten(self, names: list[str]) -> dict[str, bool]:
+        g = self._require()
+        ids = [n.upper() if n.upper().startswith("TRAINER_") else "TRAINER_" + n.upper() for n in names]
+        v = self.constants.values(ids, game_version(g.rom)) if ids else {}
+        fn = "HasTrainerBeenFought" if "HasTrainerBeenFought" in g.sym else None
+        if fn is None:
+            raise PlaytestError("HasTrainerBeenFought not found in the .elf")
+        return {n: bool(g.call(fn, v[i]) & 0xFF) for n, i in zip(names, ids)}
+
     def _mon_field(self, name: str) -> int:
         return self.constants.values([name], game_version(self._require().rom))[name]
 
@@ -580,6 +640,7 @@ class PlaySession:
             raise PlaytestError("scripts can only be started in the overworld")
         g.call("ScriptContext_SetupScript", g.sym[label])
         g.emu.frames(frames)
+        self._record({"op": "script", "label": label, "frames": frames})
         return g.emu.screenshot()
 
     # -- session
@@ -588,10 +649,12 @@ class PlaySession:
             raise PlaytestError("start a play-test first")
         return self.game
 
-    def _game(self, checkpoint: str | None) -> Game:
+    def _game(self, checkpoint: str | None, save_file: Path | None = None) -> Game:
         rom = find_rom(self.root)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        if checkpoint:
+        if save_file:
+            data = Path(save_file).read_bytes()
+        elif checkpoint:
             src = self._checkpoint_path(checkpoint)
             if not src.exists():
                 raise PlaytestError(f"no checkpoint named {checkpoint}")
@@ -608,10 +671,12 @@ class PlaySession:
         return self.game
 
     def start(self, map_name: str | None = None, x: int | None = None, y: int | None = None,
-              checkpoint: str | None = None, state=None, script: str | None = None) -> Image.Image:
+              checkpoint: str | None = None, state=None, script: str | None = None,
+              save_file: Path | None = None) -> Image.Image:
         """Start a play-test.
 
-        * fresh game (Quickstart), or ``checkpoint`` = continue from a saved checkpoint (story progress, party…)
+        * fresh game (Quickstart), or ``checkpoint`` = continue from a saved checkpoint (story progress, party…),
+          or ``save_file`` = continue from that .sav
         * ``state``: story state applied before arriving (see :meth:`apply_state`)
         * ``map_name``: warp there at (x, y) (default its first warp); with a checkpoint and no map, stay
           where the save was made
@@ -620,11 +685,13 @@ class PlaySession:
         nums = map_numbers(self.root)
         if map_name is not None and map_name not in nums:
             raise PlaytestError(f"{map_name} is not in map_groups.json (rebuild after adding maps)")
-        if map_name is None and not checkpoint:
+        if map_name is None and not (checkpoint or save_file):
             raise PlaytestError("give a map, or a checkpoint to continue from")
-        g = self._game(checkpoint)
+        self.started = None  # don't record the setup itself
+        g = self._game(checkpoint, save_file)
         g.boot()
         g.emu.load_state(g.boot_state)  # same starting state every time
+        g.seed_random()  # same random numbers every time, even after a rebuild (for replay tests)
         notes = self.apply_state(state) if state else []
         if map_name is not None:
             mj = json.loads((self.root / "data" / "maps" / map_name / "map.json").read_text())
@@ -640,6 +707,10 @@ class PlaySession:
             run = script
         where = self.location()
         self.where = {**where, "rom": g.rom.name, "checkpoint": checkpoint, "state": notes, "script": run}
+        self.started = {"map": map_name, "x": x, "y": y, "checkpoint": checkpoint,
+                        "save_file": str(save_file) if save_file else None,
+                        "state": [state] if isinstance(state, str) else list(state or []), "script": script}
+        self.steps = []
         return img or g.emu.screenshot()
 
     def press(self, inputs, record_every: int = 0) -> tuple[Image.Image, list[Image.Image]]:
@@ -647,7 +718,9 @@ class PlaySession:
         if self.game is None:
             raise PlaytestError("start a play-test first")
         frames: list[Image.Image] = []
-        for keys, n in parse_inputs(inputs):
+        steps = parse_inputs(inputs)
+        self._record({"op": "press", "inputs": [[k, n] for k, n in steps]})
+        for keys, n in steps:
             if record_every:
                 left = n
                 while left > 0:

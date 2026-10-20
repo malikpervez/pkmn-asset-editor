@@ -45,6 +45,10 @@ class FakeSession:
     def __init__(self):
         self.lock = threading.RLock()
         self.game = type("G", (), {"emu": FakeEmu()})()
+        self.noted = []
+
+    def note_frames(self, keys, n):
+        self.noted.append((keys, n))
 
 
 def test_runner_streams_frames_and_sound():
@@ -68,5 +72,6 @@ def test_runner_streams_frames_and_sound():
     assert any(x.startswith("live 1 1023 ") for x in s.game.emu.lines)
     assert b"\x01\x89PNG" in got and b"\x02\x00\x01" in got  # a frame and its sound
     assert not os.path.exists(r.tmp)
+    assert s.noted and s.noted[0] == (0x3FF, 1)
     a.close()
     b.close()

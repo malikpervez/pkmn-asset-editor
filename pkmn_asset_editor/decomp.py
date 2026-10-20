@@ -652,6 +652,13 @@ class DecompProject:
         return Release(self)
 
     @property
+    def tests(self):
+        """Replay tests in pae_tests/ (see replay.py)."""
+        from .replay import ReplayTests
+        _exclude_state_dir(self.root)
+        return ReplayTests(self.root, log=self.log)
+
+    @property
     def textsearch(self):
         """Find and replace across dialogue, place names and trainer names (see textsearch.py)."""
         from .textsearch import TextSearch

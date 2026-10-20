@@ -143,7 +143,9 @@ class LiveRunner(threading.Thread):
                     if self._audio_on is not emu:
                         emu.cmd(f"audio {RATE}")
                         self._audio_on = emu
-                    emu.cmd(f"live {self.speed} {self.keys} {self.tmp}")
+                    keys = self.keys
+                    emu.cmd(f"live {self.speed} {keys} {self.tmp}")
+                    self.session.note_frames(keys, self.speed)  # so live play can be saved as a replay test
                     data = self.tmp.read_bytes()
             except Exception:  # noqa: BLE001 - the game stopped: wait for the next one
                 time.sleep(0.2)
