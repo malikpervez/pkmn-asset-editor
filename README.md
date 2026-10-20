@@ -1,41 +1,303 @@
 # pkmn-asset-editor
 
-Organise, view and edit **every graphic** of a Gen 3 Pokémon game — battle
-sprites, icons, trainers, items, battle animations, overworld sprites, tilesets,
-backgrounds, UI — by hand, in a built-in web editor, or with an AI assistant,
-and get it back into the game safely.
+Make your own Pokémon game, without having to program. Paint maps, add houses
+and people, write dialogue, change trainers, wild Pokémon and graphics. Then
+**play your change straight away** from any point in the story, in your
+browser. It's made for **pokeemerald-expansion** and works for beginners, for
+experienced ROM hackers and for AI assistants.
 
-It works in two modes:
+![The map editor showing Petalburg City with its people, doors and signs](docs/images/map-editor.png)
 
-| Mode | For | "Inserting" edits |
-|---|---|---|
-| **Source tree** | **pokeemerald-expansion**, pokeemerald, pokefirered (decomp projects) | edits are written straight into the repo's PNG/.pal/.bin files, validated, and `make` builds the ROM |
-| **ROM** | unmodified retail FireRed/LeafGreen/Ruby/Sapphire/Emerald ROMs (or binary hacks) | edits are recompressed and written into a copy of the ROM, relocating data and repointing as needed |
+**What's inside**
 
-The same commands, web editor and MCP server work in both modes: pass the repo
-folder or an extracted ROM project as `--project`.
+| | |
+|---|---|
+| 🗺️ [Maps & events](#maps-people-and-doors) | paint maps, add houses, people, doors, signs and step triggers |
+| ▶️ [Test in game](#test-in-game-from-anywhere-in-the-story) | build and play right away, from any chapter of the story, with the items and team you choose |
+| 🔴 [Pokémon & Trainers](#pokémon--trainers) | trainer teams, wild Pokémon, stats, types, evolutions and moves, plus a one-click battle test |
+| 💬 [Dialogue preview](#dialogue-that-fits) | see every text in the game's own font, with warnings for text that won't fit |
+| 🌊 [Tileset animations](#water-and-flowers-that-move) | water, flowers and waterfalls: speed, frames and new animations |
+| 📖 [Story flow](#story-flow) | which event turns on which flag, and what waits for it |
+| 💾 [Save points](#save-points) | snapshots of your work you can always go back to |
+| 🎨 [Graphics](#graphics) | all ~21,000 pictures of the game, sorted, with a pixel editor |
+| ❓ [Help](#new-to-rom-hacking) | step-by-step guides and a dictionary of ROM-hacking words |
 
-## New to ROM hacking? Start here
+It can also extract and re-insert the graphics of unmodified retail GBA Pokémon
+ROMs ([ROM mode](#rom-mode)).
 
-You don't need to know how to program to use this.
+## Install
 
-1. Install it once (see [Install](#install)), and run `scripts/setup-toolchain.sh`
-   so your game can be built and tested.
-2. In your game's folder, run `pae serve` and open the link it prints.
-3. Press **❓ Help** at the top. It has step-by-step guides (change a Pokémon's
-   picture, paint a map, add a house, add a person who talks, test a battle…)
-   and explains every word you'll see, like *block*, *palette*, *flag* and
-   *script*.
+You need a copy of your game's source code: your
+[pokeemerald-expansion](https://github.com/rh-hideout/pokeemerald-expansion)
+fork, for example. Pick one way to install:
 
-The editor uses plain names (**Walls**, **+ Door**, **looks like**,
-**what happens**) and hides the advanced settings. Tick **Expert mode** to see
-everything with the names the game's files use. Nothing changes until you
-press **Save**, and **Undo** / **Undo all changes** put things back.
+**Linux or macOS**: one command installs everything (the compiler that builds
+GBA games, the emulator library used for testing, and `pae`):
 
-## Source-tree mode (pokeemerald-expansion)
+```bash
+git clone https://github.com/malikpervez/pkmn-asset-editor
+bash pkmn-asset-editor/scripts/install.sh
+```
 
-In a decomp every graphic already is a file and `make` builds the ROM, so there
-is nothing to extract. `pae` adds the layer that makes editing them safe:
+**Windows 10/11**: GBA games build on Linux, so the script installs WSL (Linux
+inside Windows, from Microsoft) with Ubuntu and sets everything up there. Open
+PowerShell **as administrator** in the downloaded folder and run:
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass; .\scripts\install-windows.ps1
+```
+
+The first run may ask you to restart Windows. Run it again after restarting.
+
+**Docker**: nothing to install except Docker:
+
+```bash
+docker build -t pae .        # if Docker Hub is busy: --build-arg BASE=public.ecr.aws/docker/library/ubuntu:24.04
+docker run --rm -it -p 8765:8765 -v /path/to/your/game:/game pae
+```
+
+**With pip** (if you already have the toolchain): `pip install .` (Python 3.10+).
+`scripts/setup-toolchain.sh` installs the toolchain with apt, dnf, pacman or Homebrew.
+
+## Getting started
+
+```bash
+cd ~/my-expansion-game
+pae doctor --fix      # checks everything and fixes what's missing
+pae serve             # then open http://127.0.0.1:8765
+```
+
+`pae doctor` checks that your game can be built and tested and shows ✅ or ❌
+for each thing. With `--fix` it asks before each fix: it installs missing
+tools, turns on expansion's **Quickstart** (needed to start test games), makes
+the game folder a git repository (for save points), and builds the game once.
+
+<a id="new-to-rom-hacking"></a>
+### New to ROM hacking? Start here
+
+![The welcome card in the map editor](docs/images/welcome.png)
+
+You don't need to know how to program. Press **❓ Help** at the top of any
+page. It has step-by-step guides (change a Pokémon's picture, paint a map, add
+a house, add a person who talks, change a trainer's team, test a battle, make
+dialogue fit…) and explains every word you'll see, like *block*, *palette*,
+*flag* and *script*.
+
+![Help & guides](docs/images/help.png)
+
+* Buttons and fields use plain words (**Walls**, **+ Door**, **looks like**,
+  **what happens**). Hover over anything to see what it does.
+* **Expert mode** shows every setting with the names the game's files use.
+* **You can't break anything.** Nothing changes until you press **Save**.
+  **Undo** and **Undo all changes** put things back, **What I changed** shows
+  before/after pictures, and [save points](#save-points) let you go back to
+  any earlier version.
+
+## A tour
+
+### Maps, people and doors
+
+The **🗺️ Maps** page edits the same files as Porymap (`map.json`,
+`layouts.json`, `map_groups.json`, `map.bin`, `scripts.inc`), so `make` picks
+the changes up like any other edit.
+
+![Editing a person: what they look like, how they move and what happens when you talk to them](docs/images/map-people.png)
+
+* **View any map** rendered from its real tilesets, with people drawn with
+  their own sprites, plus doors (D), signs (S) and step triggers. There are
+  optional grid and walls/height overlays.
+* **Paint** with a block, or drag out a bigger piece (a whole house, a fence, a
+  patch of grass). **Copy blocks** grabs blocks from any map to paste
+  elsewhere. Fill, walls and undo/redo are there too.
+* **People, doors, signs and step triggers**: add, drag, duplicate and delete
+  them. Fields autocomplete from your own constants (`OBJ_EVENT_GFX_*`,
+  `MOVEMENT_TYPE_*`, `FLAG_*`, `VAR_*`, `MAP_*`…) and script labels.
+  **Write what they say…** writes a ready-made script from plain text, split
+  into lines and boxes for you. *Make two-way* links a door and its
+  destination.
+* **New map / house…** copies an existing map, such as a house interior, under
+  a new name (scripts and `LOCALID_*`s renamed, own layout, registered in
+  `map_groups.json`/`layouts.json`). Add a door and click *Make two-way*.
+* **New blocks and art.** The block editor sets each of the 8 tile slots, the
+  behaviour (door, grass, water… from your `MB_*` enum) and the layer type,
+  with an 8×8 pixel editor for tiles. **Import art…** turns any picture into
+  new blocks: colours are matched to a palette (or written into one), it is
+  cut into tiles reusing identical ones (also flipped), placed over a ground
+  block so grass shows through, and you get a stamp to paint with. Engine
+  limits (512/640 tiles and metatiles) are enforced, and `-num_tiles` in
+  `graphics.h` is updated.
+* **Scripts** tab: edit the map's `scripts.inc` (or `scripts.pory`) with a
+  label list. *Open script* on an event jumps to its code.
+* **Map settings**: music, weather, map type, flags, connections, resize, and
+  the map's story chapter.
+* **Check for problems** finds warps to missing maps, scripts that don't exist,
+  unknown graphics, duplicate local ids, events outside the map, block data
+  that doesn't match the layout, and blocks the tilesets don't have.
+
+### Test in game, from anywhere in the story
+
+**▶ Test in game** builds your game and plays it in the page, starting at the
+spot you clicked. It asks three things:
+
+1. **Where do you start?** A new game, a checkpoint (a saved game) or a `.sav`
+   from your emulator.
+2. **How far into the story?** Pick a chapter and you get the badges and
+   everything you *need* by then (HMs, bikes, key items), with those events
+   marked as done. Tick **Also give the extra items** for item balls, hidden
+   items and gifts, and untick anything you don't want.
+3. **Your team.** Type up to six Pokémon with a level, held item and moves, or
+   leave it empty.
+
+![The test window: start point, story chapter with its items, and your team](docs/images/test-window.png)
+
+Then play with the keyboard or on-screen buttons, enter a list of inputs
+(`UP*32, A, wait 60`), **Save checkpoint…** at any moment, and start a
+**battle now** against any trainer or wild Pokémon. After an edit,
+**Build & play** again. Small changes build in seconds.
+
+![Playing Mauville City at chapter 9 with a Marshtomp and a Zigzagoon](docs/images/test-window-game.png)
+
+How it works: `make` runs, then the ROM boots in a headless libmgba driver
+(`native/pae_mgba.c`, compiled on first use). A new game starts with
+expansion's Quickstart, and `pae` **warps to the map** through `CB2_LoadMap`,
+the same path a door takes (symbol addresses come from the build's `.elf`), so
+people, map scripts and story triggers run as they do in a real game. Story
+state, items and Pokémon are given with the game's own `FlagSet`, `VarSet`,
+`AddBagItem` and `ScriptGiveMon`, using values from *your* headers, so
+renumbered or new flags in a fork work. Checkpoints are written by the game's
+own save routine and stored in `.pae/checkpoints/` as plain `.sav` files that
+any emulator can load.
+
+**Story chapters.** Emerald's 20 chapters are built in. The items come from
+your maps: item balls (`finditem`), `hidden_item` signs and `giveitem` in
+scripts, each with the `setflag` after it. Story items that are handed over
+later (the Devon Goods, Steven's Letter) are left out once they're gone. Your
+own maps are put in a chapter in **Map settings → Story chapter**, by
+[Suggest chapters](#story-flow), or with `pae story`, and are saved in
+`.pae/story.json`.
+
+### Pokémon & Trainers
+
+The **🔴 Pokémon & Trainers** page edits `src/data/trainers.party`,
+`src/data/wild_encounters.json` and the species data, with names instead of
+constants and the Pokémon's icons next to them.
+
+![Roxanne's team in the trainer editor](docs/images/trainers.png)
+
+* **Trainers**: name, class, picture, items, double battles, AI and the team
+  (Pokémon, level, held item, ability, moves, and the rest of the Showdown
+  syntax). It shows which map the trainer is battled on. Only the edited
+  trainer's lines are rewritten, so the rest of the file stays byte for byte
+  the same.
+* **⚔️ Test this battle** builds the game and starts the battle immediately
+  with the team you choose:
+
+![Testing the battle against Roxanne with a Marshtomp](docs/images/battle-test.png)
+
+* **Wild Pokémon**: every encounter slot of a map (grass, surfing, rock smash,
+  fishing rods) with the chance of each slot, levels and the encounter rate.
+  The ⚔️ button on a row battles that Pokémon.
+
+![Route 101's wild Pokémon with the chance of each slot](docs/images/wild.png)
+
+* **Pokémon**: types, base stats, abilities, catch rate, EXP, evolutions and
+  level-up moves. `#if` config branches (`P_UPDATED_TYPES`, …) and ternaries
+  are evaluated, so you edit the values your build really uses, and the
+  learnset file chosen by `P_LVL_UP_LEARNSETS`.
+
+![Mudkip's stats, abilities, evolution and moves](docs/images/pokemon.png)
+
+**Check for problems** warns about unknown species, moves and items,
+levels out of range, too many Pokémon or moves, and slot counts that
+don't match the encounter type.
+
+### Dialogue that fits
+
+The **Scripts** tab draws every text of the map in the game's own font
+(`graphics/fonts/latin_normal.png`, `gFontNormalLatinGlyphWidths` and your
+`charmap.txt`), one picture per text box, and updates as you type.
+
+![Dialogue preview: a line that is too wide is marked in red](docs/images/dialogue.png)
+
+It warns about lines wider than the box (216 pixels), a third line that needs
+`\l`, characters that aren't in the charmap, unknown `{PLACEHOLDERS}` and a
+missing `$`. **Check for problems** and `pae text check` report the same for
+the texts you changed.
+
+### Water and flowers that move
+
+Animated tiles are read from `src/tileset_anims.c` (frame PNGs, frame tables,
+the tiles each animation overwrites, and the `timer % N` timing in each
+tileset's callback), so custom animations in your fork are picked up too.
+
+![The Animations tab with Petalburg's flowers and water](docs/images/map-animations.png)
+
+* Tick **animate** to play them on the map. The preview uses the game's
+  timing; it was checked frame by frame against the emulator's video memory,
+  including Rustboro's staggered water.
+* The **Animations** tab shows the frames in their in-game colours. Change the
+  speed and play order (`0 1 0 2`), add frames (a copy or an image), replace a
+  frame's art (colours are matched to the palette those tiles use) and remove
+  frames.
+* **New animation** animates tiles of your own tilesets (water you drew for a
+  new town). It writes the frame PNGs, table, queue function and callback, and
+  hooks up the tileset's `InitTilesetAnim_*` (and `headers.h` if needed).
+
+`pae check` warns about frame images with too few tiles, frame counts that
+cause a visible jump once per cycle, animations that never run, and too many
+tile copies on one game frame.
+
+### Story flow
+
+The **📖 Story** page shows the story chapter by chapter: each map's events and
+what they do, as coloured chips: **turns on** and **turns off** a flag,
+**needs** a flag, and sets or checks a **variable**. Click a chip, or search
+for a flag like `BADGE01`, to see every event that changes it and every event
+that waits for it.
+
+![Story flow: Rustboro Gym's events, with FLAG_BADGE01_GET followed across maps](docs/images/story-flow.png)
+
+It reads `setflag`/`clearflag`, `goto_if_set`/`call_if_unset`,
+`setvar`/`addvar`, `goto_if_eq`/`call_if_eq` on variables, `map_script_2`
+conditions, people hidden by a flag and step triggers that wait for a variable
+value.
+
+**Suggest chapters** places maps that aren't in a chapter yet (your new towns
+and houses) by following their doors and map connections to a place that is,
+skipping hub maps such as Pokémon Centers that connect to everywhere.
+
+### Save points
+
+**💾 Save point** remembers everything in your game folder as it is now, with
+a name you choose (or one made for you, like *"Changed maps (PetalburgCity)"*).
+**🕘 History** lists them, shows what changed in each, and goes back to one.
+
+![Save points with what changed in each](docs/images/save-points.png)
+
+Save points are git commits. Going back never deletes history: the files are
+restored and saved as a new save point, so you can always come forward again,
+and unsaved changes are kept in a save point of their own first. If git has no
+name configured, save points are made as "ROM hacker".
+
+### Graphics
+
+The **🎨 Graphics** page sorts every picture in the game into categories with
+search. Click one to draw on it with the colours it really uses in game.
+
+![All of Mudkip's sprites and palettes](docs/images/graphics.png)
+
+![Editing Mudkip's back sprite with its in-game palette](docs/images/graphics-edit.png)
+
+* Pencil, fill, pick colour, zoom and undo. Click a palette colour to draw with
+  it, shift-click to change the colour itself (every picture sharing that
+  palette is recoloured).
+* **Replace with image…** takes any PNG: it is resized if you want, and mapped
+  to the palette, or a new palette is built from it.
+* **What I changed** shows before/after pictures of every edited sprite,
+  palette, tileset and map, and text diffs of scripts and data. This makes it
+  easy to review what an AI changed.
+
+How the graphics are organised (source tree):
 
 * **An organised index of all ~21,000 graphics**, built from the `INCGFX_*` /
   `INCBIN_*` references in `src/` (symbol names, output format, gbagfx
@@ -73,224 +335,67 @@ is nothing to extract. `pae` adds the layer that makes editing them safe:
   animation frame.
 * **git-based** status and revert, and `pae build` = check + `make`.
 
-```bash
-pip install -e /path/to/pkmn-asset-editor
-cd ~/my-expansion-game
+## Command line
 
+Everything in the web editor also works from the command line, and every
+project command takes `-p/--project DIR` (default `.`, or `$PAE_PROJECT`).
+
+```bash
+# graphics
 pae check --all                       # sanity-check the whole tree (fast, read-only)
-pae serve                             # web editor at http://127.0.0.1:8765
 pae list -c pokemon -q charizard
 pae describe graphics/pokemon/charizard/anim_front.png     # size, frames, in-game palette, symbols
 pae import graphics/pokemon/charizard/back.png new_art.png --resize
 pae check                             # validates only what you changed
 pae build                             # check, then `make -jN` (pae build --make "make -j8 DEBUG=1")
 pae revert --all                      # undo (git checkout of the edited files)
-pae guide > GRAPHICS_AGENTS.md        # instructions for AI agents working in your repo
-```
 
-### Maps, events and story scripts
-
-`pae serve` also has a **map editor** at `/maps` ("Maps & events" in the
-header). It edits the same files as Porymap (`map.json`, `layouts.json`,
-`map_groups.json`, `map.bin`, `scripts.inc`), so `make` picks the changes up
-like any other edit.
-
-* **View any map** (Emerald and FRLG layouts) rendered from its real tilesets,
-  with NPCs drawn using their overworld sprites, plus warps, triggers and signs.
-  There are optional grid and collision/elevation overlays.
-* **Paint the map.** Pick a metatile, or drag out a multi-block stamp (a whole
-  house, a fence, a patch of grass) from the metatile panel. Use *Copy* to
-  grab blocks already on any map and paste them elsewhere. Flood fill,
-  collision/elevation painting, and undo/redo are available.
-* **Events.** Add, drag, duplicate and delete NPCs, warps, triggers and signs.
-  Their fields autocomplete from your constants (`OBJ_EVENT_GFX_*`,
-  `MOVEMENT_TYPE_*`, `FLAG_*`, `VAR_*`, `MAP_*`, …) and from every script
-  label in the project. *Make two-way* links a warp and its destination.
-  *New script…* writes a ready-to-edit message script and hooks it up.
-* **Story scripts.** Edit the map's `scripts.inc` (or `scripts.pory`) with a
-  label jump list. "Open script" on an event goes straight to its code.
-* **Map header.** Music, weather, map type, flags, connections, and layout
-  resize.
-* **New maps (e.g. a new house).** *New map…* copies an existing map, such as
-  a house interior, under a new name. Its scripts and `LOCALID_*`s are renamed,
-  it gets its own copy of the layout, and it is registered in
-  `map_groups.json`/`layouts.json`. Then add a warp on a door and click
-  *Make two-way*.
-* **Design new buildings and tiles.** The Metatiles tab has a metatile
-  editor:
-  * each of the 8 tile slots (bottom/top layer, tile, flip, palette)
-  * behaviour (door, grass, water, … from your `MB_*` enum) and layer type
-  * new metatiles (blank or copied) and new tiles, with an 8×8 pixel editor
-
-  **Import art…** turns any picture into new metatiles. The art is mapped
-  to the best palette (or writes its own colours into a palette). It is cut
-  into tiles, reusing identical ones including flips. New metatiles are
-  assembled over a ground metatile, so grass shows through, and you get a
-  stamp to paint. Engine limits (512/640 tiles and metatiles) are enforced,
-  and `-num_tiles` in `graphics.h` is updated so gbagfx keeps the new tiles.
-* **Check** validates the edited maps:
-  * warps to missing maps or warp ids
-  * scripts that aren't defined anywhere
-  * unknown graphics ids
-  * duplicate local ids
-  * events outside the map
-  * block data that doesn't match the layout size
-  * metatile ids the tilesets don't have
-
-The same operations exist on the command line and as MCP tools, so an AI can
-build maps and story too:
-
-```bash
-pae map list petalburg
+# maps and dialogue
 pae map render PetalburgCity -o petalburg.png --scale 2
 pae map metatiles PetalburgCity -o metatiles.png           # ids to paint with
-pae map events PetalburgCity
 pae map new PetalburgCity_House1 PetalburgCity_House3       # new house interior
 pae map link PetalburgCity 6 PetalburgCity_House3 0         # door <-> house, both ways
-pae map import-art PetalburgCity cottage.png --x 24 --y 6 --solid   # art -> metatiles, placed on the map
-pae map tiles PetalburgCity                                  # tileset counts and limits
-```
+pae map import-art PetalburgCity cottage.png --x 24 --y 6 --solid
+pae text check PetalburgCity                                # text that won't fit
+pae text preview PetalburgCity PetalburgCity_Text_WhereIsWally -o text.png
 
-MCP map tools: `list_maps`, `view_map`, `get_map`, `view_metatiles`,
-`get_blocks`/`set_blocks` (blocks as text), `copy_blocks`, `edit_map`
-(header + add/update/delete events), `get_script`/`write_script`/`new_script`,
-`duplicate_map`, `link_warps`, `resize_map`, `find_constants`, `tileset_info`,
-`get_metatile`/`set_metatile`/`add_metatiles`, `view_tiles`,
-`import_art_as_metatiles`, `playtest_start`/`playtest_press`,
-`playtest_save_checkpoint`/`list_checkpoints`, `playtest_set_state`,
-`playtest_run_script`, `playtest_team`, `list_story_chapters`, `story_items`,
-`set_map_chapter`, `list_tileset_anims`, `view_tileset_anim`,
-`edit_tileset_anim`, `set_anim_frame`/`add_anim_frame`/`remove_anim_frame`,
-`create_tileset_anim`.
+# trainers, wild Pokémon, species
+pae trainer list roxanne
+pae trainer set TRAINER_ROXANNE_1 --mon "Geodude lv12 @Oran Berry : Tackle, Rock Tomb" --mon "Aron lv13"
+pae wild show Route101
+pae wild set Route101 land Wurmple:2-2 Poochyena:2-2 Ralts:2-2 … --rate 20     # one per slot (12 for land)
+pae species show mudkip
+pae species set mudkip --spe 50 --types TYPE_WATER,TYPE_GROUND --learn 1:Tackle --learn "6:Water Gun"
 
-### Tileset animations (water, flowers, waterfalls…)
-
-Animated tiles are read from `src/tileset_anims.c` (frame PNGs, frame tables,
-the tiles each animation overwrites, and the `timer % N` timing in each
-tileset's callback), so custom animations in your fork are picked up too.
-
-* Tick **animate** in the map editor to play them on the map. The preview runs
-  the same timing as the game: it was checked frame by frame against the
-  emulator's video memory, including Rustboro's staggered wind-blown water.
-* The **Anims** tab lists the map's animations with their frames in in-game
-  colours. You can change the speed, set the play order (`0 1 0 2`), add a
-  frame (a copy, or from an image), replace a frame's art (colours are matched
-  to the palette those tiles use) and remove frames.
-* **New animation** animates a run of tiles of your own tilesets (for example
-  water you drew for a new town). It writes the frame PNGs, table, queue
-  function and callback, and hooks up the tileset's `InitTilesetAnim_*` (and
-  `headers.h` if it had none). The frames start as copies of the current tiles,
-  ready to be redrawn.
-
-```bash
-pae anim list --map Route104
-pae anim show General_Water -o water.png            # frames in their in-game colours
-pae anim preview Route109 -o sea.gif --region 0,20,20,12
-pae anim speed General_Water 12                     # game frames per animation frame (60 = 1 s)
-pae anim order General_Flower 0,1,0,2
-pae anim frame General_Water 3 my_water.png --map Route109
-pae anim add-frame General_Water --image extra.png
-pae anim new PetalburgCity PondWater --tile 532 --count 4 --frames 4 --speed 16
-```
-
-`pae check` warns about frame images with fewer tiles than are copied, frame
-counts that don't divide the animation counter's cycle (a visible jump once per
-cycle), animations that never run, and too many tile copies on one game frame.
-Animations with custom logic (Mauville's flowers) are previewed approximately,
-and their timing is left to hand edits. Palette animations (Battle Dome) are
-listed but not edited.
-
-### Build and play-test
-
-`pae` can build your game and **play it headlessly**, so you (or an AI) can see
-an edit running in the game itself, not just in the files.
-
-```bash
-scripts/setup-toolchain.sh             # once: arm-none-eabi-gcc, libpng, libmgba (apt / brew / pacman)
-pae doctor                              # checks toolchain, emulator, Quickstart, built ROM
+# play-test
 pae play PetalburgCity --x 17 --y 11 --inputs "UP, wait 10, A, wait 60" -o sign.png --gif sign.gif
-```
-
-How it works:
-
-1. `pae play` runs `make`. A no-op build takes about 1 s; a changed map rebuilds
-   in under a minute.
-2. It boots the ROM in a headless libmgba driver (`native/pae_mgba.c`, compiled
-   on first use) and starts a fresh game with expansion's **Quickstart**.
-3. It **warps to the map** by writing the destination into the saveblock and
-   loading it through `CB2_LoadMap`, the path a door warp takes, using symbol
-   addresses from the build's `.elf`. NPCs, map scripts and story triggers run
-   as they do for a new save.
-4. Inputs are a small script: `KEY`, `KEY*frames` (16 frames = one step),
-   `A+B 4`, `wait 60`. Results come back as a PNG, or as a GIF with `--gif`.
-
-#### Test saves: start from anywhere in the story
-
-A play-test can start from a **checkpoint** (a real cartridge save) instead of a
-new game, so you can test the part of the story you are working on without
-replaying everything before it.
-
-```bash
-pae checkpoint import before-gym ~/emerald.sav       # use a save from your emulator / flash cart
-pae play --from before-gym                           # continue it, where it was saved
-pae play PetalburgCity --x 17 --y 11 --from before-gym   # continue it, then warp to a map
-pae play PetalburgCity --state "FLAG_BADGE01_GET, VAR_PETALBURG_GYM_STATE=2, ITEM_POTION*5" \
-    --script PetalburgCity_EventScript_GymSign --save-as gym-test
-pae checkpoint list / delete NAME
-
 pae play MauvilleCity --chapter 9 --extras \
     --team "SPECIES_MARSHTOMP lv28 ITEM_MYSTIC_WATER MOVE_MUD_SHOT MOVE_WATER_GUN" --clear-team
+pae play RustboroCity_Gym --battle TRAINER_ROXANNE_1 --team "SPECIES_MARSHTOMP lv18" --clear-team
+pae play Route101 --wild SPECIES_RALTS:5
+pae play PetalburgCity --state "FLAG_BADGE01_GET, VAR_PETALBURG_GYM_STATE=2, ITEM_POTION*5" \
+    --script PetalburgCity_EventScript_GymSign --save-as gym-test
+pae checkpoint import before-gym ~/emerald.sav       # use a save from your emulator / flash cart
+pae play --from before-gym                           # continue it where it was saved
+
+# story, animations, save points
 pae story list                      # the chapters and their maps
 pae story items 9 --extras          # what you'd have by the end of chapter 9
-pae story move MyNewTown 9          # put your own map in a chapter
+pae story flag FLAG_BADGE01_GET     # which events change and check it
+pae story suggest --apply           # put new maps in chapters by their doors
 pae story add "Badge 9: Cloud City" --flag FLAG_BADGE09_GET
+pae anim speed General_Water 12     # game frames per animation frame (60 = 1 s)
+pae anim new PetalburgCity PondWater --tile 532 --count 4 --frames 4 --speed 16
+pae savepoint "Gave Roxanne an Aron"
+pae history / pae history show SHA / pae history back SHA
 ```
 
-**Story chapters.** `--chapter N` starts as if you had played to the end of
-chapter N. You get the badges and the items you *need* by then (key items,
-HMs, bikes), and those events count as done. `--extras` also gives the
-optional items: item balls, hidden items and gifts. The items come from your
-maps: `Common_EventScript_FindItem`/`finditem` item balls, `hidden_item` signs,
-and `giveitem` in map scripts, with the `setflag` after it. Story items that
-are handed over later (the Devon Goods, Steven's Letter) are left out once
-they're gone. Emerald's chapters are built in. Maps you add, and the order of
-chapters, can be changed in **Map settings → Story chapter** or with
-`pae story`, and are saved in `.pae/story.json`.
-
-**Your team.** `--team` adds a Pokémon with a level, a held item and up to 4
-moves (`--clear-team` replaces the team), through the game's own
-`ScriptGiveMon`, so stats and abilities come out as in game. A full team sends
-the rest to the PC.
-
-* `--state` sets story state before the test starts: `FLAG_X` (set), `!FLAG_X`
-  (clear), `VAR_X=5`, `ITEM_X*3` (give), `SPECIES_X lv20 …` (add a Pokémon),
-  `CLEAR_TEAM`. Values come from *your* headers (they
-  are compiled with your toolchain), so renumbered or new flags in a fork work.
-  The game's own `FlagSet`/`VarSet`/`AddBagItem` are called.
-* `--script LABEL` starts any script (event, cutscene, sign) immediately, as if
-  it had been triggered.
-* `--save-as NAME` (or **Save checkpoint** in the play window) saves with the
-  game's own save routine at the current spot, so the checkpoint has the party,
-  bag, flags and position exactly as they are. Checkpoints live in
-  `.pae/checkpoints/` as plain `.sav` files that any emulator can load.
-* A checkpoint keeps working after you rebuild, as long as the save layout
-  does not change (the same rule as for real saves).
-
-* In the map editor, **▶ Test in game** opens the game at the selected event or
-  the clicked tile. It asks three things: where you start (a new game, a
-  checkpoint, or a `.sav` you load), how far into the story (a chapter, with a
-  list of the items you can untick), and your team. Expert mode adds story
-  state lines and a script to run. You can then play it with on-screen
-  buttons or the keyboard, save checkpoints, and rebuild/restart after edits.
-* AI assistants get `playtest_start` and `playtest_press` MCP tools that return
-  screenshots.
-* **Changes** (graphics page) shows before/after renders of every edited sprite,
-  palette, tileset and map, plus text diffs of scripts and JSON. This makes it
-  easy to review what an AI changed before committing.
-
-`pae` never commits, and writes nothing outside the files you edit and its own
-`.pae/` folder. `.pae/` is excluded via `.git/info/exclude`, so your `.gitignore`
-is not touched.
+`--state` takes `FLAG_X` (set), `!FLAG_X` (clear), `VAR_X=5`, `ITEM_X*3`
+(give), `SPECIES_X lv20 ITEM_Y MOVE_Z…` (add a Pokémon) and `CLEAR_TEAM`.
+`--inputs` takes `KEY`, `KEY*frames` (16 frames = one step), `A+B 4` and
+`wait 60`. A full team sends the rest to the PC. A checkpoint keeps working
+after you rebuild, as long as the save layout does not change (the same rule
+as for real saves).
 
 ## ROM mode
 
@@ -314,17 +419,6 @@ compression, so use source-tree mode for those.
 | Map tilesets (tiles in their real colours + 16 palettes) and metatile previews | `graphics/tilesets/`, `previews/tilesets/` |
 | Any other LZ77-compressed graphics referenced by the game (title screens, menus, …) | `graphics/unknown/OFFSET.png` |
 
-### Install
-
-```bash
-pip install -e .          # Python 3.10+, installs numpy + Pillow and the `pae` command
-```
-
-You must supply your own legally obtained ROM. ROMs and built files are
-git-ignored.
-
-### Quick start
-
 ```bash
 pae scan  firered.gba                 # see what is found (no files written)
 pae extract firered.gba -o fr-project # writes graphics/, manifest.json, AGENTS.md
@@ -338,27 +432,14 @@ pae validate                          # check sizes, colours, conflicts, tile li
 pae build                             # -> build/rom.gba + build/rom.ups + build/rom.ips
 ```
 
-`original.gba` inside the project is never modified. Every build starts again
-from it, so builds are repeatable and you can never corrupt your base ROM.
-
-### The web editor (both modes)
-
-`pae serve` opens a local gallery with categories and search. Clicking an asset
-opens:
-
-* a zoomable canvas with pencil, flood fill, eyedropper and undo
-* the palette(s) that colour it: click a swatch to draw with it, shift-click to
-  change the colour (changes are written to the `.pal` file and every image
-  sharing that palette is recoloured)
-* a shiny/alternate palette preview
-* *Replace with image…*: upload any PNG; it is resized and mapped to the
-  palette, or a new palette is built from it if you ask
-* revert, download, and the asset's size and colour constraints
-
-**Build ROM** in the header writes the ROM and lets you download it or the
+You must supply your own legally obtained ROM. ROMs and built files are
+git-ignored. `original.gba` inside the project is never modified. Every build
+starts again from it, so builds are repeatable and you can never corrupt your
+base ROM. The [Graphics](#graphics) page works the same way on a ROM project,
+and its **Build ROM** button writes the ROM and lets you download it or the
 patches.
 
-### Editing rules
+### Editing rules (both modes)
 
 The tool enforces these rules and converts input for you wherever it can:
 
@@ -405,69 +486,92 @@ The tool enforces these rules and converts input for you wherever it can:
 
 ## Using it with AI
 
-The project is designed so an AI agent can work on it directly:
+The project is designed so an AI assistant can work on your game directly, and
+you can review everything it did under **What I changed** and **🕘 History**.
 
-* **`AGENTS.md`** is written into every ROM project. In a source tree,
-  `pae guide` prints the equivalent. Both explain the layout, the rules and the
-  commands.
-* **`manifest.json`** describes every asset: id, file, label, frame layout,
-  linked palettes, aliases and ROM offsets. `pae describe <id>` prints one
-  asset with its constraints as JSON. `pae list --json` lists them all.
-* **Contact sheets** let a multimodal model look at many sprites at once:
-  `pae sheet pokemon -o sheet.png`, and `pae render <id> --palette <id>` for
-  a single asset (e.g. its shiny palette).
-* **`pae import`** and **`pae import-dir`** accept whatever an image generator
-  produces (RGBA, any size, any number of colours) and convert it into a valid
-  asset. `import-dir` mirrors asset ids, so `drop/pokemon/025_pikachu/front.png`
-  replaces that sprite. This makes bulk updates of whole parts of the game a
-  single command.
-* **MCP server**: `pae mcp --project <dir>` exposes tools for listing,
-  viewing (returns images), reading and painting pixels as text, importing
-  images, setting palettes, validating and building.
+* **MCP server**: `pae mcp --project <dir>` gives an AI 63 tools, many of which
+  return pictures, so it can see what it is doing:
+  * graphics: `list_assets`, `describe_asset`, `view_asset`,
+    `view_contact_sheet`, `get_pixels`/`paint_pixels`, `import_image`,
+    `set_palette`, `revert_asset`
+  * maps: `list_maps`, `view_map`, `get_map`, `view_metatiles`,
+    `get_blocks`/`set_blocks`, `copy_blocks`, `edit_map`, `duplicate_map`,
+    `link_warps`, `resize_map`, `find_constants`, `tileset_info`,
+    `get_metatile`/`set_metatile`/`add_metatiles`, `view_tiles`,
+    `import_art_as_metatiles`
+  * scripts and dialogue: `get_script`, `write_script` (reports text that won't
+    fit), `new_script`, `preview_text`
+  * game data: `list_trainers`, `get_trainer`, `set_trainer`, `get_wild`,
+    `set_wild`, `get_species`, `set_species`
+  * play-testing: `playtest_start` (map, chapter, extras, team),
+    `playtest_press`, `playtest_battle`, `playtest_team`, `playtest_set_state`,
+    `playtest_run_script`, `playtest_save_checkpoint`, `list_checkpoints`
+  * story: `list_story_chapters`, `story_items`, `set_map_chapter`,
+    `story_flag`, `suggest_map_chapters`
+  * animations: `list_tileset_anims`, `view_tileset_anim`,
+    `edit_tileset_anim`, `set_anim_frame`/`add_anim_frame`/`remove_anim_frame`,
+    `create_tileset_anim`
+  * `status`, `validate`, `build_rom`, `list_save_points`, `make_save_point`
+    (only when you ask for one)
 
   ```bash
   claude mcp add pae -- pae mcp --project ~/my-expansion-game       # Claude Code, source tree
   claude mcp add pae -- pae mcp --project /path/to/fr-project       # or an extracted ROM project
   ```
   ```json
-  { "mcpServers": { "pae": { "command": "pae", "args": ["mcp", "--project", "/path/to/fr-project"] } } }
+  { "mcpServers": { "pae": { "command": "pae", "args": ["mcp", "--project", "/path/to/my-expansion-game"] } } }
   ```
+* **`pae guide`** prints instructions for AI agents working in your repo
+  (`pae guide > GRAPHICS_AGENTS.md`). ROM projects get an `AGENTS.md`.
+* **`manifest.json`** (ROM projects), `pae describe <id>` and
+  `pae list --json` describe every asset with its constraints.
+* **`pae import`** and **`pae import-dir`** accept whatever an image generator
+  produces (RGBA, any size, any number of colours). `import-dir` mirrors asset
+  ids, so `drop/pokemon/025_pikachu/front.png` replaces that sprite: bulk
+  updates of whole parts of the game are one command.
 
-Example prompts for an agent:
-*"Run `pae guide` and follow it. Give every Fire-type Pokémon's shiny palette
-a blue tint, show me a contact sheet of the results, then run `pae check`."*
-*"Replace the back sprites in drop/ with `pae import-dir drop --resize`, fix
-anything `pae check` reports, then build."*
+Example prompts:
+*"Add a new house to Petalburg City with an old man inside who gives you a
+Potion, then test it in game and show me a screenshot."*
+*"Make Roxanne harder: give her an Aron and a Nosepass at level 15, then
+test the battle with a level 16 Marshtomp."*
+*"Give every Fire-type Pokémon's shiny palette a blue tint, show me a contact
+sheet of the results, then run `pae check`."*
 
 ## Command reference
 
 | Command | Purpose |
 |---|---|
-| `pae scan ROM` | report which tables are found in a ROM |
+| `pae serve` / `pae mcp` | web editor / MCP server |
+| `pae doctor [--fix] [--yes]` | check (and fix) the toolchain, emulator, Quickstart, git repo and built ROM |
 | `pae check [--all]` | source tree: validate edited files (or every graphic) |
-| `pae fix [FILE…]` | convert RGB/RGBA PNGs into valid indexed PNGs (source tree and ROM project) |
+| `pae build` | check, then `make` (source tree) or write the ROM and patches (ROM project) |
+| `pae fix [FILE…]` | convert RGB/RGBA PNGs into valid indexed PNGs |
 | `pae palette-from-png FILE…` | source tree: copy a PNG's colours into the `.pal` the game uses for it |
-| `pae guide` | print AI-agent instructions for the project |
-| `pae extract ROM -o DIR [--force]` | create a project |
-| `pae list [-c CATEGORY] [-k KIND] [-q TEXT] [--json]` | list assets |
-| `pae describe ID` | one asset plus its constraints (JSON) |
-| `pae import ID FILE [--resize] [--new-palette]` | convert and insert an image (or `.pal`/JSON palette) |
-| `pae import-dir DIR [--resize] [--new-palette]` | bulk import by path |
-| `pae set ID [--frame-w N --frame-h N --cols N --tiles-wide N --palette ID --label TEXT]` | re-layout or re-colour an asset's view (useful for `unknown/` assets) |
+| `pae list [-c CATEGORY] [-k KIND] [-q TEXT] [--json]` / `pae describe ID` | list assets / one asset and its constraints (JSON) |
+| `pae import ID FILE [--resize] [--new-palette]` / `pae import-dir DIR` | convert and insert images (or `.pal`/JSON palettes) |
+| `pae set ID [--frame-w N --frame-h N --cols N --tiles-wide N --palette ID --label TEXT]` | re-layout or re-colour an asset's view |
 | `pae sync-palettes [ID…]` | recolour PNGs after editing `.pal` files |
 | `pae sheet PREFIX -o FILE` / `pae render ID -o FILE` | previews |
-| `pae status` / `pae validate` / `pae build [-o FILE] [--no-patch]` | check and build |
-| `pae revert ID… / --all` | restore originals |
-| `pae doctor` | check toolchain, emulator, Quickstart and built ROM |
-| `pae play [MAP] [--x --y --from CKPT --chapter N --extras --team … --state … --script LABEL --save-as NAME --inputs … -o PNG --gif GIF]` | build, then play-test headlessly |
+| `pae status` / `pae revert ID… / --all` | what you changed / restore originals |
+| `pae map list / render / metatiles / events / new / link / tiles / import-art` | maps, events and warps |
+| `pae text check [MAP] / preview MAP LABEL -o PNG` | dialogue in the game's font |
+| `pae trainer list [Q] / show ID / set ID --mon … --field Key=Value` | trainer teams |
+| `pae wild show MAP / set MAP KIND SLOT… [--rate N]` | wild Pokémon (`land`, `water`, `rock_smash`, `fishing`) |
+| `pae species show ID / set ID [--hp --atk --def --spa --spd --spe --catch-rate --exp --types --abilities --learn LV:MOVE]` | Pokémon data |
+| `pae play [MAP] [--x --y --from CKPT --chapter N --extras --team … --clear-team --battle TRAINER --wild SPECIES:LV --state … --script LABEL --save-as NAME --inputs … -o PNG --gif GIF]` | build, then play-test headlessly |
 | `pae checkpoint list / import NAME FILE / delete NAME` | test saves |
-| `pae story list / items N / move MAP N / add NAME` | story chapters (for `pae play --chapter`) |
+| `pae story list / items N / move MAP N / add NAME / suggest [--apply] / flag NAME` | story chapters and flow |
 | `pae anim list / show / preview / speed / order / frame / add-frame / remove-frame / new` | tileset animations |
-| `pae map list / render / metatiles / events / new / link` | maps, events and warps |
-| `pae serve` / `pae mcp` | web editor / MCP server |
+| `pae savepoint [MESSAGE]` / `pae history [list / show SHA / back SHA]` | save points |
+| `pae guide` | print AI-agent instructions for the project |
+| `pae scan ROM` / `pae extract ROM -o DIR` | ROM mode: find tables / create a project |
 | `pae apply-patch ROM PATCH -o OUT` | apply UPS/IPS |
 
-All project commands take `-p/--project DIR` (default `.`, or `$PAE_PROJECT`).
+`pae` writes only the files you edit and its own `.pae/` folder (checkpoints,
+story chapters, caches), which is excluded via `.git/info/exclude` so your
+`.gitignore` is not touched. It makes git commits only when you make a save
+point.
 
 ## How ROM-mode tables are found
 
@@ -495,45 +599,51 @@ by the shape of its entries:
 
 ## Limitations
 
-* Gen 3 GBA games only.
-* Source-tree mode has been run against the latest upstream
-  pokeemerald-expansion (it indexes all ~21.5k graphics and `pae check --all`
-  is clean), but not against your fork. Palette linking relies on expansion's
-  naming and data conventions, so heavily customised code may need
-  `pae describe` to confirm which palette an image uses. `pae build` only
-  calls your `make`, so your normal toolchain must be installed.
-* Uncompressed graphics outside the tables above are not found
-  automatically.
-* ROM mode edits graphics and palettes only. Maps, events and scripts are
-  edited in source-tree mode.
+* Gen 3 GBA games only. Maps, events, game data, dialogue and play-testing
+  need a source tree; ROM mode edits graphics and palettes only.
+* Everything has been run against the latest upstream pokeemerald-expansion
+  (all ~21.5k graphics indexed, `pae check --all` clean, all 1,500+ trainers
+  round-trip byte for byte, battles and play-tests in the emulator), but not
+  against your fork. Heavily customised code may need `pae describe` to
+  confirm which palette an image uses, and Expert mode to see unusual fields.
+* `install.sh` and Docker were tested on Ubuntu 24.04. The Windows script and
+  macOS (Homebrew) have not been tested yet.
+* Play-testing needs a non-release build with `ENABLE_QUICKSTART` (`pae doctor
+  --fix` turns it on) and libmgba. Checkpoints made before a change to the save
+  layout (SaveBlock structs) are not readable, just as with real saves.
+  Battle tests use expansion's debug battle path (`BattleSetup_StartTrainerBattle_Debug`).
+* The dialogue preview uses the normal latin font; texts shown in other fonts
+  or windows (signs with a different box, the Pokédex) are measured with it too.
+* The story flow follows scripts statically. Conditions computed at run time
+  (specials, `VAR_RESULT` from a menu) are shown, but not evaluated.
 * Imported art always goes into the map's secondary tileset. Tileset
-  animations with custom code (more than a `timer % N` trigger) only have their
-  frames edited here.
-* Play-testing a new game needs a non-release build with `ENABLE_QUICKSTART`,
-  and libmgba. Checkpoints made before a change to the save layout (SaveBlock
-  structs) are not readable, just as with real saves.
-* Relocation updates every aligned word in the ROM that equals the old
-  address. This is the standard approach in ROM-hacking tools. A random data
-  word that happens to equal the address would also be changed, but this is
-  extremely unlikely.
-* Trainer pictures and animation tags are named by number, because the ROM
-  has no names for them. Use `pae set ID --label …` to add your own.
-* ROM-mode discovery has only been tested against a synthetic ROM with the
-  retail table layouts (see `tests/synthrom.py`), not against retail ROMs. If
-  something is missing on a real ROM, `pae scan` shows what was and wasn't
-  found.
+  animations with custom code (Mauville's flowers) are previewed approximately
+  and only their frames are edited here; palette animations (Battle Dome) are
+  listed but not edited.
+* ROM mode: relocation updates every aligned word that equals the old address
+  (the standard approach in ROM-hacking tools). Trainer pictures and animation
+  tags are named by number, because the ROM has no names for them (use
+  `pae set ID --label …`). Uncompressed graphics outside the known tables are
+  not found automatically. Discovery has been tested against a synthetic ROM
+  with the retail table layouts (see `tests/synthrom.py`), not against retail
+  ROMs; `pae scan` shows what was and wasn't found.
 
 ## Development
 
 ```bash
 pip install -e ".[test]"
 pytest -q
+PAE_TEST_EXPANSION=~/pokeemerald-expansion pytest -q   # also run against a real, built expansion checkout
 ```
 
 The tests build a synthetic ROM (`tests/synthrom.py`) containing every table
-type, and a miniature expansion-style git repository (`tests/decomp_fixture.py`). They check extraction, no-op builds (byte-identical output), in-place and
-relocated edits with pointer updates, palette edits and conflicts, RGBA import,
-tilesets, background re-tiling, overworld frames, patches, the MCP server and
-the web API. In source-tree mode they also check palette linking, validation,
-`fix`, imports with new palettes, tileset/background views, git revert and
-`make`.
+type, and a miniature expansion-style git repository
+(`tests/decomp_fixture.py`). They check extraction, byte-identical no-op
+builds, in-place and relocated edits with pointer updates, palettes, imports,
+tilesets, backgrounds, maps, scripts, animations, trainers, wild Pokémon,
+species, dialogue layout, story chapters and flow, save points, the MCP server
+and the web API. With `PAE_TEST_EXPANSION` they also round-trip the real data
+files and play-test and battle in the emulator.
+
+The screenshots in `docs/images/` were taken from the web editor running on
+pokeemerald-expansion.

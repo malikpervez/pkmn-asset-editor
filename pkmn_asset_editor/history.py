@@ -12,7 +12,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .decomp import DecompError
+from .decomp import DecompError, _exclude_state_dir
 
 AUTHOR = ("-c", "user.name=ROM hacker", "-c", "user.email=romhacker@localhost")
 
@@ -104,7 +104,8 @@ class History:
         if not changes:
             raise DecompError("nothing changed since the last save point")
         message = (message or "").strip() or _auto_message(changes)
-        self._git("add", "-A", ".", ":(exclude).pae")
+        _exclude_state_dir(self.root)  # .pae/ (checkpoints, caches) never goes into a save point
+        self._git("add", "-A", ".")
         self._git("commit", "-q", "-m", message, identity=True)
         self._refresh()
         return self.points(1)[0]
@@ -117,9 +118,10 @@ class History:
         kept = None
         if self.unsaved():
             kept = self.save("Unsaved changes (kept before going back)")
-        self._git("restore", f"--source={sha}", "--staged", "--worktree", "--", ".", ":(exclude).pae")
+        self._git("restore", f"--source={sha}", "--staged", "--worktree", "--", ".")
         if self.unsaved():
-            self._git("add", "-A", ".", ":(exclude).pae")
+            _exclude_state_dir(self.root)
+            self._git("add", "-A", ".")
             self._git("commit", "-q", "-m", f"Went back to save point {target}", identity=True)
         self._refresh()
         return {"now": self.points(1)[0], "kept_unsaved": kept}

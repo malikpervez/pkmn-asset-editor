@@ -97,6 +97,8 @@ def test_save_points(root, capsys):
     s = root / "data/maps/Town/scripts.inc"
     original = s.read_text()
     s.write_text(original + "\n@ my change\n")
+    from pkmn_asset_editor.decomp import _exclude_state_dir
+    _exclude_state_dir(root)  # the usual setup: .pae/ is git-ignored
     (proj.state_dir).mkdir(parents=True, exist_ok=True)
     (proj.state_dir / "junk.txt").write_text("not saved")
     assert [c["file"] for c in h.unsaved()] == ["data/maps/Town/scripts.inc"]
