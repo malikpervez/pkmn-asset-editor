@@ -82,12 +82,13 @@
 </head>
 <body>
 <header>
-  <h1>Pokémon Asset Editor</h1>
+  <h1>🎨 Pokémon Graphics</h1>
   <span class="game" id="game"></span>
-  <input type="search" id="search" placeholder="Search assets (id, name, alias)…">
-  <button id="btn-status">Changes</button>
-  <button id="btn-validate">Validate</button>
-  <button id="btn-build" class="primary">Build ROM</button>
+  <input type="search" id="search" placeholder="Search pictures, e.g. mudkip, potion, rustboro…" title="search by name, like a Pokémon, item, trainer or town">
+  <a class="btn" href="/help" target="_blank" title="step-by-step guides and what all the words mean">❓ Help</a>
+  <button id="btn-status" title="before/after of everything you changed">What I changed</button>
+  <button id="btn-validate" title="look for mistakes in your changes">Check for problems</button>
+  <button id="btn-build" class="primary" title="make your game file with all your changes">Build game</button>
 </header>
 <div class="layout">
   <nav id="cats"></nav>
@@ -105,32 +106,32 @@
   <div id="d-msgs"></div>
   <div id="d-image-tools">
     <div class="row">
-      <button data-tool="pencil" class="active">Pencil</button>
-      <button data-tool="fill">Fill</button>
-      <button data-tool="pick">Eyedropper</button>
+      <button data-tool="pencil" class="active" title="draw one pixel at a time">✏️ Pencil</button>
+      <button data-tool="fill" title="fill an area with one colour">🪣 Fill</button>
+      <button data-tool="pick" title="click the picture to pick up its colour">💧 Pick colour</button>
       <label>Zoom <input type="range" id="zoom" min="1" max="12" value="4"></label>
-      <select id="altpal"></select>
+      <select id="altpal" title="see the picture with another palette (like shiny)"></select>
     </div>
     <div class="canvas-wrap"><canvas id="cv"></canvas></div>
     <div class="row">
-      <button class="primary" id="save-pixels" disabled>Save pixel edits</button>
+      <button class="primary" id="save-pixels" disabled>Save drawing</button>
       <button id="undo" disabled>Undo</button>
-      <a class="btn" id="download">Download file</a>
-      <button id="revert">Revert to original</button>
+      <a class="btn" id="download" title="save the picture to your computer, to edit it in another program">Download picture</a>
+      <button id="revert" title="put this picture back to how it was">Undo all my changes</button>
     </div>
     <div class="row">
-      <label class="btn">Replace with image… <input type="file" id="upload" accept="image/*" hidden></label>
-      <label><input type="checkbox" id="opt-resize"> resize to fit</label>
-      <label><input type="checkbox" id="opt-newpal"> build new palette</label>
+      <label class="btn" title="use a picture you made instead (PNG works best)">Replace with image… <input type="file" id="upload" accept="image/*" hidden></label>
+      <label title="if your picture is a different size, stretch or shrink it to fit"><input type="checkbox" id="opt-resize"> stretch my image to fit</label>
+      <label title="change the palette to your image's colours, instead of using the closest existing colours"><input type="checkbox" id="opt-newpal"> use my image's colours</label>
     </div>
   </div>
   <h3 style="font-size:14px">Palettes</h3>
-  <div class="muted" style="font-size:12px">Click a colour to draw with it. Shift+click (or double-click) to change the colour itself.</div>
+  <div class="muted" style="font-size:12px">Click a colour to draw with it. Shift+click (or double-click) to change the colour itself. The first colour is see-through.</div>
   <div id="d-pals"></div>
   <input type="color" id="colorpick" hidden>
-  <h3 style="font-size:14px">Details &amp; constraints</h3>
+  <h3 style="font-size:14px">About this picture</h3>
   <table id="d-table"></table>
-  <details><summary class="muted">Raw manifest entry</summary><pre id="d-json"></pre></details>
+  <details><summary class="muted">Expert: raw manifest entry</summary><pre id="d-json"></pre></details>
 </aside>
 
 <div id="modal"><div class="box"><div id="modal-body"></div><div class="row"><button id="modal-close">Close</button></div></div></div>
@@ -156,7 +157,7 @@ async function init() {
   const s = await api('/api/summary');
   if (s.mode === 'decomp') {
     $('#btn-build').textContent = 'Check & make'; $('#btn-validate').textContent = 'Check edits';
-    $('#btn-status').insertAdjacentHTML('beforebegin', '<a class="btn" href="/maps">Maps &amp; events</a>');
+    $('#btn-status').insertAdjacentHTML('beforebegin', '<a class="btn" href="/maps" title="towns, routes, people, doors and story">🗺️ Maps</a>');
   }
   $('#game').textContent = `${s.game.name} · ${s.game.code}`;
   const cats = Object.entries(s.categories).sort();
@@ -427,7 +428,7 @@ $('#btn-status').onclick = async () => {
   const t = Date.now();
   const img = (src, label) => `<figure style="margin:0"><figcaption class="muted" style="font-size:11px">${label}</figcaption>
       <img src="${src}" style="image-rendering:pixelated;max-width:100%;max-height:280px;background:var(--bg);border-radius:6px" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'muted',textContent:'(none)'}))"></figure>`;
-  let h = `<h3>Changes (${items.length})</h3>`;
+  let h = `<h3>What I changed (${items.length})</h3>`;
   if (!items.length) h += '<p class="muted">No edits yet.</p>';
   for (const it of items) {
     if (it.type === 'map') {
@@ -454,7 +455,7 @@ async function build(dry) {
   modal('<p>Working…</p>');
   try {
     const r = await api('/api/build' + (dry ? '?dry=1' : ''), { method: 'POST' });
-    let h = `<h3>${dry ? 'Validation' : 'Build'} ${r.ok ? 'succeeded' : 'failed'}</h3>`;
+    let h = `<h3>${dry ? (r.ok ? 'No problems found 🎉' : 'Some things need fixing') : (r.ok ? 'Your game was built 🎉' : 'The build failed')}</h3>`;
     h += r.errors.map(e => `<div class="msg err">${esc(e)}</div>`).join('');
     h += r.warnings.map(e => `<div class="msg warn">${esc(e)}</div>`).join('');
     if (r.checked !== undefined) {

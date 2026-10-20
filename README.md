@@ -15,6 +15,23 @@ It works in two modes:
 The same commands, web editor and MCP server work in both modes: pass the repo
 folder or an extracted ROM project as `--project`.
 
+## New to ROM hacking? Start here
+
+You don't need to know how to program to use this.
+
+1. Install it once (see [Install](#install)), and run `scripts/setup-toolchain.sh`
+   so your game can be built and tested.
+2. In your game's folder, run `pae serve` and open the link it prints.
+3. Press **❓ Help** at the top. It has step-by-step guides (change a Pokémon's
+   picture, paint a map, add a house, add a person who talks, test a battle…)
+   and explains every word you'll see, like *block*, *palette*, *flag* and
+   *script*.
+
+The editor uses plain names (**Walls**, **+ Door**, **looks like**,
+**what happens**) and hides the advanced settings. Tick **Expert mode** to see
+everything with the names the game's files use. Nothing changes until you
+press **Save**, and **Undo** / **Undo all changes** put things back.
+
 ## Source-tree mode (pokeemerald-expansion)
 
 In a decomp every graphic already is a file and `make` builds the ROM, so there
@@ -141,7 +158,8 @@ MCP map tools: `list_maps`, `view_map`, `get_map`, `view_metatiles`,
 `get_metatile`/`set_metatile`/`add_metatiles`, `view_tiles`,
 `import_art_as_metatiles`, `playtest_start`/`playtest_press`,
 `playtest_save_checkpoint`/`list_checkpoints`, `playtest_set_state`,
-`playtest_run_script`, `list_tileset_anims`, `view_tileset_anim`,
+`playtest_run_script`, `playtest_team`, `list_story_chapters`, `story_items`,
+`set_map_chapter`, `list_tileset_anims`, `view_tileset_anim`,
 `edit_tileset_anim`, `set_anim_frame`/`add_anim_frame`/`remove_anim_frame`,
 `create_tileset_anim`.
 
@@ -219,10 +237,34 @@ pae play PetalburgCity --x 17 --y 11 --from before-gym   # continue it, then war
 pae play PetalburgCity --state "FLAG_BADGE01_GET, VAR_PETALBURG_GYM_STATE=2, ITEM_POTION*5" \
     --script PetalburgCity_EventScript_GymSign --save-as gym-test
 pae checkpoint list / delete NAME
+
+pae play MauvilleCity --chapter 9 --extras \
+    --team "SPECIES_MARSHTOMP lv28 ITEM_MYSTIC_WATER MOVE_MUD_SHOT MOVE_WATER_GUN" --clear-team
+pae story list                      # the chapters and their maps
+pae story items 9 --extras          # what you'd have by the end of chapter 9
+pae story move MyNewTown 9          # put your own map in a chapter
+pae story add "Badge 9: Cloud City" --flag FLAG_BADGE09_GET
 ```
 
+**Story chapters.** `--chapter N` starts as if you had played to the end of
+chapter N. You get the badges and the items you *need* by then (key items,
+HMs, bikes), and those events count as done. `--extras` also gives the
+optional items: item balls, hidden items and gifts. The items come from your
+maps: `Common_EventScript_FindItem`/`finditem` item balls, `hidden_item` signs,
+and `giveitem` in map scripts, with the `setflag` after it. Story items that
+are handed over later (the Devon Goods, Steven's Letter) are left out once
+they're gone. Emerald's chapters are built in. Maps you add, and the order of
+chapters, can be changed in **Map settings → Story chapter** or with
+`pae story`, and are saved in `.pae/story.json`.
+
+**Your team.** `--team` adds a Pokémon with a level, a held item and up to 4
+moves (`--clear-team` replaces the team), through the game's own
+`ScriptGiveMon`, so stats and abilities come out as in game. A full team sends
+the rest to the PC.
+
 * `--state` sets story state before the test starts: `FLAG_X` (set), `!FLAG_X`
-  (clear), `VAR_X=5`, `ITEM_X*3` (give). Values come from *your* headers (they
+  (clear), `VAR_X=5`, `ITEM_X*3` (give), `SPECIES_X lv20 …` (add a Pokémon),
+  `CLEAR_TEAM`. Values come from *your* headers (they
   are compiled with your toolchain), so renumbered or new flags in a fork work.
   The game's own `FlagSet`/`VarSet`/`AddBagItem` are called.
 * `--script LABEL` starts any script (event, cutscene, sign) immediately, as if
@@ -234,9 +276,11 @@ pae checkpoint list / delete NAME
 * A checkpoint keeps working after you rebuild, as long as the save layout
   does not change (the same rule as for real saves).
 
-* In the map editor, **▶ Play-test** opens the game at the selected event or the
-  clicked tile, from a new game or a checkpoint (or import a `.sav`), with
-  optional story state and a script to run. You can then play it with on-screen
+* In the map editor, **▶ Test in game** opens the game at the selected event or
+  the clicked tile. It asks three things: where you start (a new game, a
+  checkpoint, or a `.sav` you load), how far into the story (a chapter, with a
+  list of the items you can untick), and your team. Expert mode adds story
+  state lines and a script to run. You can then play it with on-screen
   buttons or the keyboard, save checkpoints, and rebuild/restart after edits.
 * AI assistants get `playtest_start` and `playtest_press` MCP tools that return
   screenshots.
@@ -415,8 +459,9 @@ anything `pae check` reports, then build."*
 | `pae status` / `pae validate` / `pae build [-o FILE] [--no-patch]` | check and build |
 | `pae revert ID… / --all` | restore originals |
 | `pae doctor` | check toolchain, emulator, Quickstart and built ROM |
-| `pae play [MAP] [--x --y --from CKPT --state … --script LABEL --save-as NAME --inputs … -o PNG --gif GIF]` | build, then play-test headlessly |
+| `pae play [MAP] [--x --y --from CKPT --chapter N --extras --team … --state … --script LABEL --save-as NAME --inputs … -o PNG --gif GIF]` | build, then play-test headlessly |
 | `pae checkpoint list / import NAME FILE / delete NAME` | test saves |
+| `pae story list / items N / move MAP N / add NAME` | story chapters (for `pae play --chapter`) |
 | `pae anim list / show / preview / speed / order / frame / add-frame / remove-frame / new` | tileset animations |
 | `pae map list / render / metatiles / events / new / link` | maps, events and warps |
 | `pae serve` / `pae mcp` | web editor / MCP server |

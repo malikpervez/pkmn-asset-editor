@@ -95,7 +95,9 @@ def make_handler(state: _State):
                 return self._send((WEB / "index.html").read_bytes(), "text/html; charset=utf-8")
             if path in ("/maps", "/maps.html"):
                 return self._send((WEB / "maps.html").read_bytes(), "text/html; charset=utf-8")
-            if path.startswith("/api/map") or path in ("/api/constants", "/api/labels"):
+            if path in ("/help", "/help.html"):
+                return self._send((WEB / "help.html").read_bytes(), "text/html; charset=utf-8")
+            if path.startswith(("/api/map", "/api/story")) or path in ("/api/constants", "/api/labels"):
                 return self._map_get(path, q)
             if path == "/api/summary":
                 return self._json({"game": proj.config["game"], "categories": proj.summary(),
@@ -266,6 +268,13 @@ def make_handler(state: _State):
                 im = m.tileset_anims.frames_image(q["id"], m.resolve(q["name"]) if q.get("name") else None,
                                                   scale=int(q.get("scale", 3)), labels=q.get("labels", "1") == "1")
                 return self._send(m.png_bytes(im), "image/png")
+            if path == "/api/story":
+                st = m.story
+                chapters = st.chapters()
+                return self._json({"chapters": chapters, "unplaced": st.unplaced_maps(),
+                                   "map_chapter": {n: st.chapter_of(n, chapters) for n in m.maps}})
+            if path == "/api/story/items":
+                return self._json(m.story.catch_up(int(q["chapter"]), q.get("extras") == "1"))
             if path == "/api/constants":
                 return self._json(m.constants(q.get("prefix", "")))
             if path == "/api/labels":
@@ -289,6 +298,19 @@ def make_handler(state: _State):
                 finally:
                     os.unlink(tmp.name)
                 return self._json(r)
+            if path.startswith("/api/story"):
+                body = json.loads(self._body() or b"{}")
+                if path == "/api/story/map":
+                    ch = body.get("chapter")
+                    m.story.set_chapter(body["map"], None if ch is None or ch == "" else int(ch))
+                    return self._json({"ok": True})
+                if path == "/api/story/chapter_add":
+                    return self._json({"ok": True, "index": m.story.add_chapter(body["name"], body.get("at"),
+                                                                                body.get("flags"))})
+                if path == "/api/story/chapters":
+                    m.story.save_chapters(body["chapters"])
+                    return self._json({"ok": True})
+                return self._error("not found", HTTPStatus.NOT_FOUND)
             ta = m.tileset_anims
             if path in ("/api/map/anim_frame", "/api/map/anim_add_frame"):
                 raw = self._body()
@@ -403,8 +425,14 @@ def make_handler(state: _State):
                     name = body.get("map") or None
                     if name and proj.maps:
                         name = proj.maps.resolve(name)
+                    state = body.get("state") or None
+                    if proj.maps and (body.get("chapter") not in (None, "") or body.get("team")):
+                        ch = body.get("chapter")
+                        state = proj.maps.story.play_state(None if ch in (None, "") else int(ch),
+                                                           bool(body.get("extras")), body.get("skip"),
+                                                           body.get("team"), bool(body.get("clear_team")), state)
                     img = proj.play.start(name, body.get("x"), body.get("y"), checkpoint=body.get("checkpoint") or None,
-                                          state=body.get("state") or None, script=body.get("script") or None)
+                                          state=state, script=body.get("script") or None)
                     return self._json({"ok": True, "image": png_url(img), "where": proj.play.where, "build": build})
                 if path == "/api/play/checkpoints":
                     return self._json({"ok": True, "checkpoints": proj.play.checkpoints()})
@@ -418,6 +446,8 @@ def make_handler(state: _State):
                     return self._json({"ok": True, "image": png_url(img)})
                 if path == "/api/play/state":
                     return self._json({"ok": True, "done": proj.play.apply_state(body.get("state", []))})
+                if path == "/api/play/team":
+                    return self._json({"ok": True, "team": proj.play.team()})
                 if path == "/api/play/press":
                     final, _ = proj.play.press(body.get("inputs", ""))
                     return self._json({"ok": True, "image": png_url(final)})
@@ -431,7 +461,7 @@ def make_handler(state: _State):
         def _post(self, path, q):
             if path.startswith("/api/play/"):
                 return self._play_post(path, q)
-            if path.startswith("/api/map"):
+            if path.startswith(("/api/map", "/api/story")):
                 return self._map_post(path, q)
             if path == "/api/upload":
                 a = proj.get(q["id"])

@@ -92,16 +92,20 @@ TOOLS = [
      _schema({"name": S, "width": I, "height": I}, ["name", "width", "height"])),
     ("playtest_start", "Build the ROM with `make` (unless build=false) and start a play-test: a fresh game, or "
      "`checkpoint` (a saved game: story progress, party, bag). Optional `state` lines applied before arriving: "
-     "FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5. Warps to `map` at x,y (default: its first warp; with a checkpoint and no "
+     "FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5. `chapter` (number from list_story_chapters) first gives everything a "
+     "player has by the end of that chapter: needed items, badges/flags, and with `extras` item balls, hidden items "
+     "and gifts too. `team`: Pokémon to add, e.g. 'SPECIES_MUDKIP lv20 ITEM_ORAN_BERRY MOVE_TACKLE MOVE_WATER_GUN' "
+     "(clear_team empties the team first). Warps to `map` at x,y (default: its first warp; with a checkpoint and no "
      "map, stays where it was saved). `script` starts a script label on arrival. Returns the screen.",
      _schema({"map": S, "x": I, "y": I, "build": B, "checkpoint": S, "state": {"type": "array", "items": S},
-              "script": S})),
+              "script": S, "chapter": I, "extras": B, "team": {"type": "array", "items": S}, "clear_team": B})),
     ("playtest_save_checkpoint", "Save the running play-test like the in-game Save and keep it as a named "
      "checkpoint to start later tests from (survives rebuilds).", _schema({"name": S, "note": S}, ["name"])),
     ("list_checkpoints", "Saved checkpoints (name, map, note).", _schema({})),
     ("playtest_run_script", "Start any script label in the running play-test (event, cutscene, sign) and return "
      "the screen.", _schema({"label": S, "frames": I}, ["label"])),
-    ("playtest_set_state", "Set story state in the running play-test: FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5. NPCs "
+    ("playtest_set_state", "Set story state in the running play-test: FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5, "
+     "SPECIES_X lv20 [ITEM_held] [MOVE_…] (add a Pokémon), CLEAR_TEAM. NPCs "
      "and map scripts only react after the next map load (playtest_start does that for you).",
      _schema({"state": {"type": "array", "items": S}}, ["state"])),
     ("playtest_press", "Press buttons in the running play-test and return the screen. inputs like "
@@ -125,6 +129,15 @@ TOOLS = [
      "paint collision. Then playtest to see it in game.",
      _schema({"name": S, "path": S, "png_base64": S, "base_metatile": I, "bank": I, "new_palette": B,
               "behavior": S}, ["name"])),
+    ("list_story_chapters", "The story chapters in order (each: name, maps, flags turned on when it's done) and the "
+     "maps not placed in any chapter yet. Use the chapter number with playtest_start(chapter=…).", _schema({})),
+    ("story_items", "The items a player has by the end of a chapter (number from list_story_chapters): needed ones "
+     "(key items, HMs) and, with extras, item balls / hidden items / gifts, with the map each comes from.",
+     _schema({"chapter": I, "extras": B}, ["chapter"])),
+    ("set_map_chapter", "Put a map (and its inside maps) in a story chapter (number), or 0 to take it out.",
+     _schema({"map": S, "chapter": I}, ["map", "chapter"])),
+    ("playtest_team", "The running play-test's team: species, level, held item and moves (as numbers).",
+     _schema({})),
     ("list_tileset_anims", "Tileset animations (water, flowers, waterfalls…), all or those `map` shows: id, frames "
      "(PNG files), play order, speed (game frames per animation frame, 60 = 1 s), animated tile range.",
      _schema({"map": S})),
@@ -159,7 +172,7 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "add_metatiles", "view_tiles", "import_art_as_metatiles", "playtest_save_checkpoint",
              "list_checkpoints", "playtest_run_script", "playtest_set_state", "list_tileset_anims",
              "view_tileset_anim", "edit_tileset_anim", "set_anim_frame", "add_anim_frame", "remove_anim_frame",
-             "create_tileset_anim"}
+             "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team"}
 
 
 class Server:
@@ -382,7 +395,20 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
-        if name in ("playtest_save_checkpoint", "list_checkpoints", "playtest_run_script", "playtest_set_state"):
+        if name == "list_story_chapters":
+            chapters = m.story.chapters()
+            return txt({"chapters": [dict(c, number=i + 1) for i, c in enumerate(chapters)],
+                        "maps_not_in_a_chapter": m.story.unplaced_maps()})
+        if name == "story_items":
+            r = m.story.catch_up(int(args["chapter"]) - 1, bool(args.get("extras")))
+            keep = ("name", "item", "qty", "kind", "map", "needed", "flag")
+            return txt({"chapter": r["name"], "flags": r["flags"], "items": [{k: i[k] for k in keep} for i in r["items"]]})
+        if name == "set_map_chapter":
+            ch = int(args["chapter"])
+            m.story.set_chapter(args["map"], ch - 1 if ch > 0 else None)
+            return txt({"ok": True})
+        if name in ("playtest_save_checkpoint", "list_checkpoints", "playtest_run_script", "playtest_set_state",
+                    "playtest_team"):
             from .playtest import PlaytestError
             play = self.proj.play
             try:
@@ -390,6 +416,8 @@ class Server:
                     return txt(play.save_checkpoint(args["name"], args.get("note", "")))
                 if name == "list_checkpoints":
                     return txt(play.checkpoints())
+                if name == "playtest_team":
+                    return txt(play.team())
                 if name == "playtest_set_state":
                     return txt({"done": play.apply_state(args["state"])})
                 img = play.run_script(args["label"], int(args.get("frames") or 60))
@@ -406,9 +434,14 @@ class Server:
                         if rep.returncode != 0:
                             tail = "\n".join(rep.output.rstrip().splitlines()[-30:])
                             raise ProjectError(f"make failed (exit {rep.returncode}):\n{tail}")
+                    state = args.get("state")
+                    if args.get("chapter") or args.get("team"):
+                        state = m.story.play_state(int(args["chapter"]) - 1 if args.get("chapter") else None,
+                                                   bool(args.get("extras")), team=args.get("team"),
+                                                   clear_team=bool(args.get("clear_team")), state=state)
                     img = proj.play.start(m.resolve(args["map"]) if args.get("map") else None, args.get("x"),
                                           args.get("y"), checkpoint=args.get("checkpoint"),
-                                          state=args.get("state"), script=args.get("script"))
+                                          state=state, script=args.get("script"))
                     out = [self._png(img.resize((480, 320), Image.NEAREST))]
                     return out + txt(f"playing {proj.play.where}")
                 final, frames = proj.play.press(args["inputs"], record_every=8 if args.get("record") else 0)

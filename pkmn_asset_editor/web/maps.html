@@ -87,6 +87,15 @@
   pre { background: var(--bg); padding: 8px; border-radius: 8px; overflow: auto; font-size: 11px; max-height: 200px; }
   .dirty::after { content: " •"; color: var(--accent); }
   .muted { color: var(--muted); }
+  body:not(.expert) .adv { display: none !important; }
+  .rawkey { color: var(--muted); font-size: 10px; }
+  #welcome { max-width: 520px; margin: 40px auto; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 20px; font-size: 14px; }
+  #welcome h2 { margin: 0 0 8px; font-size: 18px; }
+  .teamrow { display: grid; grid-template-columns: 1.4fr 56px 1.2fr 1fr 1fr 1fr 1fr; gap: 4px; margin: 3px 0; }
+  .teamrow input { min-width: 0; width: 100%; }
+  .itemlist { max-height: 180px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font-size: 12px; }
+  .itemlist label { display: block; }
+  .step { font-weight: 600; margin-top: 10px; }
   @media (max-width: 900px) {
     body { height: auto; }
     .app { grid-template-columns: 1fr; grid-template-rows: 160px 60vh auto; overflow: visible; }
@@ -96,76 +105,87 @@
 </head>
 <body>
 <header>
-  <h1>Map Editor</h1>
-  <a href="/">Graphics</a>
+  <h1>🗺️ Map Editor</h1>
+  <a href="/">🎨 Graphics</a>
+  <a href="/help" target="_blank" title="step-by-step guides and what all the words mean">❓ Help</a>
   <span class="muted" id="mapname">no map open</span>
   <span style="flex:1"></span>
-  <button id="undo" title="Ctrl+Z" disabled>Undo</button>
-  <button id="redo" title="Ctrl+Y" disabled>Redo</button>
-  <button id="newmap">New map…</button>
-  <button id="play" title="build with make, then play this map in a headless emulator">▶ Play-test</button>
-  <button id="check">Check</button>
-  <button id="revert">Revert map</button>
-  <button id="save" class="primary" disabled>Save</button>
+  <label class="muted" title="show every setting, with the names the game's files use"><input type="checkbox" id="expert"> Expert mode</label>
+  <button id="undo" title="undo the last change (Ctrl+Z)" disabled>Undo</button>
+  <button id="redo" title="redo (Ctrl+Y)" disabled>Redo</button>
+  <button id="newmap" title="make a new map, like the inside of a house">New map / house…</button>
+  <button id="play" title="build your game and play this map right here">▶ Test in game</button>
+  <button id="check" title="look for mistakes in your changes">Check for problems</button>
+  <button id="revert" title="throw away every change to this map since your last save point (git commit)">Undo all changes</button>
+  <button id="save" class="primary" title="save your changes (Ctrl+S)" disabled>Save</button>
 </header>
 <div class="app">
   <aside id="maplist"><input type="search" id="mapsearch" placeholder="Filter maps…"><div id="maps"></div></aside>
   <section id="center">
     <div class="toolbar">
-      <button data-tool="paint" class="active" title="P">Paint</button>
-      <button data-tool="fill" title="F">Fill</button>
-      <button data-tool="pick" title="I: click or drag to copy blocks as a stamp">Copy</button>
-      <button data-tool="collision" title="C">Collision</button>
-      <button data-tool="events" title="E: select / drag events">Events</button>
+      <button data-tool="paint" class="active" title="P: click or drag to paint with the block you picked on the right">🖌 Paint</button>
+      <button data-tool="fill" title="F: fill an area with the block you picked">🪣 Fill</button>
+      <button data-tool="pick" title="I: click or drag over the map to copy those blocks, then paint them somewhere else">Copy blocks</button>
+      <button data-tool="collision" title="C: paint where the player can't walk (red = blocked)">Walls</button>
+      <button data-tool="events" title="E: click and drag people, doors and signs">Move people &amp; signs</button>
       <span class="sep"></span>
       <span class="muted">Add:</span>
-      <button data-add="object_events">NPC</button>
-      <button data-add="warp_events">Warp</button>
-      <button data-add="coord_events">Trigger</button>
-      <button data-add="bg_events">Sign</button>
+      <button data-add="object_events" title="a person or object (a trainer, an item ball, a rock…)">+ Person</button>
+      <button data-add="warp_events" title="a door or stairs that takes you to another map">+ Door</button>
+      <button data-add="coord_events" title="an invisible spot that starts a script when you step on it">+ Step trigger</button>
+      <button data-add="bg_events" title="a sign you can read, or a hidden item">+ Sign</button>
       <span class="sep"></span>
       <select id="zoom"><option value="1">1x</option><option value="2" selected>2x</option><option value="3">3x</option><option value="4">4x</option></select>
       <label><input type="checkbox" id="showgrid"> grid</label>
-      <label><input type="checkbox" id="showev" checked> events</label>
-      <label><input type="checkbox" id="showcol"> collision</label>
+      <label title="show people, doors and signs"><input type="checkbox" id="showev" checked> people &amp; signs</label>
+      <label title="show where the player can't walk"><input type="checkbox" id="showcol"> walls</label>
       <label title="play the tileset animations (water, flowers…) on the map"><input type="checkbox" id="animate"> animate</label>
       <span id="colopts" hidden>
-        <select id="colval"><option value="0">passable</option><option value="1">impassable</option></select>
-        elevation <select id="elev"></select>
+        <select id="colval"><option value="0">can walk here</option><option value="1">blocked (wall)</option></select>
+        <span title="height level: 3 is normal ground; bridges and ledges use others">height</span> <select id="elev"></select>
       </span>
     </div>
-    <div id="viewport"><div id="stack"><canvas id="base"></canvas><canvas id="over"></canvas></div></div>
-    <div id="status"><span id="st-pos">–</span><span id="st-block"></span><span id="st-stamp"></span><span id="st-hint" class="muted">Open a map on the left.</span></div>
+    <div id="viewport"><div id="welcome">
+      <h2>👋 Welcome!</h2>
+      <p>Pick a map on the left to start, like <b>PetalburgCity</b>.</p>
+      <ul>
+        <li>Pick a block on the right, then paint on the map with <b>🖌 Paint</b>.</li>
+        <li>Add people, doors and signs with the <b>+</b> buttons.</li>
+        <li>Press <b>▶ Test in game</b> to play your map.</li>
+      </ul>
+      <p>New to this? <a href="/help" target="_blank">Read the step-by-step guides ❓</a></p>
+    </div><div id="stack"><canvas id="base"></canvas><canvas id="over"></canvas></div></div>
+    <div id="status"><span id="st-pos">–</span><span id="st-block"></span><span id="st-stamp"></span><span id="st-hint" class="muted">Pick a map on the left to start.</span></div>
   </section>
   <aside id="side">
     <div class="tabs">
-      <button data-tab="tiles" class="on">Metatiles</button>
-      <button data-tab="event">Events</button>
-      <button data-tab="header">Map</button>
-      <button data-tab="scripts">Scripts</button>
-      <button data-tab="anims" title="tileset animations: water, flowers, waterfalls…">Anims</button>
+      <button data-tab="tiles" class="on" title="the blocks you paint with">Blocks</button>
+      <button data-tab="event" title="people, doors, step triggers and signs on this map">People &amp; doors</button>
+      <button data-tab="header" title="music, weather, story chapter, size">Map settings</button>
+      <button data-tab="scripts" title="what people say and what happens">Scripts</button>
+      <button data-tab="anims" title="moving water, flowers, waterfalls…">Animations</button>
     </div>
     <div class="tab on" id="tab-tiles">
-      <div class="muted" style="margin-bottom:6px">Click a metatile, or drag to pick a multi-block stamp (e.g. a whole house). On the map, use <b>Copy</b> to grab blocks you've already placed.</div>
+      <div class="muted" style="margin-bottom:6px">Click a block to paint with it, or drag to pick a bigger piece (like a whole house). On the map, use <b>Copy blocks</b> to grab blocks you've already placed.</div>
       <div class="row">
-        <button id="mt-edit" disabled>Edit metatile</button>
-        <button id="mt-new" title="add a blank metatile to the secondary tileset">New metatile</button>
+        <button id="mt-edit" title="change what this block looks like and what it does" disabled>Edit block</button>
+        <button id="mt-new" title="add a new empty block to this town's own tileset">New block</button>
         <label class="btn" title="turn a picture (building, statue, sign…) into new metatiles">Import art…<input type="file" id="mt-art" accept="image/*" hidden></label>
       </div>
       <div class="row muted" style="font-size:12px">
-        <label><input type="checkbox" id="art-base" checked> ground under art = selected metatile</label>
-        <label>palette <select id="art-bank"><option value="">best match</option></select></label>
-        <label><input type="checkbox" id="art-newpal"> use the art's colours</label>
+        <label title="the see-through parts of your picture show the selected block (like grass) underneath"><input type="checkbox" id="art-base" checked> put the selected block under it</label>
+        <label class="adv">palette <select id="art-bank"><option value="">best match</option></select></label>
+        <label class="adv"><input type="checkbox" id="art-newpal"> use the art's colours</label>
       </div>
       <div id="mt-editor" hidden>
-        <h3 id="mt-title">Metatile</h3>
-        <div class="muted" style="font-size:12px">bottom layer · top layer · result. Click a quarter to select a slot, then click a tile below.</div>
+        <h3 id="mt-title">Block</h3>
+        <div class="muted" style="font-size:12px">A block is 4 small tiles, twice: bottom layer · top layer · how it looks. Click a quarter, then click a tile below to put it there.</div>
         <canvas id="mt-canvas" width="56" height="16" style="width:336px;height:96px;image-rendering:pixelated;cursor:pointer;background:#000"></canvas>
         <div class="row">slot <b id="mt-slot">0</b> tile <input id="mt-tile" type="number" min="0" max="1023" style="width:72px">
           palette <select id="mt-pal"></select> <label><input type="checkbox" id="mt-h"> flip H</label><label><input type="checkbox" id="mt-v"> flip V</label></div>
-        <div class="field"><label>behavior</label><select id="mt-beh"></select></div>
-        <div class="field"><label>layer type</label><select id="mt-layer"><option value="0">normal (top layer above player)</option><option value="1">covered (both below player)</option><option value="2">split</option></select></div>
-        <div class="row"><button id="mt-save" class="primary">Save metatile</button><button id="mt-copy">Copy as new</button><button id="mt-close">Done</button></div>
+        <div class="field"><label title="what happens on this block: tall grass, water, a door…">what it does</label><select id="mt-beh"></select></div>
+        <div class="field"><label title="normal: the top layer is drawn over the player (tree tops, roofs)">over the player?</label><select id="mt-layer"><option value="0">normal (top layer above player)</option><option value="1">covered (both below player)</option><option value="2">split</option></select></div>
+        <div class="row"><button id="mt-save" class="primary">Save block</button><button id="mt-copy">Copy as new</button><button id="mt-close">Done</button></div>
         <h3>Tiles <span class="muted" id="ts-note"></span></h3>
         <div class="muted" style="font-size:12px">Click: use in the selected slot. Shift+click: draw the tile's pixels.</div>
         <div style="max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:6px;background:#000"><canvas id="tilesheet" style="image-rendering:pixelated;cursor:crosshair;display:block"></canvas></div>
@@ -187,13 +207,13 @@
       <div class="muted" style="font-size:12px">Tileset animations this map shows. Tick <b>animate</b> above the map to play them. Speed is in game frames per animation frame (60 = 1 second).</div>
       <div id="anim-list"></div>
       <h3>New animation</h3>
-      <div class="muted" style="font-size:12px">Animates a run of tiles of this map's tilesets (e.g. your own water). Select a metatile and use <b>From selected metatile</b>, then redraw the frames.</div>
+      <div class="muted" style="font-size:12px">Animates a run of tiles of this map's tilesets (e.g. your own water). Select a block in the <b>Blocks</b> tab and press <b>From selected block</b>, then redraw the frames.</div>
       <div class="field"><label>name</label><input id="an-name" placeholder="e.g. PondWater"></div>
       <div class="field"><label>first tile id</label><input id="an-tile" type="number" min="0" max="1023"></div>
       <div class="field"><label>number of tiles</label><input id="an-count" type="number" min="1" max="128" value="4"></div>
       <div class="field"><label>frames</label><input id="an-frames" type="number" min="1" max="64" value="4"></div>
       <div class="field"><label>speed</label><input id="an-speed" type="number" min="1" max="255" value="16"></div>
-      <div class="row"><button id="an-from-mt">From selected metatile</button><button id="an-create" class="primary">Create animation</button></div>
+      <div class="row"><button id="an-from-mt" title="fill in the tiles of the block you selected in the Blocks tab">From selected block</button><button id="an-create" class="primary">Create animation</button></div>
     </div>
     <div class="tab" id="tab-scripts">
       <div class="row">
@@ -207,17 +227,31 @@
 </div>
 <div id="playbox" class="modalish">
   <div class="box">
-    <div class="row" style="justify-content:space-between;margin-top:0"><b id="play-title">Play-test</b><button id="play-close">Close</button></div>
-    <div class="row">start from <select id="play-from" style="flex:1"><option value="">New game (Quickstart)</option></select>
-      <label class="btn" title="use a save file from your emulator (mGBA, VBA…) as a checkpoint">Import .sav…<input type="file" id="play-import" accept=".sav,.srm" hidden></label></div>
-    <div class="row"><label><input type="checkbox" id="play-here" checked> warp to this map at</label> x <input id="play-x" type="number" style="width:60px"> y <input id="play-y" type="number" style="width:60px"></div>
-    <details id="play-adv"><summary class="muted">Story state &amp; script on arrival</summary>
-      <textarea id="play-state" rows="3" style="width:100%;font:12px ui-monospace,monospace" placeholder="one per line: FLAG_BADGE01_GET   !FLAG_HIDE_X   VAR_STORY_STATE=3   ITEM_POTION*5"></textarea>
+    <div class="row" style="justify-content:space-between;margin-top:0"><b id="play-title">Test in game</b><button id="play-close">Close</button></div>
+    <div class="step">1. Where do you start?</div>
+    <div class="row"><select id="play-from" style="flex:1" title="a brand-new game, or one of your saved checkpoints"><option value="">A brand-new game</option></select>
+      <label class="btn" title="use a save file from your emulator (mGBA, VBA…) as a checkpoint">Load a save file…<input type="file" id="play-import" accept=".sav,.srm" hidden></label></div>
+    <div class="row"><label title="start on this map; click a spot on the map before opening this window to start there"><input type="checkbox" id="play-here" checked> start on this map at</label> x <input id="play-x" type="number" style="width:60px"> y <input id="play-y" type="number" style="width:60px"></div>
+    <div class="step">2. How far into the story?</div>
+    <div class="row"><select id="play-chapter" style="flex:1" title="start as if you had played up to the end of this chapter"><option value="">Nothing yet (start of the game)</option></select></div>
+    <div class="row muted" id="play-chapter-opts" hidden>
+      <span>You'll get the badges and what you need by then (HMs, bikes, key items).</span>
+      <label title="also everything from item balls, hidden items and presents in those maps"><input type="checkbox" id="play-extras"> Also give the extra items</label>
+    </div>
+    <details id="play-items" hidden><summary class="muted">See the list (untick anything you don't want)</summary><div class="itemlist" id="play-itemlist"></div></details>
+    <details id="play-teambox"><summary class="step" style="display:list-item">3. Your team (optional)</summary>
+      <div class="muted" style="font-size:12px">Type a Pokémon's name (like <b>mudkip</b>). Level, held item and moves are optional.</div>
+      <div class="teamrow muted" style="font-size:11px"><span>Pokémon</span><span>level</span><span>holding</span><span>move 1</span><span>move 2</span><span>move 3</span><span>move 4</span></div>
+      <div id="play-team"></div>
+      <label title="otherwise these Pokémon are added to the team you already have"><input type="checkbox" id="play-clearteam" checked> Replace my team with these</label>
+    </details>
+    <details id="play-adv" class="adv"><summary class="muted">Expert: story state lines &amp; a script to run</summary>
+      <textarea id="play-state" rows="3" style="width:100%;font:12px ui-monospace,monospace" placeholder="one per line: FLAG_BADGE01_GET   !FLAG_HIDE_X   VAR_STORY_STATE=3   ITEM_POTION*5   SPECIES_MUDKIP lv20"></textarea>
       <div class="row">script on arrival <input id="play-script" list="dl-labels" style="flex:1" placeholder="e.g. PetalburgCity_EventScript_WallyTutorial"></div>
     </details>
-    <div class="row"><button id="play-start" class="primary">Rebuild &amp; start</button><button id="play-restart">Restart (no build)</button>
-      <span style="flex:1"></span><button id="play-ckpt" title="save the game here as a checkpoint for later tests">Save checkpoint…</button></div>
-    <div id="play-status" class="muted">A new game starts through Quickstart (flags/vars of a fresh save). Pick a checkpoint to test with real story progress.</div>
+    <div class="row"><button id="play-start" class="primary" title="build your game with your latest changes, then start">▶ Build &amp; play</button><button id="play-restart" title="start again without building (faster)">Play again</button>
+      <span style="flex:1"></span><button id="play-ckpt" title="save the game right here, so you can start from this spot next time">Save checkpoint…</button></div>
+    <div id="play-status" class="muted">Pick where to start, then press ▶ Build &amp; play. The first build can take a few minutes.</div>
     <img id="play-screen" alt="game screen" width="480" height="320">
     <div class="row pad">
       <div class="dpad"><button data-k="UP">▲</button><button data-k="LEFT">◀</button><button data-k="RIGHT">▶</button><button data-k="DOWN">▼</button></div>
@@ -225,7 +259,7 @@
       <div class="col"><button data-k="L">L</button><button data-k="R">R</button><button data-k="START">Start</button><button data-k="SELECT">Select</button></div>
       <div class="col"><label>walk steps <input id="play-steps" type="number" value="1" min="1" style="width:52px"></label>
         <button id="play-wait">wait 1s</button><input id="play-custom" placeholder="e.g. UP*32, A, wait 60" style="width:180px"><button id="play-run">Run inputs</button>
-        <input id="play-runscript" list="dl-labels" placeholder="script label" style="width:180px"><button id="play-runscript-go">Run script now</button></div>
+        <span class="adv"><input id="play-runscript" list="dl-labels" placeholder="script label" style="width:180px"><button id="play-runscript-go">Run script now</button></span></div>
     </div>
     <pre id="play-build" hidden></pre>
     <div class="muted" style="font-size:11px">Keyboard: arrows move, Z = A, X = B, Enter = Start, Backspace = Select.</div>
@@ -251,7 +285,45 @@ function toast(text, kind = 'ok', ms = 3500) {
   el.className = 'msg ' + kind; el.textContent = text;
   $('#toast').appendChild(el); setTimeout(() => el.remove(), ms);
 }
-const KIND_LABEL = { object_events: 'NPC', warp_events: 'Warp', coord_events: 'Trigger', bg_events: 'Sign' };
+const KIND_LABEL = { object_events: 'Person', warp_events: 'Door', coord_events: 'Step trigger', bg_events: 'Sign' };
+const KIND_PLURAL = { object_events: 'People & objects', warp_events: 'Doors', coord_events: 'Step triggers', bg_events: 'Signs & hidden items' };
+// plain-language names for map.json fields (Expert mode shows the real names and the advanced ones)
+const FIELD_INFO = {
+  x: ['across (x)', 'blocks from the left edge'], y: ['down (y)', 'blocks from the top edge'],
+  elevation: ['height level', '3 is normal ground; bridges and ledges use other heights', 1],
+  graphics_id: ['looks like', 'the sprite this person or object uses'],
+  movement_type: ['how it moves', 'e.g. MOVEMENT_TYPE_WANDER_AROUND or MOVEMENT_TYPE_FACE_DOWN'],
+  movement_range_x: ['walks left/right up to', 'how far it may wander, in blocks', 1],
+  movement_range_y: ['walks up/down up to', 'how far it may wander, in blocks', 1],
+  trainer_type: ['is a trainer?', 'TRAINER_TYPE_NORMAL battles you when they see you; TRAINER_TYPE_NONE does not'],
+  trainer_sight_or_berry_tree_id: ['sees you from / item', 'for trainers: how many blocks they can see; for item balls: the item'],
+  script: ['what happens', 'the script that runs when you talk, read or step here'],
+  flag: ['hide when flag is on', 'once this flag is turned on, this disappears (e.g. an item ball after you pick it up)'],
+  local_id: ['name', 'a name scripts use to move this person', 1],
+  dest_map: ['goes to map', 'the map this door takes you to'],
+  dest_warp_id: ['arrives at door #', 'which door on the other map you come out of'],
+  type: ['kind', 'sign: read it; hidden_item: something to find; secret_base: a secret base spot'],
+  var: ['only when variable', 'the step trigger only works while this variable has the value below', 1],
+  var_value: ['…has value', '', 1], player_facing_dir: ['player must face', 'which way you must look to read it', 1],
+  item: ['hidden item', 'the item you find'], quantity: ['how many', 'how many you find'],
+  weather: ['weather', 'the weather on this map'], music: ['music', 'the song that plays'],
+  region: ['region', 'which region the map is in (e.g. Hoenn or Kanto)', 1],
+  map_type: ['kind of place', 'town, route, inside, underwater…'],
+  region_map_section: ['name on the town map', 'which place on the region map this belongs to'],
+  show_map_name: ['show name on arrival', 'show the map name in a box when you arrive'],
+  allow_cycling: ['bikes allowed', ''], allow_escaping: ['Escape Rope works', ''], allow_running: ['running allowed', ''],
+  requires_flash: ['dark (needs Flash)', 'the map is dark until you use Flash'],
+  floor_number: ['floor number', 'shown in elevators', 1], battle_scene: ['battle background', 'the background behind battles', 1],
+  id: ['map id', 'the name other maps use for this map (MAP_…)', 1], name: ['folder name', '', 1],
+  layout: ['layout', 'the blocks this map uses (several maps can share one)', 1],
+  connections_no_include: ['', '', 1], shared_events_map: ['', '', 1], shared_scripts_map: ['', '', 1],
+};
+const isExpert = () => document.body.classList.contains('expert');
+function fieldLabel(k) {
+  const info = FIELD_INFO[k];
+  if (isExpert() || !info || !info[0]) return { text: k, title: info && info[1] ? `${info[1]} (${k})` : k, hidden: false };
+  return { text: info[0], title: (info[1] ? info[1] + ' · ' : '') + 'file name: ' + k, hidden: !!info[2] };
+}
 const KIND_COLOR = { object_events: '#f6c90e', warp_events: '#e53e3e', coord_events: '#3182ce', bg_events: '#b83280' };
 // constants offered as suggestions for each field
 const FIELD_PREFIX = { graphics_id: 'OBJ_EVENT_GFX_', movement_type: 'MOVEMENT_TYPE_', trainer_type: 'TRAINER_TYPE_',
@@ -298,6 +370,7 @@ async function openMap(name, keepSel = false) {
   const m = await api('/api/map?name=' + encodeURIComponent(name));
   m.blocks = Int32Array.from(m.blocks);
   S.cur = m; S.undo = []; S.redo = []; S.dirtyBlocks = S.dirtyData = S.dirtyScript = false;
+  const welcome = $('#welcome'); if (welcome) welcome.remove();
   if (!keepSel) S.sel = null;
   const img = new Image();
   img.src = '/api/map/atlas?name=' + encodeURIComponent(name) + '&t=' + Date.now();
@@ -428,7 +501,7 @@ function pickAtlas(a, b) {
 function defaultAttrs() { return (+$('#colval').value << 10) | ((+$('#elev').value || 3) << 12); }
 function showStamp() {
   const st = S.stamp;
-  $('#st-stamp').textContent = st.w * st.h > 1 ? `stamp ${st.w}×${st.h}` : `metatile 0x${(st.ids[0] & 0x3FF).toString(16).padStart(3, '0')}`;
+  $('#st-stamp').textContent = st.w * st.h > 1 ? `stamp ${st.w}×${st.h}` : `block 0x${(st.ids[0] & 0x3FF).toString(16).padStart(3, '0')}`;
 }
 
 // ------------------------------------------------------------------ map interaction
@@ -514,7 +587,7 @@ $('#over').onpointermove = (e) => {
   if (inMap(c)) {
     const v = S.cur.blocks[c[1] * S.cur.layout.width + c[0]];
     $('#st-pos').textContent = `x ${c[0]}, y ${c[1]}`;
-    $('#st-block').textContent = `metatile 0x${(v & 0x3FF).toString(16).padStart(3, '0')} · collision ${(v >> 10) & 3} · elevation ${(v >> 12) & 15}`;
+    $('#st-block').textContent = `block 0x${(v & 0x3FF).toString(16).padStart(3, '0')} · ${((v >> 10) & 3) ? 'wall' : 'can walk'} · height ${(v >> 12) & 15}`;
   }
   if (S.drag && S.drag.type === 'event' && S.sel && inMap(c)) {
     const ev = S.cur.data[S.sel.kind][S.sel.i];
@@ -600,7 +673,7 @@ function renderEvents() {
   if (!S.cur) return;
   for (const kind of ['object_events', 'warp_events', 'coord_events', 'bg_events']) {
     const list = S.cur.data[kind] || [];
-    host.insertAdjacentHTML('beforeend', `<h3>${KIND_LABEL[kind]}s (${list.length})</h3>`);
+    host.insertAdjacentHTML('beforeend', `<h3>${KIND_PLURAL[kind]} (${list.length})</h3>`);
     list.forEach((e, i) => {
       const d = document.createElement('div');
       d.className = S.sel && S.sel.kind === kind && S.sel.i === i ? 'sel' : '';
@@ -618,18 +691,19 @@ function scrollToCell(x, y) {
 }
 async function renderEventForm() {
   const host = $('#evform');
-  if (!S.sel || !S.cur.data[S.sel.kind] || !S.cur.data[S.sel.kind][S.sel.i]) { host.innerHTML = '<p class="muted">Select an event on the map (Events tool) or in the list, or add one with the buttons above the map.</p>'; return; }
+  if (!S.sel || !S.cur.data[S.sel.kind] || !S.cur.data[S.sel.kind][S.sel.i]) { host.innerHTML = '<p class="muted">Click a person, door or sign in the list above (or on the map with <b>Move people &amp; signs</b>), or add one with the <b>+</b> buttons above the map.</p>'; return; }
   const { kind, i } = S.sel, ev = S.cur.data[kind][i];
   let h = `<h3>${KIND_LABEL[kind]} ${i}</h3>`;
+  if (ev.graphics_id) h += `<img alt="" style="image-rendering:pixelated;height:48px" src="/api/map/sprite?gfx=${encodeURIComponent(ev.graphics_id)}" onerror="this.remove()">`;
   for (const [k, v] of Object.entries(ev)) {
-    const pre = FIELD_PREFIX[k];
+    const pre = FIELD_PREFIX[k], lab = fieldLabel(k);
     const list = k === 'script' ? 'dl-labels' : pre ? 'dl-' + pre.replace(/_$/, '') : '';
     const type = typeof v === 'number' ? 'number' : 'text';
-    h += `<div class="field"><label title="${esc(k)}">${esc(k)}</label><input data-k="${esc(k)}" data-num="${type === 'number'}" type="${type}" value="${esc(v)}" ${list ? `list="${list}"` : ''}></div>`;
+    h += `<div class="field${lab.hidden ? ' adv' : ''}"><label title="${esc(lab.title)}">${esc(lab.text)}</label><input data-k="${esc(k)}" data-num="${type === 'number'}" type="${type}" value="${esc(v)}" ${list ? `list="${list}"` : ''} title="${esc(lab.title)}"></div>`;
   }
   h += '<div class="row">';
-  if ('script' in ev) h += `<button id="ev-newscript">New script…</button><button id="ev-openscript">Open script</button>`;
-  if (kind === 'warp_events') h += `<button id="ev-link">Make two-way</button><button id="ev-goto">Go to destination</button>`;
+  if ('script' in ev) h += `<button id="ev-newscript" title="write what happens, and the tool makes the script">${kind === 'coord_events' ? 'Write what happens…' : 'Write what they say…'}</button><button id="ev-openscript" title="open the script in the Scripts tab">Open script</button>`;
+  if (kind === 'warp_events') h += `<button id="ev-link" title="make the door on the other map lead back here too">Make two-way</button><button id="ev-goto">Go to that map</button>`;
   h += `<button id="ev-dup">Duplicate</button><button id="ev-del">Delete</button></div>`;
   host.innerHTML = h;
   host.querySelectorAll('input[data-k]').forEach(inp => {
@@ -640,7 +714,7 @@ async function renderEventForm() {
       snapshot();
       ev[k] = inp.dataset.num === 'true' ? +inp.value : inp.value;
       S.dirtyData = true; drawOver(); updateButtons();
-      if (k === 'x' || k === 'y' || k === 'graphics_id') renderEvents();
+      if (k === 'x' || k === 'y' || k === 'graphics_id') { renderEvents(); if (k === 'graphics_id') renderEventForm(); }
     };
     if (k === 'script') inp.oninput = () => fillLabels(inp.value);
   });
@@ -680,24 +754,30 @@ function deleteEvent() {
 // ------------------------------------------------------------------ header panel
 async function renderHeader() {
   const d = S.cur.data, host = $('#hdrform');
-  let h = '<h3>Header</h3>';
+  let h = `<h3>Story chapter</h3>
+    <div class="row"><select id="story-ch" style="flex:1" title="which part of the story this map is in; used to start tests later in the game"></select>
+      <button id="story-new" title="add a new chapter to the story">New chapter…</button></div>
+    <div class="muted" style="font-size:12px">Used by <b>▶ Test in game</b> to give you the items you'd have by a chapter. Inside maps (houses, gyms) follow their town.</div>
+    <h3>Settings</h3>`;
   for (const [k, v] of Object.entries(d)) {
     if (Array.isArray(v) || (typeof v === 'object' && v !== null)) continue;
-    if (typeof v === 'boolean') { h += `<div class="field"><label>${esc(k)}</label><input type="checkbox" data-h="${esc(k)}" ${v ? 'checked' : ''}></div>`; continue; }
+    const lab = fieldLabel(k), adv = lab.hidden ? ' adv' : '';
+    if (typeof v === 'boolean') { h += `<div class="field${adv}"><label title="${esc(lab.title)}">${esc(lab.text)}</label><input type="checkbox" data-h="${esc(k)}" ${v ? 'checked' : ''}></div>`; continue; }
     const pre = FIELD_PREFIX[k];
-    h += `<div class="field"><label>${esc(k)}</label><input data-h="${esc(k)}" data-num="${typeof v === 'number'}" value="${esc(v)}" ${pre ? `list="dl-${pre.replace(/_$/, '')}"` : ''} ${k === 'id' || k === 'name' ? 'readonly' : ''}></div>`;
+    h += `<div class="field${adv}"><label title="${esc(lab.title)}">${esc(lab.text)}</label><input data-h="${esc(k)}" data-num="${typeof v === 'number'}" value="${esc(v)}" title="${esc(lab.title)}" ${pre ? `list="dl-${pre.replace(/_$/, '')}"` : ''} ${k === 'id' || k === 'name' ? 'readonly' : ''}></div>`;
   }
-  h += '<h3>Connections</h3>';
+  h += '<h3 title="maps that join this one at its edges, so you can walk from one to the other">Joined maps (edges)</h3>';
   (d.connections || []).forEach((c, i) => {
     h += `<div class="row"><select data-c="${i}" data-ck="direction">${['up', 'down', 'left', 'right', 'dive', 'emerge'].map(x => `<option ${x === c.direction ? 'selected' : ''}>${x}</option>`).join('')}</select>
       <input data-c="${i}" data-ck="map" value="${esc(c.map)}" list="dl-MAP" style="flex:1">
       <input data-c="${i}" data-ck="offset" type="number" value="${esc(c.offset)}" style="width:64px">
       <button data-cdel="${i}">✕</button></div>`;
   });
-  h += `<div class="row"><button id="addconn">Add connection</button></div>`;
-  h += `<h3>Layout</h3><div class="muted">${esc(S.cur.layout.id)} (${S.cur.layout.layout_version})</div>
-    <div class="row">width <input id="rw" type="number" value="${S.cur.layout.width}" style="width:70px"> height <input id="rh" type="number" value="${S.cur.layout.height}" style="width:70px"><button id="resize">Resize</button></div>`;
+  h += `<div class="row"><button id="addconn">Join another map</button></div>`;
+  h += `<h3>Size</h3><div class="muted adv">${esc(S.cur.layout.id)} (${S.cur.layout.layout_version})</div>
+    <div class="row">width <input id="rw" type="number" value="${S.cur.layout.width}" style="width:70px"> height <input id="rh" type="number" value="${S.cur.layout.height}" style="width:70px"><button id="resize" title="make the map bigger or smaller (in blocks)">Resize</button></div>`;
   host.innerHTML = h;
+  fillStoryChapter();
   for (const pre of ['MUS_', 'WEATHER_', 'MAP_TYPE_', 'MAPSEC_', 'MAP_BATTLE_SCENE_', 'LAYOUT_', 'MAP_', 'REGION_']) ensureDatalist(pre);
   host.querySelectorAll('[data-h]').forEach(inp => inp.onchange = () => {
     const k = inp.dataset.h;
@@ -780,7 +860,7 @@ function renderAnims() {
     const tiles = a.slots.map(s => `${s.dest}–${s.dest + a.count - 1}`).slice(0, 2).join(', ') + (a.slots.length > 2 ? '…' : '');
     const order = a.sequence.map(i => i === null ? '-' : i).join(' ');
     const opts = a.frames.map((f, i) => `<option value="${i}">frame ${i}</option>`).join('');
-    d.innerHTML = `<b>${esc(a.id)}</b> <span class="muted">· ${esc(a.tilesets.map(t => t.replace('gTileset_', '')).join(', '))} · tiles ${tiles} · ${a.metatiles.length} metatile(s)</span>
+    d.innerHTML = `<b>${esc(a.id)}</b> <span class="muted">· ${esc(a.tilesets.map(t => t.replace('gTileset_', '')).join(', '))} · tiles ${tiles} · ${a.metatiles.length} block(s)</span>
       <img alt="frames" src="/api/map/anim_frames?name=${encodeURIComponent(S.cur.name)}&id=${encodeURIComponent(a.id)}&t=${Date.now()}">
       <div class="row">${a.editable_speed ? `speed <input type="number" min="1" max="255" data-f="speed" value="${a.period}"> <button data-act="speed">Set</button>` : `<span class="muted">custom timing (every ${a.period ?? '?'} frames)</span>`}</div>
       <div class="row">play order <input data-f="order" value="${order}" style="flex:1"> <button data-act="order">Set</button></div>
@@ -789,7 +869,7 @@ function renderAnims() {
         <button data-act="remove">Remove</button></div>
       <div class="row"><button data-act="add" title="copy the selected frame and add it at the end of the play order">Add frame (copy)</button>
         <label class="btn">Add frame from image…<input type="file" accept="image/*" data-act="addimg" hidden></label>
-        <button data-act="show" title="select its metatiles in the picker">Show metatiles</button></div>
+        <button data-act="show" title="select the blocks that move in the Blocks tab">Show its blocks</button></div>
       ${a.notes.map(n => `<div class="muted" style="font-size:12px">${esc(n)}</div>`).join('')}`;
     const val = (f) => d.querySelector(`[data-f="${f}"]`).value;
     const done = async (msg, r) => { toast(msg + ((r && r.notes && r.notes.length) ? ' · ' + r.notes.join(' · ') : '')); await loadAnims(); if ($('#animate').checked) { AN.forMap = S.cur.name; drawBase(); } };
@@ -815,7 +895,7 @@ function renderAnims() {
     on('show', 'onclick', async () => {
       if (!a.metatiles.length) return toast('no metatile on this map uses these tiles', 'warn');
       const m = a.metatiles[0]; S.stamp = { w: 1, h: 1, ids: [m], fromAtlas: true }; showStamp(); drawAtlas();
-      toast(`animated metatiles: ${a.metatiles.slice(0, 24).map(i => i.toString(16).padStart(3, '0')).join(' ')}${a.metatiles.length > 24 ? '…' : ''}`, 'ok', 8000);
+      toast(`blocks that move: ${a.metatiles.slice(0, 24).map(i => i.toString(16).padStart(3, '0')).join(' ')}${a.metatiles.length > 24 ? '…' : ''}`, 'ok', 8000);
     });
     host.appendChild(d);
   }
@@ -823,10 +903,10 @@ function renderAnims() {
 }
 $('#an-from-mt').onclick = async () => {
   const id = selectedSingle();
-  if (id === null) return toast('select one metatile in the picker first', 'warn');
+  if (id === null) return toast('select one block in the Blocks tab first', 'warn');
   const mt = await api(`/api/map/metatile?name=${encodeURIComponent(S.cur.name)}&id=${id}`);
   const tiles = mt.entries.map(e => e.tile).filter(t => t > 0);
-  if (!tiles.length) return toast('that metatile has no tiles', 'warn');
+  if (!tiles.length) return toast('that block has no tiles', 'warn');
   const lo = Math.min(...tiles), hi = Math.max(...tiles);
   $('#an-tile').value = lo; $('#an-count').value = Math.min(128, hi - lo + 1);
 };
@@ -838,6 +918,33 @@ $('#an-create').onclick = async () => {
     await loadAnims();
   } catch (e) { toast(e.message, 'err', 8000); }
 };
+
+// ------------------------------------------------------------------ story chapters
+async function fillStoryChapter() {
+  const sel = $('#story-ch'); if (!sel || !S.cur) return;
+  const name = S.cur.name;
+  try {
+    const r = await api('/api/story');
+    if (!S.cur || S.cur.name !== name) return;
+    const cur = r.map_chapter[name];
+    sel.innerHTML = '<option value="">Not in the story</option>' + r.chapters.map((c, i) => `<option value="${i}">${i + 1}. ${esc(c.name)}</option>`).join('');
+    sel.value = cur === null || cur === undefined ? '' : String(cur);
+  } catch (e) { return; }
+  sel.onchange = async () => {
+    try { await api('/api/story/map', { map: name, chapter: sel.value === '' ? null : +sel.value }); toast('Story chapter saved'); }
+    catch (e) { toast(e.message, 'err', 6000); }
+    fillStoryChapter(); PLAY.story = null;
+  };
+  $('#story-new').onclick = async () => {
+    const title = prompt('Name of the new chapter (e.g. "Badge 9: Cloud City")');
+    if (!title) return;
+    try {
+      const r = await api('/api/story/chapter_add', { name: title });
+      await api('/api/story/map', { map: name, chapter: r.index });
+      toast(`Added chapter ${r.index + 1}: ${title}`); PLAY.story = null; fillStoryChapter();
+    } catch (e) { toast(e.message, 'err', 6000); }
+  };
+}
 
 // ------------------------------------------------------------------ scripts
 async function loadScript() {
@@ -923,7 +1030,7 @@ async function loadTS() {
   TS = await api('/api/map/tsinfo?name=' + encodeURIComponent(S.cur.name));
   sheets = {};
   $('#mt-beh').innerHTML = TS.behaviors.map((b, i) => `<option value="${i}">${esc(b)}</option>`).join('');
-  $('#ts-note').textContent = `${TS.secondary.symbol}: ${TS.secondary.tiles}/${TS.secondary.tile_limit} tiles, ${TS.secondary.metatiles}/${TS.secondary.metatile_limit} metatiles`;
+  $('#ts-note').textContent = `${TS.secondary.symbol}: ${TS.secondary.tiles}/${TS.secondary.tile_limit} tiles, ${TS.secondary.metatiles}/${TS.secondary.metatile_limit} blocks`;
 }
 function sheet(bank) {
   if (!sheets[bank]) {
@@ -953,7 +1060,7 @@ async function openMetatile(id) {
   if (!TS) await loadTS();
   MT = await api(`/api/map/metatile?name=${encodeURIComponent(S.cur.name)}&id=${id}`);
   $('#mt-editor').hidden = false;
-  $('#mt-title').textContent = `Metatile 0x${id.toString(16).padStart(3, '0')} (${MT.tileset})`;
+  $('#mt-title').textContent = `Block 0x${id.toString(16).padStart(3, '0')} (${MT.tileset})`;
   $('#mt-beh').value = MT.behavior; $('#mt-layer').value = MT.layer_type;
   selectSlot(0); drawTileSheet();
 }
@@ -1007,7 +1114,7 @@ $('#tilesheet').onclick = (e) => {
 $('#mt-save').onclick = async () => {
   try {
     await api(`/api/map/metatile?name=${encodeURIComponent(S.cur.name)}&id=${MT.id}`, { entries: MT.entries, behavior: +$('#mt-beh').value, layer_type: +$('#mt-layer').value });
-    toast(`Saved metatile 0x${MT.id.toString(16)}`); await refreshAtlas();
+    toast(`Saved block 0x${MT.id.toString(16)}`); await refreshAtlas();
   } catch (e) { toast(e.message, 'err', 6000); }
 };
 $('#mt-copy').onclick = async () => {
@@ -1015,7 +1122,7 @@ $('#mt-copy').onclick = async () => {
     const r = await api('/api/map/metatile_add?name=' + encodeURIComponent(S.cur.name), { count: 1, copy_from: MT.id });
     await api(`/api/map/metatile?name=${encodeURIComponent(S.cur.name)}&id=${r.ids[0]}`, { entries: MT.entries, behavior: +$('#mt-beh').value, layer_type: +$('#mt-layer').value });
     await refreshAtlas(); S.stamp = { w: 1, h: 1, ids: [r.ids[0] | defaultAttrs()], src: [r.ids[0] % 8, Math.floor(r.ids[0] / 8)], fromAtlas: true };
-    showStamp(); drawAtlas(); openMetatile(r.ids[0]); toast(`New metatile 0x${r.ids[0].toString(16)}`);
+    showStamp(); drawAtlas(); openMetatile(r.ids[0]); toast(`New block 0x${r.ids[0].toString(16)}`);
   } catch (e) { toast(e.message, 'err', 6000); }
 };
 $('#mt-new').onclick = async () => {
@@ -1054,7 +1161,7 @@ $('#te-new').onclick = async () => {
     const r = await api('/api/map/tile_add?name=' + encodeURIComponent(S.cur.name), { count: 1 });
     await api(`/api/map/tile?name=${encodeURIComponent(S.cur.name)}&id=${r.ids[0]}`, { pixels: teTile.px });
     teTile.id = r.ids[0]; $('#mt-tile').value = r.ids[0]; slotFromForm(); sheets = {}; await refreshAtlas(); drawTileSheet(); drawMetatile();
-    toast(`New tile ${r.ids[0]} – used in slot ${mtSlot}; save the metatile to keep it`);
+    toast(`New tile ${r.ids[0]} – used in slot ${mtSlot}; save the block to keep it`);
   } catch (e) { toast(e.message, 'err', 6000); }
 };
 $('#mt-art').onchange = async (e) => {
@@ -1085,7 +1192,7 @@ async function loadCheckpoints(select) {
   try {
     const r = await api('/api/play/checkpoints', {});
     const sel = $('#play-from'), cur = select ?? sel.value;
-    sel.innerHTML = '<option value="">New game (Quickstart)</option>' + r.checkpoints.map(c =>
+    sel.innerHTML = '<option value="">A brand-new game</option>' + r.checkpoints.map(c =>
       `<option value="${esc(c.name)}">${esc(c.name)}${c.map ? ' · ' + esc(c.map) : ''}${c.note ? ' · ' + esc(c.note) : ''}</option>`).join('');
     sel.value = cur || '';
   } catch (e) { /* play-testing unavailable */ }
@@ -1121,7 +1228,8 @@ $('#play').onclick = () => {
   else if (lastCell) [x, y] = lastCell;
   else if ((S.cur.data.warp_events || []).length) { x = S.cur.data.warp_events[0].x; y = S.cur.data.warp_events[0].y; }
   $('#play-x').value = x ?? 0; $('#play-y').value = y ?? 0;
-  $('#play-title').textContent = 'Play-test ' + S.cur.name;
+  $('#play-title').textContent = 'Test ' + S.cur.name + ' in game';
+  loadPlayStory();
   $('#playbox').classList.add('open');
 };
 $('#play-close').onclick = () => { $('#playbox').classList.remove('open'); api('/api/play/stop', {}).catch(() => {}); };
@@ -1133,18 +1241,84 @@ async function playStart(build) {
   $('#play-build').hidden = true;
   try {
     const here = $('#play-here').checked, from = $('#play-from').value;
-    if (!here && !from) { $('#play-status').textContent = 'Pick a checkpoint, or warp to this map.'; return; }
+    if (!here && !from) { $('#play-status').textContent = 'Pick a checkpoint to start from, or tick "start on this map".'; return; }
     const state = $('#play-state').value.split('\n').map(l => l.trim()).filter(Boolean);
+    const chapter = $('#play-chapter').value, team = teamLines();
+    const skip = [...document.querySelectorAll('#play-itemlist input:not(:checked)')].map(i => i.dataset.key);
     const r = await api('/api/play/start', { map: here ? S.cur.name : null, x: +$('#play-x').value, y: +$('#play-y').value,
-                                             build, checkpoint: from, state, script: $('#play-script').value.trim() });
+                                             build, checkpoint: from, state, script: $('#play-script').value.trim(),
+                                             chapter: chapter === '' ? null : +chapter, extras: $('#play-extras').checked, skip,
+                                             team, clear_team: team.length > 0 && $('#play-clearteam').checked });
     if (r.build) { $('#play-build').textContent = r.build.output; }
-    if (!r.ok) { $('#play-status').textContent = r.error; $('#play-build').hidden = !r.build; return; }
+    if (!r.ok) { $('#play-status').textContent = friendlyError(r.error); $('#play-build').hidden = !r.build; return; }
     $('#play-screen').src = r.image;
     $('#play-status').textContent = `Playing ${r.where.map} (${r.where.x}, ${r.where.y})` + (r.where.checkpoint ? ` from checkpoint ${r.where.checkpoint}` : ' (new game)') +
-      (r.where.state && r.where.state.length ? ` · ${r.where.state.join(', ')}` : '') + (r.where.script ? ` · ran ${r.where.script}` : '') + (r.build ? ` · built in ${r.build.seconds}s` : '');
+      summarizeState(r.where.state || []) + (r.where.script ? ` · ran ${r.where.script}` : '') + (r.build ? ` · built in ${r.build.seconds}s` : '');
   } catch (e) { $('#play-status').textContent = e.message; }
   finally { playBusy = false; }
 }
+function summarizeState(notes) {
+  if (!notes.length) return '';
+  const gave = notes.filter(n => n.startsWith('gave ')).length, flags = notes.filter(n => n.startsWith('set ') || n.startsWith('cleared ')).length;
+  const mons = notes.filter(n => n.startsWith('added ')).map(n => n.replace(/^added SPECIES_/, '').replace(/ to the team$/, '').replace(/_/g, ' ').toLowerCase());
+  const full = notes.filter(n => n.startsWith("couldn't"));
+  const other = notes.filter(n => !/^(gave|set|cleared|added|couldn't|emptied)/.test(n));
+  const parts = [];
+  if (gave) parts.push(`gave ${gave} item${gave > 1 ? 's' : ''}`);
+  if (flags) parts.push(`marked ${flags} event${flags > 1 ? 's' : ''} as done`);
+  if (mons.length) parts.push('team: ' + mons.join(', '));
+  if (full.length) parts.push(`${full.length} item(s) didn't fit in the bag`);
+  return ' · ' + parts.concat(other).join(' · ');
+}
+function friendlyError(msg) {
+  if (/ENABLE_QUICKSTART|Quickstart/i.test(msg)) return msg + ' (a brand-new game needs Quickstart turned on in your game\'s config; or start from a checkpoint)';
+  if (/libmgba|pae_mgba/i.test(msg)) return msg + ' (run scripts/setup-toolchain.sh once, then `pae doctor`)';
+  return msg;
+}
+// ---- story chapters & team in the test window
+const PLAY = { story: null };
+async function loadPlayStory() {
+  const sel = $('#play-chapter'), cur = sel.value;
+  try {
+    if (!PLAY.story) PLAY.story = await api('/api/story');
+    sel.innerHTML = '<option value="">Nothing yet (start of the game)</option>' +
+      PLAY.story.chapters.map((c, i) => `<option value="${i}">${i + 1}. ${esc(c.name)}</option>`).join('');
+    sel.value = cur;
+  } catch (e) { /* not a source tree */ }
+  if (!$('#play-team').children.length) {
+    for (const pre of ['SPECIES_', 'ITEM_', 'MOVE_']) ensureDatalist(pre);
+    for (let i = 0; i < 6; i++) $('#play-team').insertAdjacentHTML('beforeend', `<div class="teamrow">
+      <input data-t="species" list="dl-SPECIES" placeholder="${i === 0 ? 'e.g. mudkip' : ''}"><input data-t="level" type="number" min="1" max="100" placeholder="5">
+      <input data-t="item" list="dl-ITEM" placeholder="${i === 0 ? 'e.g. oran berry' : ''}">${[1, 2, 3, 4].map(() => '<input data-t="move" list="dl-MOVE">').join('')}</div>`);
+  }
+}
+const constName = (prefix, v) => { v = (v || '').trim().toUpperCase().replace(/[\s\-.']+/g, '_').replace(/É/g, 'E'); return !v ? '' : v.startsWith(prefix) ? v : prefix + v; };
+function teamLines() {
+  return [...document.querySelectorAll('#play-team .teamrow')].map(row => {
+    const get = (t) => [...row.querySelectorAll(`[data-t="${t}"]`)].map(i => i.value.trim()).filter(Boolean);
+    const sp = get('species')[0]; if (!sp) return null;
+    const parts = [constName('SPECIES_', sp)];
+    const lv = get('level')[0]; if (lv) parts.push('lv' + lv);
+    const it = get('item')[0]; if (it) parts.push(constName('ITEM_', it));
+    for (const mv of get('move')) parts.push(constName('MOVE_', mv));
+    return parts.join(' ');
+  }).filter(Boolean);
+}
+async function loadPlayItems() {
+  const ch = $('#play-chapter').value;
+  $('#play-chapter-opts').hidden = $('#play-items').hidden = ch === '';
+  if (ch === '') return;
+  const host = $('#play-itemlist'); host.textContent = 'loading…';
+  try {
+    const r = await api(`/api/story/items?chapter=${ch}&extras=${$('#play-extras').checked ? 1 : 0}`);
+    const rows = r.items.map(it => `<label title="${esc(it.kind)} in ${esc(it.map)}"><input type="checkbox" checked data-key="${esc(it.key)}"> ${esc(it.name)} ×${it.qty} <span class="muted">· ${it.needed ? 'needed' : 'extra'} · ${esc(it.map)}</span></label>`);
+    if (r.flags.length) rows.unshift(`<div class="muted">and turns on: ${r.flags.map(esc).join(', ')}</div>`);
+    host.innerHTML = rows.join('') || '<span class="muted">No items in those maps.</span>';
+    $('#play-items').querySelector('summary').textContent = `See the list: ${r.items.length} item(s) (untick anything you don't want)`;
+  } catch (e) { host.textContent = e.message; }
+}
+$('#play-chapter').onchange = loadPlayItems;
+$('#play-extras').onchange = loadPlayItems;
 $('#play-start').onclick = () => playStart(true);
 $('#play-restart').onclick = () => playStart(false);
 async function playPress(inputs) {
@@ -1169,6 +1343,12 @@ document.addEventListener('keydown', (e) => {
   if (k) { e.preventDefault(); e.stopPropagation(); playPress(keyInput(k)); }
 }, true);
 
+try { if (localStorage.getItem('pae-expert') === '1') { document.body.classList.add('expert'); $('#expert').checked = true; } } catch (e) { /* no storage */ }
+$('#expert').onchange = () => {
+  document.body.classList.toggle('expert', $('#expert').checked);
+  try { localStorage.setItem('pae-expert', $('#expert').checked ? '1' : '0'); } catch (e) { /* no storage */ }
+  if (S.cur) { renderEventForm(); renderHeader(); }
+};
 loadMaps().then(() => {
   const want = new URLSearchParams(location.search).get('map');
   if (want) openMap(want);

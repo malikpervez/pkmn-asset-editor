@@ -1,0 +1,300 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Help &amp; Guides</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%232563eb'/><text x='8' y='12' font-size='11' text-anchor='middle' fill='white' font-family='sans-serif'>?</text></svg>">
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --line: #dcdce2; --text: #1d1d24; --muted: #6b6b78;
+    --accent: #d23c3c; --ok: #1f8a4c; --chip: #ececf1; --sel: #2563eb; --tip: #fff7db;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+      --accent: #ef5a5a; --ok: #4ccb84; --chip: #2b2b34; --sel: #60a5fa; --tip: #3a3420;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+    --accent: #ef5a5a; --ok: #4ccb84; --chip: #2b2b34; --sel: #60a5fa; --tip: #3a3420;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { display: flex; gap: 14px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header a { color: var(--sel); }
+  .wrap { display: grid; grid-template-columns: 240px 1fr; max-width: 1100px; margin: 0 auto; gap: 24px; padding: 20px 16px 60px; }
+  nav { position: sticky; top: 12px; align-self: start; font-size: 14px; }
+  nav a { display: block; padding: 3px 0; color: var(--text); text-decoration: none; }
+  nav a:hover { color: var(--sel); }
+  nav b { display: block; margin: 12px 0 4px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  main { min-width: 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px 22px 14px; margin-bottom: 18px; }
+  h2 { font-size: 21px; margin: 18px 0 8px; }
+  h3 { font-size: 17px; margin: 16px 0 6px; }
+  ol li, ul li { margin: 4px 0; }
+  .tip { background: var(--tip); border-radius: 8px; padding: 8px 12px; margin: 10px 0; }
+  .tip::before { content: "💡 "; }
+  kbd, .ui { background: var(--chip); border: 1px solid var(--line); border-radius: 5px; padding: 0 6px; font: 14px system-ui, sans-serif; white-space: nowrap; }
+  code { background: var(--chip); border-radius: 4px; padding: 1px 5px; font-size: 14px; }
+  pre { background: var(--chip); border-radius: 8px; padding: 10px 12px; overflow-x: auto; font-size: 14px; }
+  dl { display: grid; grid-template-columns: 170px 1fr; gap: 6px 14px; }
+  dt { font-weight: 600; }
+  dd { margin: 0; }
+  @media (max-width: 760px) {
+    .wrap { grid-template-columns: 1fr; }
+    nav { position: static; }
+    dl { grid-template-columns: 1fr; }
+    dd { margin-bottom: 8px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>❓ Help &amp; guides</h1>
+  <a href="/">🎨 Graphics</a>
+  <a href="/maps">🗺️ Maps</a>
+</header>
+<div class="wrap">
+<nav>
+  <b>Start here</b>
+  <a href="#welcome">What is this?</a>
+  <a href="#safe">You can't break anything</a>
+  <b>Guides</b>
+  <a href="#sprite">Change a Pokémon's picture</a>
+  <a href="#colours">Change colours</a>
+  <a href="#paint">Paint a map</a>
+  <a href="#house">Add a house you can walk into</a>
+  <a href="#person">Add a person who talks</a>
+  <a href="#sign">Add a sign or hidden item</a>
+  <a href="#test">Test your game</a>
+  <a href="#later">Test later in the story</a>
+  <a href="#team">Test a battle with your own team</a>
+  <a href="#animate">Make water and flowers move</a>
+  <a href="#build">Check and build your game</a>
+  <a href="#ai">Get help from an AI</a>
+  <b>Reference</b>
+  <a href="#words">Words you'll see</a>
+  <a href="#keys">Keyboard shortcuts</a>
+</nav>
+<main>
+
+<section id="welcome">
+  <h2>What is this?</h2>
+  <p>Your Pokémon game is made out of lots of files: pictures, maps, and little programs called <b>scripts</b> that
+    say what happens (who talks, who battles you, what you find). This tool lets you change those files with your
+    mouse, and then play your game to see the change.</p>
+  <ul>
+    <li><b>🎨 Graphics</b>: every picture in the game. Pokémon, trainers, items, map tiles, battle effects.</li>
+    <li><b>🗺️ Maps</b>: towns, routes, caves and houses, and the people, doors and signs in them.</li>
+    <li><b>▶ Test in game</b>: builds your game and plays it right in your browser.</li>
+  </ul>
+  <div class="tip">Hover over any button or field to see what it does.</div>
+</section>
+
+<section id="safe">
+  <h2>You can't break anything</h2>
+  <ul>
+    <li>Nothing changes until you press <span class="ui">Save</span>.</li>
+    <li>Made a mess? <span class="ui">Undo</span> (or <kbd>Ctrl</kbd>+<kbd>Z</kbd>) goes back one step.
+      <span class="ui">Undo all changes</span> (maps) and <span class="ui">Undo all my changes</span> (pictures) put
+      things back to how they were.</li>
+    <li><span class="ui">What I changed</span> shows a before/after picture of everything you edited.</li>
+    <li><span class="ui">Check for problems</span> tells you about mistakes (like a picture that's the wrong size)
+      before they cause trouble in the game.</li>
+  </ul>
+</section>
+
+<section id="sprite">
+  <h2>Change a Pokémon's picture</h2>
+  <ol>
+    <li>Open <a href="/">🎨 Graphics</a> and type the Pokémon's name in the search box, for example <code>mudkip</code>.</li>
+    <li>Click the picture you want to change (front, back, shiny, icon…).</li>
+    <li>Either draw on it with the <span class="ui">Pencil</span>, or press <span class="ui">Replace with image…</span>
+      and pick a picture you made.</li>
+    <li>Press <span class="ui">Save drawing</span> if you drew on it.</li>
+  </ol>
+  <div class="tip">Game pictures can only use 16 colours, and the first colour in the palette is see-through. If your picture
+    has other colours, the tool picks the closest ones. Tick <span class="ui">use my image's colours</span> to change the
+    palette to your colours instead.</div>
+</section>
+
+<section id="colours">
+  <h2>Change colours</h2>
+  <p>Every picture uses a <b>palette</b>: a list of 16 colours. Change a colour in the palette and the picture
+    changes everywhere it's used.</p>
+  <ol>
+    <li>Open the picture in <a href="/">🎨 Graphics</a>.</li>
+    <li>Under <b>Palettes</b>, <kbd>Shift</kbd>+click (or double-click) a colour square and pick a new colour.</li>
+    <li>Press <span class="ui">Save palette</span>.</li>
+  </ol>
+  <div class="tip">Want a shiny version? Search for <code>shiny</code>: shiny palettes are separate files.</div>
+</section>
+
+<section id="paint">
+  <h2>Paint a map</h2>
+  <p>Maps are made of <b>blocks</b>: 16×16 squares like grass, path, water, a piece of a roof.</p>
+  <ol>
+    <li>Open <a href="/maps">🗺️ Maps</a> and pick a map on the left.</li>
+    <li>In the <b>Blocks</b> tab on the right, click a block. Drag across several blocks to pick a bigger piece,
+      like a whole tree or house.</li>
+    <li>With <span class="ui">🖌 Paint</span>, click or drag on the map. <span class="ui">🪣 Fill</span> fills an area.</li>
+    <li>To copy something already on the map, use <span class="ui">Copy blocks</span> and drag over it, then paint it
+      somewhere else.</li>
+    <li>Use <span class="ui">Walls</span> to choose where the player can and can't walk. Red = blocked.</li>
+    <li>Press <span class="ui">Save</span>.</li>
+  </ol>
+</section>
+
+<section id="house">
+  <h2>Add a house you can walk into</h2>
+  <ol>
+    <li>Paint a house on the map (copy one with <span class="ui">Copy blocks</span>), or press
+      <span class="ui">Import art…</span> in the <b>Blocks</b> tab to turn your own drawing into blocks.</li>
+    <li>Press <span class="ui">New map / house…</span> at the top. Pick an inside to copy (for example
+      <code>PetalburgCity_House1</code>) and give it a name. You can now decorate the inside.</li>
+    <li>Go back to your town. Press <span class="ui">+ Door</span> and click the house's door.</li>
+    <li>Set <b>Goes to map</b> to your new house, then press <span class="ui">Make two-way</span>. Now the door
+      leads inside, and the inside door leads back out.</li>
+    <li>Make the house's walls blocked with <span class="ui">Walls</span>, then <span class="ui">Save</span>
+      and <span class="ui">▶ Test in game</span>.</li>
+  </ol>
+</section>
+
+<section id="person">
+  <h2>Add a person who talks</h2>
+  <ol>
+    <li>Press <span class="ui">+ Person</span> above the map and click where they should stand.</li>
+    <li>On the right, set <b>Looks like</b> (for example <code>OBJ_EVENT_GFX_BOY_1</code>) and
+      <b>How it moves</b> (for example <code>MOVEMENT_TYPE_WANDER_AROUND</code>). Start typing and pick from the list.</li>
+    <li>Press <span class="ui">New script…</span> and type what they should say. The tool writes the script for you.</li>
+    <li>Want to change the words later? Press <span class="ui">Open script</span>. The text is on the
+      <code>.string "…"</code> lines. <code>\n</code> starts a new line and <code>\p</code> a new box.</li>
+  </ol>
+  <div class="tip">To make them a trainer, set <b>Is a trainer?</b> to <code>TRAINER_TYPE_NORMAL</code> and
+    <b>Sees you from</b> to how many tiles they can see (like <code>3</code>). Their script then needs a
+    <code>trainerbattle</code> line. Look at a trainer on a route to copy one.</div>
+</section>
+
+<section id="sign">
+  <h2>Add a sign or hidden item</h2>
+  <ol>
+    <li>Press <span class="ui">+ Sign</span> and click where the sign is.</li>
+    <li>Press <span class="ui">New script…</span> and type what the sign says.</li>
+    <li>For a hidden item instead, set <b>Kind</b> to <code>hidden_item</code>, then pick the item and a flag
+      (each hidden item needs its own flag, so it can only be found once).</li>
+  </ol>
+</section>
+
+<section id="test">
+  <h2>Test your game</h2>
+  <ol>
+    <li>Click a spot on the map where you want to start (or select a person or door).</li>
+    <li>Press <span class="ui">▶ Test in game</span>, then <span class="ui">Build &amp; play</span>.</li>
+    <li>Move with the arrow keys. <kbd>Z</kbd> = A, <kbd>X</kbd> = B, <kbd>Enter</kbd> = Start.</li>
+    <li>Changed something? Press <span class="ui">Build &amp; play</span> again to see it.</li>
+  </ol>
+  <div class="tip">Building the first time can take a few minutes. After that, small changes build in seconds.</div>
+</section>
+
+<section id="later">
+  <h2>Test later in the story</h2>
+  <p>You don't have to replay the whole game to test the part you're working on.</p>
+  <ul>
+    <li><b>How far into the story?</b> Pick a chapter, like <i>Rustboro City: Badge 1</i>. You start with the
+      badges and the things you need by then (HMs, bikes, key items). Tick <span class="ui">Also give the extra items</span>
+      for everything from item balls, hidden items and gifts too. Open <span class="ui">See the list</span> to untick
+      anything you don't want.</li>
+    <li><b>Checkpoints</b> are saved games. Press <span class="ui">Save checkpoint…</span> while testing to keep
+      your spot, and pick it next time under <b>Where do you start?</b> You can also load a <code>.sav</code> file
+      from your emulator.</li>
+    <li>Added your own maps? In <b>Map settings</b>, choose which <b>Story chapter</b> each map belongs to, or make
+      new chapters.</li>
+  </ul>
+</section>
+
+<section id="team">
+  <h2>Test a battle with your own team</h2>
+  <ol>
+    <li>In the test window, open <b>Your team</b>.</li>
+    <li>Type a Pokémon (like <code>mudkip</code>), its level, and if you want a held item and up to 4 moves.</li>
+    <li>Tick <span class="ui">Replace my team</span> to use only these Pokémon.</li>
+    <li>Press <span class="ui">Build &amp; play</span> and walk up to the trainer.</li>
+  </ol>
+</section>
+
+<section id="animate">
+  <h2>Make water and flowers move</h2>
+  <p>Moving water, flowers and waterfalls are <b>animations</b>: a few pictures shown one after another.</p>
+  <ol>
+    <li>On a map, tick <span class="ui">animate</span> above the map to see them move.</li>
+    <li>Open the <b>Animations</b> tab. Each animation shows its frames.</li>
+    <li><b>Speed</b>: smaller number = faster (60 = one picture per second).</li>
+    <li><b>Play order</b>: which frames to show, like <code>0 1 2 1</code>.</li>
+    <li>Pick a frame and press <span class="ui">Replace art…</span> to draw your own, or
+      <span class="ui">Add frame (copy)</span> to add one.</li>
+    <li>To animate your own blocks, select the block in the <b>Blocks</b> tab, then in <b>New animation</b> press
+      <span class="ui">From selected block</span> and <span class="ui">Create animation</span>.</li>
+  </ol>
+</section>
+
+<section id="build">
+  <h2>Check and build your game</h2>
+  <ul>
+    <li><span class="ui">Check for problems</span> looks for mistakes in everything you changed.</li>
+    <li><span class="ui">Build game</span> makes the game file (<code>.gba</code>) you can play in any emulator.</li>
+  </ul>
+</section>
+
+<section id="ai">
+  <h2>Get help from an AI</h2>
+  <p>AI assistants (like Claude) can use this tool too. Run <code>pae mcp</code> to connect one, or ask it to read
+    <code>pae guide</code>. It can paint maps, write dialogue, change graphics and test the game, and you can see
+    everything it did under <span class="ui">What I changed</span>.</p>
+</section>
+
+<section id="words">
+  <h2>Words you'll see</h2>
+  <dl>
+    <dt>Tile</dt><dd>A tiny 8×8 square of pixels. Everything on a Game Boy Advance is built from tiles.</dd>
+    <dt>Block (metatile)</dt><dd>A 16×16 map square made from 4 tiles (8 counting the top layer), like grass or a
+      piece of roof. The player walks one block per step.</dd>
+    <dt>Tileset</dt><dd>The set of tiles and blocks a map can use. Towns share a <i>primary</i> one (grass, trees,
+      water) and each has its own <i>secondary</i> one (its buildings).</dd>
+    <dt>Palette</dt><dd>A list of 16 colours a picture uses. Change the palette and the picture changes colour.</dd>
+    <dt>Sprite</dt><dd>A picture that moves around, like the player or a Pokémon.</dd>
+    <dt>Event</dt><dd>Anything on a map that does something: a person, a door, a sign, or a step trigger.</dd>
+    <dt>Door / warp</dt><dd>A spot that takes you to another map.</dd>
+    <dt>Step trigger</dt><dd>An invisible spot that starts a script when you step on it (like a rival appearing).</dd>
+    <dt>Script</dt><dd>The instructions for what happens: talking, battles, giving items, cutscenes.</dd>
+    <dt>Flag</dt><dd>An on/off switch the game remembers, like "got Badge 1" or "picked up this Potion".
+      Names start with <code>FLAG_</code>.</dd>
+    <dt>Variable (var)</dt><dd>A number the game remembers, used to track how far a story has got.
+      Names start with <code>VAR_</code>.</dd>
+    <dt>Walls (collision)</dt><dd>Where the player can't walk.</dd>
+    <dt>Height level (elevation)</dt><dd>Which height something is at (bridges and ledges use it). 3 is normal ground.</dd>
+    <dt>Layout</dt><dd>The blocks of a map. Several maps can share one layout (most houses do).</dd>
+    <dt>Checkpoint</dt><dd>A saved game you can start tests from.</dd>
+    <dt>Chapter</dt><dd>A part of the story (like "Badge 1"), used to start tests later in the game.</dd>
+    <dt>Build</dt><dd>Turning all the files into a playable game.</dd>
+    <dt>ROM</dt><dd>The game file (<code>.gba</code>) an emulator plays.</dd>
+    <dt>Constant</dt><dd>A name the game uses instead of a number, like <code>SPECIES_MUDKIP</code> or
+      <code>ITEM_POTION</code>. Start typing in a field and pick one from the list.</dd>
+  </dl>
+</section>
+
+<section id="keys">
+  <h2>Keyboard shortcuts</h2>
+  <dl>
+    <dt><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Ctrl</kbd>+<kbd>Y</kbd></dt><dd>Undo / redo</dd>
+    <dt><kbd>Ctrl</kbd>+<kbd>S</kbd></dt><dd>Save</dd>
+    <dt><kbd>P</kbd> <kbd>F</kbd> <kbd>I</kbd> <kbd>C</kbd> <kbd>E</kbd></dt><dd>Map tools: Paint, Fill, Copy blocks, Walls, People &amp; signs</dd>
+    <dt>Arrow keys, <kbd>Z</kbd>, <kbd>X</kbd>, <kbd>Enter</kbd></dt><dd>Play the game while testing (A, B, Start)</dd>
+  </dl>
+</section>
+</main>
+</div>
+</body>
+</html>

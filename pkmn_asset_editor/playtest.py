@@ -36,8 +36,9 @@ class PlaytestError(RuntimeError):
 
 # ---------------------------------------------------------------------- ELF symbols
 
-def elf_symbols(path: Path) -> dict[str, int]:
-    """Symbol name -> address from an ELF32 little-endian .symtab (globals and file statics)."""
+def elf_symbols(path: Path, sizes: dict[str, int] | None = None) -> dict[str, int]:
+    """Symbol name -> address from an ELF32 little-endian .symtab (globals and file statics).
+    ``sizes``, if given, is filled with each symbol's size in bytes."""
     data = Path(path).read_bytes()
     if data[:4] != b"\x7fELF" or data[4] != 1:
         raise PlaytestError(f"{path} is not a 32-bit ELF file")
@@ -51,7 +52,7 @@ def elf_symbols(path: Path) -> dict[str, int]:
         strtab = sections[sh[6]]
         str_off = strtab[4]
         for i in range(sh[5] // 16):
-            name_off, value, _size, info, _other, shndx = struct.unpack_from("<IIIBBH", data, sh[4] + i * 16)
+            name_off, value, size, info, _other, shndx = struct.unpack_from("<IIIBBH", data, sh[4] + i * 16)
             typ, bind = info & 0xF, info >> 4
             # OBJECT / FUNC, plus NOTYPE for assembler labels (scripts, movement data) that live in sections
             if not name_off or typ not in (0, 1, 2) or (typ == 0 and (shndx == 0 or shndx >= 0xFF00)):
@@ -62,6 +63,8 @@ def elf_symbols(path: Path) -> dict[str, int]:
                 continue
             if bind == 1 or name not in out:  # GLOBAL wins over a same-named local
                 out[name] = value
+                if sizes is not None:
+                    sizes[name] = size
     return out
 
 
@@ -191,7 +194,8 @@ class Game:
         elf = self.rom.with_suffix(".elf")
         if not elf.exists():
             raise PlaytestError(f"{elf.name} not found next to {self.rom.name}; it is produced by `make`")
-        self.sym = elf_symbols(elf)
+        self.sym_size: dict[str, int] = {}
+        self.sym = elf_symbols(elf, self.sym_size)
         for need in ("gMain", "gSaveBlock1Ptr", "CB2_Overworld", "CB2_LoadMap"):
             if need not in self.sym:
                 raise PlaytestError(f"symbol {need} not found in {elf.name}")
@@ -408,12 +412,22 @@ class PlaySession:
         return self._constants
 
     def apply_state(self, ops) -> list[str]:
-        """Story state lines: FLAG_X (set), !FLAG_X (clear), VAR_X=5, ITEM_X*3 (give)."""
+        """Story state lines (see :func:`parse_state`): flags, vars, items and Pokémon for the team."""
         g = self._require()
         parsed = parse_state(ops)
-        values = self.constants.values([name for _, name, _ in parsed], game_version(g.rom))
+        names = [name for kind, name, _ in parsed if name]
+        names += [x for kind, _, arg in parsed if kind == "mon" for x in [arg["item"], *arg["moves"]] if x]
+        values = self.constants.values(list(dict.fromkeys(names)), game_version(g.rom))
         done = []
         for kind, name, arg in parsed:
+            if kind == "clear_team":
+                self.clear_team()
+                done.append("emptied the team")
+                continue
+            if kind == "mon":
+                done.append(self.give_mon(values[name], arg["level"], values.get(arg["item"]) if arg["item"] else 0,
+                                          [values[mv] for mv in arg["moves"]], name))
+                continue
             v = values[name]
             if kind == "flag":
                 g.call("FlagSet" if arg else "FlagClear", v)
@@ -422,10 +436,74 @@ class PlaySession:
                 g.call("VarSet", v, arg)
                 done.append(f"{name} = {arg}")
             else:
-                if not g.call("AddBagItem", v, arg):
-                    raise PlaytestError(f"could not add {arg} x {name} (bag full or invalid item)")
-                done.append(f"gave {arg} x {name}")
+                if g.call("AddBagItem", v, arg) & 0xFF:
+                    done.append(f"gave {arg} x {name}")
+                else:
+                    done.append(f"couldn't fit {arg} x {name} in the bag (that pocket is full)")
         return done
+
+    # -- the team
+    def _party(self) -> tuple[int, int]:
+        """(address of gPlayerParty, size of one struct Pokemon)."""
+        g = self._require()
+        if "gPlayerParty" in g.sym:  # pokeemerald
+            return g.sym["gPlayerParty"], g.sym_size.get("gPlayerParty", 600) // 6
+        if "gPlayerPartyPtr" in g.sym:  # expansion: gParties[trainer][6], player first, then opponent A
+            base = g.emu.read(g.sym["gPlayerPartyPtr"])
+            size = 0
+            if "gEnemyPartyPtr" in g.sym:
+                size = (g.emu.read(g.sym["gEnemyPartyPtr"]) - base) // 6
+            if not 60 <= size <= 200 and "gParties" in g.sym:
+                size = g.sym_size.get("gParties", 0) // 24
+            if 60 <= size <= 200:
+                return base, size
+        raise PlaytestError("couldn't find the player's team (gPlayerParty) in the .elf")
+
+    def clear_team(self) -> None:
+        g = self._require()
+        g.call("ZeroPlayerPartyMons")
+        g.call("CalculatePlayerPartyCount")
+
+    def give_mon(self, species: int, level: int, item: int = 0, moves: list[int] | None = None,
+                 label: str = "") -> str:
+        """Add a Pokémon to the team (or the PC when the team is full), like the givemon script command."""
+        g = self._require()
+        if "ScriptGiveMon" not in g.sym:
+            raise PlaytestError("ScriptGiveMon not found in the .elf")
+        before = g.call("CalculatePlayerPartyCount") & 0xFF
+        res = g.call("ScriptGiveMon", species, level, item) & 0xFF
+        if res == 2:
+            raise PlaytestError(f"could not give {label or species}: the team and the PC are full")
+        where = "the team" if res == 0 else "the PC (the team is full)"
+        if moves and res == 0:
+            base, size = self._party()
+            mon = base + before * size
+            for slot in range(4):
+                g.call("SetMonMoveSlot", mon, moves[slot] if slot < len(moves) else 0, slot)
+        try:  # the start menu only shows POKéMON once this is set
+            g.call("FlagSet", self._mon_field("FLAG_SYS_POKEMON_GET"))
+        except PlaytestError:
+            pass
+        return f"added {label or species} lv{level} to {where}"
+
+    def team(self) -> list[dict]:
+        """The current team: species / level / held item / moves, as numbers (see team_names for names)."""
+        g = self._require()
+        base, size = self._party()
+        n = g.call("CalculatePlayerPartyCount") & 0xFF
+        out = []
+        for i in range(min(n, 6)):
+            mon = base + i * size
+            fn = "GetMonData2" if "GetMonData2" in g.sym else "GetMonData"
+            get = lambda field: g.call(fn, mon, field, 0)
+            out.append({"slot": i, "species": get(self._mon_field("MON_DATA_SPECIES")),
+                        "level": get(self._mon_field("MON_DATA_LEVEL")),
+                        "item": get(self._mon_field("MON_DATA_HELD_ITEM")),
+                        "moves": [get(self._mon_field(f"MON_DATA_MOVE{k}")) for k in range(1, 5)]})
+        return out
+
+    def _mon_field(self, name: str) -> int:
+        return self.constants.values([name], game_version(self._require().rom))[name]
 
     def run_script(self, label: str, frames: int = 30) -> Image.Image:
         """Start any script label (an event, cutscene, sign…) right now, as if it had been triggered."""
@@ -561,13 +639,24 @@ def game_version(rom: Path) -> str:
     return GAME_VERSIONS.get(code, "EMERALD")
 
 
-def parse_state(ops) -> list[tuple[str, str, int]]:
-    """['FLAG_BADGE01_GET', '!FLAG_HIDE_X', 'VAR_STORY=3', 'ITEM_POTION*5'] -> [(kind, name, arg)]."""
+def parse_state(ops) -> list[tuple[str, str, object]]:
+    """Story state lines -> [(kind, name, arg)].
+
+    * ``FLAG_BADGE01_GET`` (set), ``!FLAG_HIDE_X`` (clear), ``VAR_STORY=3``, ``ITEM_POTION*5`` (give)
+    * ``SPECIES_MUDKIP lv20 ITEM_ORAN_BERRY MOVE_TACKLE MOVE_WATER_GUN`` (add to the team: level, held item and up
+      to 4 moves are optional), ``CLEAR_TEAM`` (empty the team first)
+    """
     items = ops if isinstance(ops, list) else re.split(r"[,\n]", ops or "")
-    out = []
+    out: list[tuple[str, str, object]] = []
     for raw in items:
         s = str(raw).strip()
         if not s or s.startswith("#"):
+            continue
+        if s.upper() in ("CLEAR_TEAM", "!TEAM", "CLEAR_PARTY"):
+            out.append(("clear_team", "", 0))
+            continue
+        if re.match(r"SPECIES_\w+", s, re.I):
+            out.append(("mon", *_parse_mon(s)))
             continue
         m = re.fullmatch(r"(!?)\s*(FLAG_\w+)(?:\s*=\s*(\d+|true|false))?", s, re.I)
         if m:
@@ -582,15 +671,50 @@ def parse_state(ops) -> list[tuple[str, str, int]]:
         if m:
             out.append(("item", m.group(1).upper(), int(m.group(2) or 1)))
             continue
-        raise PlaytestError(f"can't read story state '{s}': use FLAG_X, !FLAG_X, VAR_X=5 or ITEM_X*3")
+        raise PlaytestError(f"can't read '{s}'. Write one of: FLAG_X (turn a flag on), !FLAG_X (turn it off), "
+                            "VAR_X=5, ITEM_X*3 (give items), SPECIES_X lv20 (add a Pokémon), CLEAR_TEAM")
     return out
+
+
+def _parse_mon(line: str) -> tuple[str, dict]:
+    """'SPECIES_MUDKIP lv20 ITEM_ORAN_BERRY MOVE_TACKLE' -> ('SPECIES_MUDKIP', {level, item, moves})."""
+    tokens = re.split(r"[\s,;]+", line.strip())
+    species = tokens[0].upper()
+    mon = {"level": 5, "item": None, "moves": []}
+    i = 1
+    while i < len(tokens):
+        t = tokens[i]
+        low = t.lower()
+        if low in ("lv", "lvl", "level", "l") and i + 1 < len(tokens) and tokens[i + 1].isdigit():
+            mon["level"] = int(tokens[i + 1])
+            i += 2
+            continue
+        m = re.fullmatch(r"(?:lv|lvl|level|l)?\.?(\d+)", low)
+        if m:
+            mon["level"] = int(m.group(1))
+        elif low in ("holding", "with", "moves", "knows", "@"):
+            pass
+        elif t.upper().startswith("ITEM_"):
+            mon["item"] = t.upper()
+        elif t.upper().startswith("MOVE_"):
+            if len(mon["moves"]) == 4:
+                raise PlaytestError(f"{species} can know at most 4 moves")
+            mon["moves"].append(t.upper())
+        else:
+            raise PlaytestError(f"can't read '{t}' in '{line}'. Example: SPECIES_MUDKIP lv20 ITEM_ORAN_BERRY "
+                                "MOVE_TACKLE MOVE_WATER_GUN")
+        i += 1
+    if not 1 <= mon["level"] <= 100:
+        raise PlaytestError(f"{species}: level must be 1-100")
+    return species, mon
 
 
 class Constants:
     """Values of FLAG_/VAR_/ITEM_ (any C constant) as *your* headers define them, by compiling a tiny file
     with the project's own toolchain, so renumbered or added constants in a fork are always right."""
 
-    HEADERS = ("global.h", "constants/flags.h", "constants/vars.h", "constants/items.h")
+    HEADERS = ("global.h", "constants/flags.h", "constants/vars.h", "constants/items.h", "constants/species.h",
+               "constants/moves.h", "pokemon.h")
 
     def __init__(self, root: Path, cache_dir: Path):
         self.root = Path(root)
