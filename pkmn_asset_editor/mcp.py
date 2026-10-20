@@ -81,6 +81,9 @@ TOOLS = [
     ("get_script", "The map's scripts file (scripts.inc or scripts.pory) as text.", _schema({"name": S}, ["name"])),
     ("write_script", "Replace the map's scripts file. Keep existing labels that events or other maps use.",
      _schema({"name": S, "text": S}, ["name", "text"])),
+    ("preview_text", "How a map's dialogue looks in the game's own message box (image), with problems: lines too "
+     "wide for the box, a 3rd line without \\l or \\p, characters the font lacks, missing $. Give `label` for "
+     "one text, or none for all texts with problems.", _schema({"name": S, "label": S}, ["name"])),
     ("new_script", "Append a ready-made script (npc / sign / trigger) that shows a message; returns its label "
      "to put in an event's 'script' field.", _schema({"name": S, "kind": S, "text": S}, ["name"])),
     ("duplicate_map", "Create a new map as a copy of an existing one (e.g. copy a house interior to add a new "
@@ -136,8 +139,36 @@ TOOLS = [
      _schema({"chapter": I, "extras": B}, ["chapter"])),
     ("set_map_chapter", "Put a map (and its inside maps) in a story chapter (number), or 0 to take it out.",
      _schema({"map": S, "chapter": I}, ["map", "chapter"])),
+    ("story_flag", "Which events (map + script) turn a flag/variable on or off or set it, and which events need it "
+     "or check it: follow how the story is chained together.", _schema({"name": S}, ["name"])),
+    ("suggest_map_chapters", "Suggest a story chapter for maps not in one (from the doors/edges to placed maps); "
+     "apply=true puts them there.", _schema({"apply": B})),
     ("playtest_team", "The running play-test's team: species, level, held item and moves (as numbers).",
      _schema({})),
+    ("list_trainers", "Trainers (id, name, class, team) from src/data/trainers.party, optionally filtered by text.",
+     _schema({"query": S})),
+    ("get_trainer", "One trainer: fields (Name, Class, Items, Double Battle, AI…), the team (species, level, item, "
+     "moves, other lines like IVs/Nature) and the maps whose scripts battle them.", _schema({"id": S}, ["id"])),
+    ("set_trainer", "Change a trainer: `mons` replaces the whole team (each {species, level, item, moves[], extra[]}; "
+     "names like 'Geodude'/'Rock Tomb' or constants), `fields` replaces fields ([{key, value}]).",
+     _schema({"id": S, "mons": {"type": "array", "items": {"type": "object"}},
+              "fields": {"type": "array", "items": {"type": "object"}}}, ["id"])),
+    ("get_wild", "A map's wild Pokémon: for grass, surfing, rock smash and fishing, the encounter rate and each "
+     "slot's species, levels and chance.", _schema({"map": S}, ["map"])),
+    ("set_wild", "Set one kind of wild encounter on a map: kind (land_mons, water_mons, rock_smash_mons, "
+     "fishing_mons), encounter_rate, and mons with exactly one {species, min_level, max_level} per slot "
+     "(get_wild shows how many). Empty mons removes that kind.",
+     _schema({"map": S, "kind": S, "encounter_rate": I, "mons": {"type": "array", "items": {"type": "object"}}},
+             ["map", "kind"])),
+    ("get_species", "A Pokémon's data: base stats, types, abilities, catch rate, EXP, evolutions and level-up moves.",
+     _schema({"id": S}, ["id"])),
+    ("set_species", "Change a Pokémon: baseHP/baseAttack/baseDefense/baseSpAttack/baseSpDefense/baseSpeed, "
+     "catchRate, expYield, types [TYPE_X, TYPE_Y], abilities [3], evolutions [{method, param, target}], "
+     "learnset [{level, move}] (replaces the level-up moves).",
+     _schema({"id": S, "changes": {"type": "object"}}, ["id", "changes"])),
+    ("playtest_battle", "In the running play-test, start a battle now: against `trainer` (TRAINER_X) or a wild "
+     "`species` at `level`, with the current team. Returns the screen; continue with playtest_press.",
+     _schema({"trainer": S, "species": S, "level": I}, [])),
     ("list_tileset_anims", "Tileset animations (water, flowers, waterfalls…), all or those `map` shows: id, frames "
      "(PNG files), play order, speed (game frames per animation frame, 60 = 1 s), animated tile range.",
      _schema({"map": S})),
@@ -159,6 +190,10 @@ TOOLS = [
      _schema({"map": S, "name": S, "tile": I, "count": I, "frames": I, "speed": I}, ["map", "name", "tile", "count"])),
     ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
      "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
+    ("list_save_points", "Save points (git commits) of the game folder, newest first, and the files changed since "
+     "the last one.", _schema({})),
+    ("make_save_point", "Commit every change as a save point with a plain-language message. Only when the user asks "
+     "for it.", _schema({"message": S}, ["message"])),
     ("status", "List assets that were edited.", _schema({})),
     ("validate", "Check every edit (sizes, colours, conflicts, tile limits) without writing a ROM.", _schema({})),
     ("build_rom", "ROM project: write the edited ROM and UPS/IPS patches. Source tree: check the edits, then run "
@@ -167,12 +202,14 @@ TOOLS = [
 
 
 MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks", "set_blocks", "copy_blocks", "edit_map",
-             "get_script", "write_script", "new_script", "duplicate_map", "link_warps", "resize_map",
+             "get_script", "write_script", "new_script", "preview_text", "duplicate_map", "link_warps", "resize_map",
              "find_constants", "playtest_start", "playtest_press", "tileset_info", "get_metatile", "set_metatile",
              "add_metatiles", "view_tiles", "import_art_as_metatiles", "playtest_save_checkpoint",
              "list_checkpoints", "playtest_run_script", "playtest_set_state", "list_tileset_anims",
              "view_tileset_anim", "edit_tileset_anim", "set_anim_frame", "add_anim_frame", "remove_anim_frame",
-             "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team"}
+             "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team",
+             "list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species",
+             "playtest_battle", "story_flag", "suggest_map_chapters"}
 
 
 class Server:
@@ -277,6 +314,10 @@ class Server:
                 else:
                     cols.append(tuple(int(v) for v in c[:3]))
             return txt({"ok": True, "recoloured": proj.set_palette(proj.get(args["id"]).id, cols)})
+        if name in ("list_save_points", "make_save_point"):
+            if proj.kind != "decomp":
+                raise ProjectError("save points need a source tree")
+            return self.history_call(name, args, txt)
         if name in MAP_TOOLS:
             m = getattr(proj, "maps", None)
             if m is None:
@@ -351,7 +392,24 @@ class Server:
             return txt(m.read_script(args["name"]))
         if name == "write_script":
             m.write_script(args["name"], args["text"])
-            return txt("saved")
+            bad = [f"{t.label}: {p}" for t in self.proj.textbox.texts(args["text"]) for p in t.problems]
+            return txt({"saved": True, "text_problems": bad[:40]} if bad else "saved")
+        if name == "preview_text":
+            tb = self.proj.textbox
+            texts = tb.texts(m.read_script(m.resolve(args["name"])))
+            if args.get("label"):
+                texts = [t for t in texts if t.label == args["label"]]
+                if not texts:
+                    raise ProjectError(f"no text label {args['label']} in {args['name']}'s scripts")
+            else:
+                texts = [t for t in texts if t.problems][:6]
+                if not texts:
+                    return txt("every text in this map fits its box")
+            out = []
+            for t in texts:
+                out.append(self._png(tb.render(t, scale=2)))
+                out += txt({"label": t.label, "problems": t.problems})
+            return out
         if name == "new_script":
             return txt({"label": m.new_script(args["name"], args.get("kind", "npc"), args.get("text", "Hello!"))})
         if name == "duplicate_map":
@@ -395,6 +453,38 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
+        if name in ("list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species"):
+            gd = self.proj.gamedata
+            if name == "list_trainers":
+                return txt(gd.trainers(args.get("query", ""))[:300])
+            if name == "get_trainer":
+                return txt(gd.get_trainer(args["id"]))
+            if name == "set_trainer":
+                return txt(gd.set_trainer(args["id"], {k: args[k] for k in ("mons", "fields") if k in args}))
+            if name == "get_wild":
+                return txt(gd.wild(args["map"]))
+            if name == "set_wild":
+                return txt(gd.set_wild(args["map"], args["kind"], int(args.get("encounter_rate") or 0),
+                                       args.get("mons") or []))
+            if name == "get_species":
+                return txt(gd.get_species(args["id"]))
+            return txt(gd.set_species(args["id"], args["changes"]))
+        if name == "playtest_battle":
+            from .playtest import PlaytestError
+            try:
+                img = self.proj.play.start_battle(trainer=args.get("trainer"), species=args.get("species"),
+                                                  level=int(args.get("level") or 5))
+            except PlaytestError as e:
+                raise ProjectError(str(e))
+            return [self._png(img.resize((480, 320), Image.NEAREST)), *txt(f"battling {self.proj.play.where['battle']}")]
+        if name == "story_flag":
+            u = m.story.flow()["usage"].get(args["name"].upper())
+            return txt(u or f"no event uses {args['name'].upper()}")
+        if name == "suggest_map_chapters":
+            sg = m.story.suggest_chapters()
+            if args.get("apply"):
+                m.story.apply_suggestions()
+            return txt({"suggestions": sg, "applied": bool(args.get("apply"))})
         if name == "list_story_chapters":
             chapters = m.story.chapters()
             return txt({"chapters": [dict(c, number=i + 1) for i, c in enumerate(chapters)],
@@ -459,6 +549,13 @@ class Server:
             hits = [c for c in m.constants(args["prefix"]) if q in c]
             return txt({"total": len(hits), "constants": hits[:300]})
         raise ProjectError(f"unknown tool {name}")
+
+    def history_call(self, name: str, args: dict, txt) -> list[dict]:
+        from .history import History
+        h = History(self.proj)
+        if name == "make_save_point":
+            return txt(h.save(args.get("message", "")))
+        return txt({"unsaved": h.unsaved(), "save_points": h.points(30)})
 
     def anim_call(self, m, name: str, args: dict, txt) -> list[dict]:
         ta = m.tileset_anims

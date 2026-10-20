@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokémon &amp; Trainers</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%23d23c3c'/><rect x='1' y='7' width='14' height='2' fill='%23222'/><circle cx='8' cy='8' r='2.5' fill='%23fff' stroke='%23222'/></svg>">
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --line: #dcdce2; --text: #1d1d24; --muted: #6b6b78;
+    --accent: #d23c3c; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b7791f; --chip: #ececf1; --sel: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+      --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+    --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; white-space: nowrap; }
+  header a { color: var(--muted); }
+  button, .btn, select, input, textarea { font: inherit; color: var(--text); }
+  button, .btn { padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--chip); cursor: pointer; text-decoration: none; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select, textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; min-width: 0; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button.on { background: var(--sel); color: #fff; border-color: var(--sel); }
+  .app { flex: 1; display: grid; grid-template-columns: 300px 1fr; min-height: 0; }
+  aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  aside input[type=search] { margin: 8px; }
+  #list { overflow: auto; flex: 1; }
+  .item { padding: 5px 10px; cursor: pointer; display: flex; gap: 6px; align-items: center; border-bottom: 1px solid var(--line); }
+  .item:hover { background: var(--chip); }
+  .item.sel { background: color-mix(in srgb, var(--sel) 18%, transparent); }
+  .item small { color: var(--muted); }
+  main { overflow: auto; padding: 14px 18px 60px; }
+  h2 { font-size: 18px; margin: 0 0 8px; }
+  h3 { font-size: 14px; margin: 16px 0 6px; }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  .field { display: grid; grid-template-columns: 140px 1fr; gap: 6px; align-items: center; margin: 4px 0; max-width: 560px; }
+  .field label { color: var(--muted); font-size: 12px; }
+  .icon { width: 32px; height: 32px; image-rendering: pixelated; flex: none; }
+  .mon { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; margin: 8px 0; background: var(--panel); max-width: 820px; }
+  .mon .grid { display: grid; grid-template-columns: 2fr 70px 2fr; gap: 6px; }
+  .mon .moves { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 6px; }
+  .mon textarea { width: 100%; font: 12px ui-monospace, monospace; margin-top: 6px; }
+  table { border-collapse: collapse; }
+  td, th { padding: 3px 6px; border-bottom: 1px solid var(--line); text-align: left; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td input { width: 100%; }
+  .stat { display: grid; grid-template-columns: 70px 64px 1fr; gap: 8px; align-items: center; max-width: 520px; margin: 3px 0; }
+  .bar { height: 10px; border-radius: 5px; background: var(--sel); }
+  .pic { image-rendering: pixelated; width: 128px; height: 128px; object-fit: cover; object-position: left top; background: var(--chip); border-radius: 10px; }
+  .adv { display: none; }
+  body.expert .adv { display: revert; }
+  #toast { position: fixed; bottom: 12px; right: 12px; display: flex; flex-direction: column; gap: 6px; z-index: 20; }
+  .msg { padding: 8px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); max-width: 420px; }
+  .msg.err { border-color: var(--accent); }
+  .msg.ok { border-color: var(--ok); }
+  #playbox { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 10; }
+  #playbox.open { display: flex; }
+  #playbox .box { background: var(--panel); border-radius: 12px; padding: 14px; width: min(760px, 96vw); max-height: 96vh; overflow: auto; }
+  #play-screen { width: 480px; height: 320px; image-rendering: pixelated; background: #000; display: block; margin: 8px 0; }
+  .teamrow { display: grid; grid-template-columns: 1.4fr 56px 1.2fr 1fr 1fr 1fr 1fr; gap: 4px; margin: 3px 0; }
+  .teamrow input { width: 100%; }
+  .pad button { min-width: 44px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🔴 Pokémon &amp; Trainers</h1>
+  <a href="/">🎨 Graphics</a>
+  <a href="/maps">🗺️ Maps</a>
+  <a href="/story">📖 Story</a>
+  <a href="/help" target="_blank">❓ Help</a>
+  <div class="tabs">
+    <button data-tab="trainers" class="on" title="the teams trainers and gym leaders use">Trainers</button>
+    <button data-tab="wild" title="which Pokémon you find in grass, water and caves">Wild Pokémon</button>
+    <button data-tab="species" title="stats, types, abilities, evolutions and moves of each Pokémon">Pokémon</button>
+  </div>
+  <span style="flex:1"></span>
+  <label class="muted" title="show every setting, with the names the game's files use"><input type="checkbox" id="expert"> Expert mode</label>
+  <button id="save" class="primary" disabled title="save your changes (Ctrl+S)">Save</button>
+</header>
+<div class="app">
+  <aside><input type="search" id="search" placeholder="Search…"><div id="list"></div></aside>
+  <main id="main"><p class="muted">Pick something on the left.</p></main>
+</div>
+
+<div id="playbox"><div class="box">
+  <div class="row" style="justify-content:space-between;margin-top:0"><b id="play-title">Test a battle</b><button id="play-close">Close</button></div>
+  <div class="muted" style="font-size:12px">Your team for this battle (leave empty to use a new game's team):</div>
+  <div class="teamrow muted" style="font-size:11px"><span>Pokémon</span><span>level</span><span>holding</span><span>move 1</span><span>move 2</span><span>move 3</span><span>move 4</span></div>
+  <div id="play-team"></div>
+  <div class="row">start on map <input id="play-map" list="dl-maps" style="flex:1" title="the battle starts after arriving here"></div>
+  <div class="row">how far into the story <select id="play-chapter" style="flex:1" title="gives the badges and items you'd have by then"><option value="">start of the game</option></select></div>
+  <div class="row"><button id="play-go" class="primary">▶ Build &amp; battle</button><button id="play-again" title="start the battle again without building">Battle again</button><span id="play-status" class="muted"></span></div>
+  <img id="play-screen" alt="game screen">
+  <div class="row pad">
+    <button data-k="UP">▲</button><button data-k="DOWN">▼</button><button data-k="LEFT">◀</button><button data-k="RIGHT">▶</button>
+    <button data-k="A">A</button><button data-k="B">B</button><button data-k="START">Start</button>
+    <span class="muted" style="font-size:12px">Keyboard: arrows, Z = A, X = B, Enter = Start</span>
+  </div>
+</div></div>
+<div id="toast"></div>
+<datalist id="dl-SPECIES"></datalist><datalist id="dl-MOVE"></datalist><datalist id="dl-ITEM"></datalist>
+<datalist id="dl-ABILITY"></datalist><datalist id="dl-maps"></datalist><datalist id="dl-EVO"></datalist>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api = async (path, body) => {
+  const opts = body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  const data = (r.headers.get('content-type') || '').includes('json') ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(data.error || data);
+  return data;
+};
+function toast(text, kind = 'ok', ms = 4000) {
+  const el = document.createElement('div'); el.className = 'msg ' + kind; el.textContent = text;
+  $('#toast').appendChild(el); setTimeout(() => el.remove(), ms);
+}
+const icon = (sp) => sp ? `<img class="icon" alt="" src="/api/data/icon?species=${encodeURIComponent(sp)}" onerror="this.style.visibility='hidden'">` : '<span class="icon"></span>';
+const S = { tab: 'trainers', sel: null, cur: null, dirty: false, names: {}, rev: {} };
+
+// constants <-> names, so people can type "Geodude" or "Rock Tomb"
+async function loadNames(prefix) {
+  if (S.names[prefix]) return;
+  const r = await api('/api/data/names?prefix=' + prefix);
+  S.names[prefix] = r; S.rev[prefix] = {};
+  for (const [c, n] of Object.entries(r)) {
+    const k = n.toLowerCase(), had = S.rev[prefix][k];
+    if (!had || c.length < had.length) S.rev[prefix][k] = c;  // forms share names (Aerodactyl / Mega): prefer the base
+    S.rev[prefix][c.toLowerCase()] = c;
+  }
+  $('#dl-' + prefix.replace(/_$/, '')).innerHTML = Object.entries(r).map(([c, n]) => `<option value="${esc(n)}">${esc(c)}</option>`).join('');
+}
+const nameOf = (prefix, c) => (c && S.names[prefix] && S.names[prefix][c]) || c || '';
+function constOf(prefix, v) {
+  v = (v || '').trim(); if (!v) return '';
+  const hit = S.rev[prefix] && S.rev[prefix][v.toLowerCase()]; if (hit) return hit;
+  return v.toUpperCase().startsWith(prefix) ? v.toUpperCase() : prefix + v.toUpperCase().replace(/'/g, '').replace(/[^A-Z0-9]/g, '_');
+}
+function setDirty(d = true) { S.dirty = d; $('#save').disabled = !d; }
+window.addEventListener('beforeunload', (e) => { if (S.dirty) { e.preventDefault(); e.returnValue = ''; } });
+document.addEventListener('keydown', (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); if (S.dirty) $('#save').click(); }
+});
+
+// ------------------------------------------------------------------ list
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => {
+  if (S.dirty && !confirm('Discard unsaved changes?')) return;
+  setDirty(false);
+  document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b));
+  S.tab = b.dataset.tab; S.sel = null; $('#search').value = ''; $('#main').innerHTML = '<p class="muted">Pick something on the left.</p>';
+  history.replaceState(null, '', '?tab=' + S.tab);
+  renderList();
+});
+let listTimer;
+$('#search').oninput = () => { clearTimeout(listTimer); listTimer = setTimeout(renderList, 200); };
+async function renderList() {
+  const q = $('#search').value.trim(), host = $('#list');
+  $('#search').placeholder = { trainers: 'Search trainers (name, class)…', wild: 'Search maps…', species: 'Search Pokémon…' }[S.tab];
+  let rows = [];
+  if (S.tab === 'trainers') {
+    const r = await api('/api/data/trainers?q=' + encodeURIComponent(q));
+    rows = r.filter(t => t.id !== 'TRAINER_NONE').slice(0, 400).map(t => ({ id: t.id, html: `<div><b>${esc(t.name || t.id)}</b> <small>${esc(t.class)}</small><br><small>${esc(t.party.join(', '))}${t.levels.length ? ' · lv ' + esc(t.levels.filter(Boolean).join('/')) : ''}</small></div>` }));
+  } else if (S.tab === 'wild') {
+    if (!S.maps) S.maps = (await api('/api/maps')).maps.map(m => m.name);
+    rows = S.maps.filter(m => !q || m.toLowerCase().includes(q.toLowerCase())).slice(0, 500).map(m => ({ id: m, html: esc(m) }));
+  } else {
+    const r = await api('/api/data/species_list?q=' + encodeURIComponent(q));
+    rows = r.slice(0, 500).map(s => ({ id: s.id, html: `${icon(s.id)}<div>${esc(s.name)}<br><small>${esc(s.id)}</small></div>` }));
+  }
+  host.innerHTML = rows.map(r => `<div class="item${r.id === S.sel ? ' sel' : ''}" data-id="${esc(r.id)}">${r.html}</div>`).join('') || '<p class="muted" style="padding:10px">Nothing found.</p>';
+  host.querySelectorAll('.item').forEach(el => el.onclick = () => open(el.dataset.id));
+}
+async function open(id) {
+  if (S.dirty && !confirm('Discard unsaved changes?')) return;
+  setDirty(false); S.sel = id;
+  document.querySelectorAll('#list .item').forEach(el => el.classList.toggle('sel', el.dataset.id === id));
+  history.replaceState(null, '', `?tab=${S.tab}&id=${encodeURIComponent(id)}`);
+  try {
+    if (S.tab === 'trainers') await openTrainer(id);
+    else if (S.tab === 'wild') await openWild(id);
+    else await openSpecies(id);
+  } catch (e) { $('#main').innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+}
+
+// ------------------------------------------------------------------ trainers
+const SIMPLE_FIELDS = { Name: 'name', Class: 'kind of trainer', Items: 'items they use (separate with /)', 'Double Battle': 'double battle? (Yes / No)', Pic: 'picture', AI: 'how smart (AI)' };
+async function openTrainer(id) {
+  await Promise.all(['SPECIES_', 'MOVE_', 'ITEM_', 'ABILITY_'].map(loadNames));
+  const t = await api('/api/data/trainer?id=' + encodeURIComponent(id));
+  S.cur = t;
+  const f = Object.fromEntries(t.fields.map(x => [x.key, x.value]));
+  let h = `<div class="row" style="align-items:flex-start;gap:14px">
+    ${t.pic_file ? `<img class="pic" alt="" src="/api/image?id=${encodeURIComponent(t.pic_file)}">` : ''}
+    <div><h2>${esc(f.Name || t.id)} <span class="muted" style="font-size:13px">${esc(f.Class || '')}</span></h2>
+    <div class="muted">${esc(t.id)} · ${esc(t.file)}:${t.line}</div>
+    <div class="muted">${t.used_on.length ? 'Battled in: ' + [...new Set(t.used_on.map(u => u.map))].map(m => `<a href="/maps?map=${encodeURIComponent(m)}">${esc(m)}</a>`).join(', ') : 'Not used by any map script yet.'}</div>
+    <div class="row"><button id="tr-test" class="primary" title="build the game and fight this trainer with a team you choose">⚔️ Test this battle</button></div></div></div>
+    <h3>About this trainer</h3>`;
+  t.fields.forEach((x, i) => {
+    const simple = SIMPLE_FIELDS[x.key];
+    h += `<div class="field${simple ? '' : ' adv'}"><label title="${esc(x.key)}">${esc(simple || x.key)}</label><input data-f="${i}" value="${esc(x.value)}"></div>`;
+  });
+  h += `<h3>Team (${t.mons.length}/6)</h3><div id="mons"></div>
+    <div class="row"><button id="mon-add" ${t.mons.length >= 6 ? 'disabled' : ''}>+ Add a Pokémon</button></div>`;
+  $('#main').innerHTML = h;
+  $('#main').querySelectorAll('[data-f]').forEach(inp => inp.oninput = () => { t.fields[+inp.dataset.f].value = inp.value; setDirty(); });
+  renderMons();
+  $('#mon-add').onclick = () => {
+    const last = t.mons[t.mons.length - 1];
+    t.mons.push({ species: 'SPECIES_ZIGZAGOON', level: last ? last.level : 5, item: '', moves: [], extra: last ? [...last.extra] : [], order: [] });
+    setDirty(); openTrainerRefresh();
+  };
+  $('#tr-test').onclick = () => openPlay(t);
+}
+function openTrainerRefresh() { renderMons(); $('#mon-add').disabled = S.cur.mons.length >= 6; $('#main h3:nth-of-type(2)').textContent = `Team (${S.cur.mons.length}/6)`; }
+function renderMons() {
+  const t = S.cur, host = $('#mons');
+  host.innerHTML = t.mons.map((m, i) => `<div class="mon" data-i="${i}">
+    <div class="row" style="margin-top:0">${icon(m.species)}<b>${i + 1}.</b>
+      <span style="flex:1"></span><button data-act="up" ${i === 0 ? 'disabled' : ''} title="move up">↑</button><button data-act="down" ${i === t.mons.length - 1 ? 'disabled' : ''} title="move down">↓</button><button data-act="del">Remove</button></div>
+    <div class="grid"><input data-m="species" list="dl-SPECIES" value="${esc(nameOf('SPECIES_', m.species))}" placeholder="Pokémon" title="which Pokémon">
+      <input data-m="level" type="number" min="1" max="100" value="${esc(m.level ?? '')}" placeholder="lv" title="level">
+      <input data-m="item" list="dl-ITEM" value="${esc(nameOf('ITEM_', m.item))}" placeholder="holding (optional)" title="held item"></div>
+    <div class="moves">${[0, 1, 2, 3].map(k => `<input data-mv="${k}" list="dl-MOVE" value="${esc(nameOf('MOVE_', m.moves[k]))}" placeholder="move ${k + 1}">`).join('')}</div>
+    <div class="muted" style="font-size:11px;margin-top:4px">No moves = the moves it would know at that level.</div>
+    <div class="adv"><textarea data-m="extra" rows="2" title="other settings, one per line (IVs, EVs, Nature, Shiny…)">${esc(m.extra.join('\n'))}</textarea>
+      <div class="row">nickname <input data-m="nickname" value="${esc(m.nickname || '')}" style="width:120px"> gender <select data-m="gender"><option value="">random</option><option ${m.gender === 'M' ? 'selected' : ''}>M</option><option ${m.gender === 'F' ? 'selected' : ''}>F</option></select>
+      ability <input data-m="ability" list="dl-ABILITY" value="${esc(nameOf('ABILITY_', m.ability))}" style="width:160px"></div></div>
+  </div>`).join('');
+  host.querySelectorAll('.mon').forEach(card => {
+    const m = t.mons[+card.dataset.i];
+    card.querySelectorAll('[data-m]').forEach(inp => inp.oninput = () => {
+      const k = inp.dataset.m;
+      if (k === 'species') m.species = constOf('SPECIES_', inp.value);
+      else if (k === 'item') m.item = constOf('ITEM_', inp.value);
+      else if (k === 'ability') m.ability = constOf('ABILITY_', inp.value);
+      else if (k === 'level') m.level = inp.value === '' ? null : +inp.value;
+      else if (k === 'extra') m.extra = inp.value.split('\n').map(x => x.trim()).filter(Boolean);
+      else m[k] = inp.value;
+      setDirty();
+    });
+    card.querySelector('[data-m="species"]').onchange = () => { card.querySelector('.icon').outerHTML = icon(m.species); };
+    card.querySelectorAll('[data-mv]').forEach(inp => inp.oninput = () => {
+      const mv = [...card.querySelectorAll('[data-mv]')].map(x => constOf('MOVE_', x.value)).filter(Boolean);
+      m.moves = mv; setDirty();
+    });
+    card.querySelector('[data-act="del"]').onclick = () => { if (t.mons.length === 1) return toast('A trainer needs at least one Pokémon', 'err'); t.mons.splice(+card.dataset.i, 1); setDirty(); openTrainerRefresh(); };
+    card.querySelector('[data-act="up"]').onclick = () => { const i = +card.dataset.i; [t.mons[i - 1], t.mons[i]] = [t.mons[i], t.mons[i - 1]]; setDirty(); renderMons(); };
+    card.querySelector('[data-act="down"]').onclick = () => { const i = +card.dataset.i; [t.mons[i + 1], t.mons[i]] = [t.mons[i], t.mons[i + 1]]; setDirty(); renderMons(); };
+  });
+}
+
+// ------------------------------------------------------------------ wild Pokémon
+async function openWild(map) {
+  await loadNames('SPECIES_');
+  renderWild(await api('/api/data/wild?map=' + encodeURIComponent(map)), map);
+}
+function renderWild(w, map) {
+  S.cur = w;
+  let h = `<h2>${esc(map)}</h2><div class="muted">${esc(w.map)} · <a href="/maps?map=${encodeURIComponent(map)}">open the map</a></div>`;
+  if (!w.entries.length) {
+    w.entries.push({ kinds: Object.fromEntries(Object.entries({ land_mons: 'Grass & caves', water_mons: 'Surfing', rock_smash_mons: 'Rock Smash', fishing_mons: 'Fishing' }).map(([k, label]) => [k, { label, encounter_rate: 0, mons: [], slot_rates: [] }])), new: true });
+    h += '<p class="muted">No wild Pokémon here yet. Press <b>Add</b> on a kind to start.</p>';
+  }
+  const e = w.entries[0];
+  for (const [kind, k] of Object.entries(e.kinds)) {
+    const n = w.slot_counts[kind] || k.slot_rates.length;
+    const rates = k.slot_rates.length ? k.slot_rates : Array(n).fill(0);
+    const rod = (i) => k.groups ? Object.entries(k.groups).find(([, idx]) => idx.includes(i))?.[0].replace('_', ' ') || '' : '';
+    h += `<h3>${esc(k.label)}</h3>`;
+    if (!k.mons.length) { h += `<div class="row"><span class="muted">None.</span><button data-add="${kind}">Add</button></div>`; continue; }
+    h += `<div class="row">how often you meet one <input type="number" min="0" max="255" data-rate="${kind}" value="${k.encounter_rate}" style="width:70px" title="encounter rate: higher = more often (20 is normal grass)">
+      <button data-del="${kind}" title="no ${esc(k.label.toLowerCase())} encounters on this map">Remove all</button></div>
+      <table><tr><th>${k.groups ? 'rod' : 'slot'}</th><th>chance</th><th></th><th>Pokémon</th><th>min lv</th><th>max lv</th><th></th></tr>`;
+    k.mons.forEach((m, i) => {
+      h += `<tr data-kind="${kind}" data-i="${i}"><td class="muted">${k.groups ? esc(rod(i)) : i + 1}</td><td class="muted">${rates[i] ?? ''}%</td><td>${icon(m.species)}</td>
+        <td><input data-w="species" list="dl-SPECIES" value="${esc(nameOf('SPECIES_', m.species))}"></td>
+        <td><input data-w="min_level" type="number" min="1" max="100" value="${m.min_level}" style="width:64px"></td>
+        <td><input data-w="max_level" type="number" min="1" max="100" value="${m.max_level}" style="width:64px"></td>
+        <td><button data-battle="${kind}:${i}" title="build the game and battle this Pokémon">⚔️</button></td></tr>`;
+    });
+    h += '</table>';
+  }
+  $('#main').innerHTML = h;
+  const main = $('#main');
+  main.querySelectorAll('[data-w]').forEach(inp => inp.oninput = () => {
+    const tr = inp.closest('tr'), m = e.kinds[tr.dataset.kind].mons[+tr.dataset.i];
+    m[inp.dataset.w] = inp.dataset.w === 'species' ? constOf('SPECIES_', inp.value) : +inp.value;
+    e.kinds[tr.dataset.kind].changed = true; setDirty();
+  });
+  main.querySelectorAll('[data-rate]').forEach(inp => inp.oninput = () => { e.kinds[inp.dataset.rate].encounter_rate = +inp.value; e.kinds[inp.dataset.rate].changed = true; setDirty(); });
+  main.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+    const kind = b.dataset.add, k = e.kinds[kind], n = w.slot_counts[kind] || 1;
+    k.mons = Array.from({ length: n }, () => ({ species: 'SPECIES_ZIGZAGOON', min_level: 3, max_level: 5 }));
+    k.encounter_rate = kind === 'fishing_mons' ? 30 : kind === 'water_mons' ? 4 : 20; k.changed = true; setDirty();
+    S.cur = w; rerenderWild();
+  });
+  main.querySelectorAll('[data-del]').forEach(b => b.onclick = () => { const k = e.kinds[b.dataset.del]; k.mons = []; k.encounter_rate = 0; k.changed = true; setDirty(); rerenderWild(); });
+  main.querySelectorAll('[data-battle]').forEach(b => b.onclick = () => {
+    const [kind, i] = b.dataset.battle.split(':'), m = e.kinds[kind].mons[+i];
+    openPlay(null, { species: m.species, level: m.min_level, map });
+  });
+}
+function rerenderWild() { renderWild(S.cur, S.sel); }
+
+// ------------------------------------------------------------------ Pokémon
+const STAT_LABEL = { baseHP: 'HP', baseAttack: 'Attack', baseDefense: 'Defense', baseSpAttack: 'Sp. Atk', baseSpDefense: 'Sp. Def', baseSpeed: 'Speed' };
+async function openSpecies(id) {
+  await Promise.all(['SPECIES_', 'MOVE_', 'ABILITY_'].map(loadNames));
+  if (!S.types) S.types = await api('/api/constants?prefix=TYPE_');
+  if (!S.evos) { S.evos = await api('/api/constants?prefix=EVO_'); $('#dl-EVO').innerHTML = S.evos.map(c => `<option value="${esc(c)}">`).join(''); }
+  const d = await api('/api/data/species?id=' + encodeURIComponent(id));
+  S.cur = d; S.cur.edit = {};
+  const typeOpts = (sel) => '<option value="">(none)</option>' + S.types.filter(t => !/TYPE_(NONE|MYSTERY|COUNT|NUMBER)/.test(t)).map(t => `<option ${t === sel ? 'selected' : ''} value="${t}">${esc(t.replace('TYPE_', '').toLowerCase())}</option>`).join('');
+  let h = `<div class="row" style="align-items:flex-start;gap:14px">
+    ${d.front_pic ? `<img class="pic" alt="" src="/api/image?id=${encodeURIComponent(d.front_pic)}" style="width:128px;height:128px;object-fit:cover;object-position:top">` : ''}
+    <div><h2>${esc(d.name)}</h2><div class="muted">${esc(d.id)} · ${esc(d.file)}:${d.line}</div>
+    <div class="row">type <select data-type="0">${typeOpts(d.types[0])}</select><select data-type="1">${typeOpts(d.types[1] !== d.types[0] ? d.types[1] : '')}</select></div></div></div>
+    <h3>Base stats <span class="muted" id="bst">total ${d.total}</span></h3>`;
+  for (const k of Object.keys(STAT_LABEL)) {
+    const v = d.stats[k] ?? '';
+    h += `<div class="stat"><span>${STAT_LABEL[k]}</span><input type="number" min="1" max="255" data-stat="${k}" value="${v}" title="${esc(d.stat_exprs[k])}"><div class="bar" style="width:${Math.round((+v || 0) / 255 * 100)}%"></div></div>`;
+  }
+  h += `<h3>Abilities</h3><div class="row">${[0, 1, 2].map(i => `<input data-ab="${i}" list="dl-ABILITY" value="${esc(nameOf('ABILITY_', d.abilities[i] === 'ABILITY_NONE' ? '' : d.abilities[i]))}" placeholder="${i === 2 ? 'hidden ability' : 'ability ' + (i + 1)}" style="width:180px">`).join('')}</div>
+    <div class="field"><label title="catchRate: 3 = very hard (legendaries), 255 = very easy">how easy to catch (3-255)</label><input type="number" min="0" max="255" data-num="catchRate" value="${d.catchRate ?? ''}"></div>
+    <div class="field"><label title="expYield">EXP it gives</label><input type="number" min="0" data-num="expYield" value="${d.expYield ?? ''}"></div>
+    <h3>Evolves into</h3><table id="evos"><tr><th>how</th><th>when / with</th><th>into</th><th></th></tr>
+    ${d.evolutions.map((e, i) => `<tr data-i="${i}"><td><input data-e="method" list="dl-EVO" value="${esc(e.method)}" title="EVO_LEVEL = at a level, EVO_ITEM = with an item, EVO_TRADE…"></td><td><input data-e="param" value="${esc(e.param)}" style="width:150px"></td><td><input data-e="target" list="dl-SPECIES" value="${esc(nameOf('SPECIES_', e.target))}"></td><td><button data-edel="${i}">✕</button></td></tr>`).join('')}</table>
+    <div class="row"><button id="evo-add">+ Add an evolution</button></div>
+    <h3>Moves it learns by level</h3><table id="learn"><tr><th>level</th><th>move</th><th></th></tr>
+    ${d.learnset.map((m, i) => `<tr data-i="${i}"><td><input type="number" min="0" max="100" data-l="level" value="${m.level}" style="width:64px"></td><td><input data-l="move" list="dl-MOVE" value="${esc(m.name)}"></td><td><button data-ldel="${i}">✕</button></td></tr>`).join('')}</table>
+    <div class="row"><button id="learn-add">+ Add a move</button></div>`;
+  $('#main').innerHTML = h;
+  const ed = S.cur.edit, main = $('#main');
+  main.querySelectorAll('[data-stat]').forEach(inp => inp.oninput = () => {
+    ed[inp.dataset.stat] = +inp.value; inp.nextElementSibling.style.width = Math.round((+inp.value || 0) / 255 * 100) + '%';
+    $('#bst').textContent = 'total ' + [...main.querySelectorAll('[data-stat]')].reduce((a, x) => a + (+x.value || 0), 0); setDirty();
+  });
+  main.querySelectorAll('[data-num]').forEach(inp => inp.oninput = () => { ed[inp.dataset.num] = +inp.value; setDirty(); });
+  main.querySelectorAll('[data-type]').forEach(sel => sel.onchange = () => { ed.types = [...main.querySelectorAll('[data-type]')].map(s => s.value).filter(Boolean); setDirty(); });
+  main.querySelectorAll('[data-ab]').forEach(inp => inp.oninput = () => { ed.abilities = [...main.querySelectorAll('[data-ab]')].map(x => constOf('ABILITY_', x.value) || 'ABILITY_NONE'); setDirty(); });
+  const evoRows = () => [...main.querySelectorAll('#evos tr[data-i]')].map(tr => ({ method: tr.querySelector('[data-e=method]').value.trim(), param: tr.querySelector('[data-e=param]').value.trim(), target: constOf('SPECIES_', tr.querySelector('[data-e=target]').value), extra: (d.evolutions[+tr.dataset.i] || {}).extra || [] })).filter(e => e.method && e.target);
+  main.querySelectorAll('#evos input').forEach(inp => inp.oninput = () => { ed.evolutions = evoRows(); setDirty(); });
+  main.querySelectorAll('[data-edel]').forEach(b => b.onclick = () => { b.closest('tr').remove(); ed.evolutions = evoRows(); setDirty(); });
+  $('#evo-add').onclick = () => { $('#evos').insertAdjacentHTML('beforeend', `<tr data-i="${d.evolutions.length + main.querySelectorAll('#evos tr[data-i]').length}"><td><input data-e="method" list="dl-EVO" value="EVO_LEVEL"></td><td><input data-e="param" value="20" style="width:150px"></td><td><input data-e="target" list="dl-SPECIES"></td><td></td></tr>`); main.querySelectorAll('#evos input').forEach(inp => inp.oninput = () => { ed.evolutions = evoRows(); setDirty(); }); };
+  const learnRows = () => [...main.querySelectorAll('#learn tr[data-i]')].map(tr => ({ level: +tr.querySelector('[data-l=level]').value, move: constOf('MOVE_', tr.querySelector('[data-l=move]').value) })).filter(m => m.move);
+  const bindLearn = () => main.querySelectorAll('#learn input').forEach(inp => inp.oninput = () => { ed.learnset = learnRows(); setDirty(); });
+  bindLearn();
+  main.querySelectorAll('[data-ldel]').forEach(b => b.onclick = () => { b.closest('tr').remove(); ed.learnset = learnRows(); setDirty(); });
+  $('#learn-add').onclick = () => { $('#learn').insertAdjacentHTML('beforeend', `<tr data-i="new"><td><input type="number" min="0" max="100" data-l="level" value="1" style="width:64px"></td><td><input data-l="move" list="dl-MOVE"></td><td></td></tr>`); bindLearn(); };
+}
+
+// ------------------------------------------------------------------ save
+$('#save').onclick = async () => {
+  try {
+    if (S.tab === 'trainers') {
+      const t = S.cur;
+      S.cur = await api('/api/data/trainer?id=' + encodeURIComponent(t.id), { fields: t.fields, mons: t.mons });
+      toast(`Saved ${t.id}. Build the game (or test the battle) to see it.`);
+    } else if (S.tab === 'wild') {
+      const e = S.cur.entries[0];
+      for (const [kind, k] of Object.entries(e.kinds)) {
+        if (!k.changed) continue;
+        await api('/api/data/wild?map=' + encodeURIComponent(S.sel), { kind, encounter_rate: k.encounter_rate, mons: k.mons });
+      }
+      toast('Saved the wild Pokémon of ' + S.sel);
+    } else {
+      await api('/api/data/species?id=' + encodeURIComponent(S.cur.id), S.cur.edit);
+      toast('Saved ' + S.cur.name);
+    }
+    setDirty(false); await open(S.sel); renderList();
+  } catch (e) { toast(e.message, 'err', 8000); }
+};
+
+// ------------------------------------------------------------------ test a battle
+let BATTLE = null, playBusy = false;
+async function openPlay(trainer, wild) {
+  await Promise.all(['SPECIES_', 'MOVE_', 'ITEM_'].map(loadNames));
+  if (!S.maps) S.maps = (await api('/api/maps')).maps.map(m => m.name);
+  $('#dl-maps').innerHTML = S.maps.map(m => `<option value="${esc(m)}">`).join('');
+  try {
+    const st = await api('/api/story');
+    $('#play-chapter').innerHTML = '<option value="">start of the game</option>' + st.chapters.map((c, i) => `<option value="${i}">${i + 1}. ${esc(c.name)}</option>`).join('');
+  } catch (e) { /* no story */ }
+  if (!$('#play-team').children.length) {
+    for (let i = 0; i < 6; i++) $('#play-team').insertAdjacentHTML('beforeend', `<div class="teamrow"><input data-t="species" list="dl-SPECIES" placeholder="${i === 0 ? 'e.g. mudkip' : ''}"><input data-t="level" type="number" min="1" max="100" placeholder="5"><input data-t="item" list="dl-ITEM">${[1, 2, 3, 4].map(() => '<input data-t="move" list="dl-MOVE">').join('')}</div>`);
+    const r0 = $('#play-team .teamrow');
+    const lv = trainer ? Math.max(5, ...trainer.mons.map(m => m.level || 5)) : (wild ? wild.level + 3 : 10);
+    r0.querySelector('[data-t=species]').value = 'Swampert'; r0.querySelector('[data-t=level]').value = lv;
+  }
+  BATTLE = trainer ? { trainer: trainer.id } : { species: wild.species, level: wild.level };
+  $('#play-title').textContent = trainer ? `Test the battle against ${trainer.fields.find(f => f.key === 'Name')?.value || trainer.id}` : `Test a wild ${nameOf('SPECIES_', wild.species)} (lv ${wild.level})`;
+  $('#play-map').value = trainer ? (trainer.used_on[0] || {}).map || 'PetalburgCity' : wild.map;
+  $('#play-status').textContent = 'Your team fights here; the first build can take a few minutes.';
+  $('#playbox').classList.add('open');
+}
+function teamLines() {
+  return [...document.querySelectorAll('#play-team .teamrow')].map(row => {
+    const g = (t) => [...row.querySelectorAll(`[data-t="${t}"]`)].map(i => i.value.trim()).filter(Boolean);
+    const sp = g('species')[0]; if (!sp) return null;
+    const parts = [constOf('SPECIES_', sp)];
+    if (g('level')[0]) parts.push('lv' + g('level')[0]);
+    if (g('item')[0]) parts.push(constOf('ITEM_', g('item')[0]));
+    for (const mv of g('move')) parts.push(constOf('MOVE_', mv));
+    return parts.join(' ');
+  }).filter(Boolean);
+}
+async function playBattle(build) {
+  if (playBusy) return;
+  if (S.dirty && !confirm('Save your changes first? (OK = save, so the battle uses them)')) return;
+  if (S.dirty) await $('#save').onclick();
+  playBusy = true;
+  try {
+    $('#play-status').textContent = build ? 'Building…' : 'Starting…';
+    const team = teamLines(), ch = $('#play-chapter').value;
+    const r = await api('/api/play/start', { map: $('#play-map').value.trim(), build, team, clear_team: team.length > 0,
+                                             chapter: ch === '' ? null : +ch });
+    if (!r.ok) { $('#play-status').textContent = r.error; return; }
+    $('#play-status').textContent = 'Starting the battle…';
+    const b = await api('/api/play/battle', BATTLE);
+    if (!b.ok) { $('#play-status').textContent = b.error; return; }
+    $('#play-screen').src = b.image;
+    $('#play-status').textContent = `Battling ${b.where.battle}. Use the buttons or your keyboard.` + (r.build ? ` · built in ${r.build.seconds}s` : '');
+  } catch (e) { $('#play-status').textContent = e.message; }
+  finally { playBusy = false; }
+}
+$('#play-go').onclick = () => playBattle(true);
+$('#play-again').onclick = () => playBattle(false);
+$('#play-close').onclick = () => { $('#playbox').classList.remove('open'); api('/api/play/stop', {}).catch(() => {}); };
+async function press(inputs) {
+  if (playBusy || !$('#play-screen').src) return;
+  playBusy = true;
+  try { const r = await api('/api/play/press', { inputs }); if (r.ok) $('#play-screen').src = r.image; }
+  catch (e) { $('#play-status').textContent = e.message; } finally { playBusy = false; }
+}
+document.querySelectorAll('#playbox [data-k]').forEach(b => b.onclick = () => press(`${b.dataset.k}, wait 20`));
+document.addEventListener('keydown', (e) => {
+  if (!$('#playbox').classList.contains('open') || e.target.matches('input, textarea, select')) return;
+  const k = { ArrowUp: 'UP', ArrowDown: 'DOWN', ArrowLeft: 'LEFT', ArrowRight: 'RIGHT', z: 'A', x: 'B', Enter: 'START' }[e.key];
+  if (k) { e.preventDefault(); press(`${k}, wait 20`); }
+});
+
+// ------------------------------------------------------------------ start
+try { if (localStorage.getItem('pae-expert') === '1') { document.body.classList.add('expert'); $('#expert').checked = true; } } catch (e) { /* no storage */ }
+$('#expert').onchange = () => { document.body.classList.toggle('expert', $('#expert').checked); try { localStorage.setItem('pae-expert', $('#expert').checked ? '1' : '0'); } catch (e) { /* no storage */ } };
+(async () => {
+  const q = new URLSearchParams(location.search);
+  if (q.get('tab')) document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === q.get('tab')));
+  S.tab = q.get('tab') || 'trainers';
+  await renderList();
+  if (q.get('id')) open(q.get('id'));
+})();
+</script>
+<script src="/history.js"></script>
+</body>
+</html>

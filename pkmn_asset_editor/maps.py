@@ -543,14 +543,18 @@ class MapEditor:
             n += 1
             lbl = f"{base}{n}"
         text_lbl = lbl.replace("_EventScript_", "_Text_")
-        safe = text.replace('"', "'").replace("\n", "\\n")
+        if "\\" in text or text.rstrip().endswith("$"):  # already game text with \n / \p codes
+            strings = [text.replace('"', "'").replace("\n", "\\n").rstrip("$") + "$"]
+        else:  # plain words: wrap them to fit the message box, like the game's own texts
+            from .textbox import TextBox
+            strings = TextBox(self.root).wrap(text.replace('"', "'"))
         if kind == "npc":
             body = f"\tmsgbox {text_lbl}, MSGBOX_NPC\n\tend\n"
         elif kind == "sign":
             body = f"\tmsgbox {text_lbl}, MSGBOX_SIGN\n\tend\n"
         else:
             body = f"\tlockall\n\tmsgbox {text_lbl}, MSGBOX_DEFAULT\n\treleaseall\n\tend\n"
-        block = f"\n{lbl}::\n{body}\n{text_lbl}:\n\t.string \"{safe}$\"\n"
+        block = f"\n{lbl}::\n{body}\n{text_lbl}:\n" + "".join(f'\t.string "{x}"\n' for x in strings)
         cur = self.read_script(name)
         self.write_script(name, cur.rstrip("\n") + "\n" + block)
         return lbl

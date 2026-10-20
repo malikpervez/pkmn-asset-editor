@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Story Flow</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect x='2' y='2' width='12' height='12' rx='2' fill='%237c3aed'/><rect x='5' y='5' width='6' height='1.5' fill='%23fff'/><rect x='5' y='8' width='6' height='1.5' fill='%23fff'/></svg>">
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --line: #dcdce2; --text: #1d1d24; --muted: #6b6b78;
+    --accent: #d23c3c; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b7791f; --chip: #ececf1; --sel: #2563eb;
+    --on: #1f8a4c; --off: #c0392b; --need: #2563eb; --var: #7c3aed;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+      --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+      --on: #4ccb84; --off: #ef7a6a; --need: #60a5fa; --var: #a78bfa;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+    --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+    --on: #4ccb84; --off: #ef7a6a; --need: #60a5fa; --var: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.45 system-ui, -apple-system, Segoe UI, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; white-space: nowrap; }
+  header a { color: var(--muted); }
+  button, .btn, select, input { font: inherit; color: var(--text); }
+  button { padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--chip); cursor: pointer; }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  input { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+  .app { flex: 1; display: grid; grid-template-columns: 260px 1fr 320px; min-height: 0; }
+  nav { overflow: auto; border-right: 1px solid var(--line); background: var(--panel); padding: 8px; }
+  nav a { display: block; padding: 3px 4px; color: var(--text); text-decoration: none; border-radius: 4px; }
+  nav a:hover { background: var(--chip); }
+  main { overflow: auto; padding: 12px 18px 80px; }
+  aside { overflow: auto; border-left: 1px solid var(--line); background: var(--panel); padding: 10px 12px; }
+  h2 { font-size: 17px; margin: 22px 0 6px; }
+  .muted { color: var(--muted); }
+  .mapcard { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; margin: 6px 0; }
+  .mapcard > b a { color: var(--text); }
+  .ev { padding: 3px 0 3px 10px; border-left: 3px solid var(--line); margin: 4px 0; }
+  .ev .what { font-weight: 500; }
+  .chip { display: inline-block; border-radius: 10px; padding: 0 7px; margin: 2px 3px 0 0; font-size: 11.5px; cursor: pointer; border: 1px solid transparent; }
+  .chip.on { background: color-mix(in srgb, var(--on) 16%, transparent); color: var(--on); }
+  .chip.off { background: color-mix(in srgb, var(--off) 16%, transparent); color: var(--off); }
+  .chip.need { background: color-mix(in srgb, var(--need) 16%, transparent); color: var(--need); }
+  .chip.var { background: color-mix(in srgb, var(--var) 16%, transparent); color: var(--var); }
+  .chip.hit { border-color: currentColor; font-weight: 700; }
+  .legend .chip { cursor: default; }
+  .hidden { display: none; }
+  aside a { color: var(--sel); cursor: pointer; }
+  aside li { margin: 3px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📖 Story flow</h1>
+  <a href="/">🎨 Graphics</a>
+  <a href="/maps">🗺️ Maps</a>
+  <a href="/data">🔴 Pokémon &amp; Trainers</a>
+  <a href="/help" target="_blank">❓ Help</a>
+  <input type="search" id="find" placeholder="Find a flag or variable, e.g. BADGE01" style="width:280px" title="show only events that use it">
+  <label class="muted"><input type="checkbox" id="quiet"> also show maps with no story events</label>
+  <span style="flex:1"></span>
+</header>
+<div class="app">
+  <nav id="nav"></nav>
+  <main id="main">Loading the story… (this reads every map's scripts)</main>
+  <aside id="side">
+    <b>How to read this</b>
+    <p class="muted">The story is a chain of <b>flags</b> (on/off switches) and <b>variables</b> (numbers). An event turns a flag on, and later events wait for it. Click any coloured chip to follow it.</p>
+    <div class="legend"><span class="chip on">turns on</span><span class="chip off">turns off</span><span class="chip need">needs</span><span class="chip var">variable</span></div>
+    <div id="detail"></div>
+  </aside>
+</div>
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api = async (path, body) => {
+  const r = await fetch(path, body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) });
+  const d = await r.json(); if (!r.ok) throw new Error(d.error || 'failed'); return d;
+};
+let FLOW = null;
+const nice = (label, map) => label.replace(map + '_', '').replace(/^EventScript_/, '').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/_/g, ' ');
+const chipFor = (cls, name, text) => `<span class="chip ${cls}" data-name="${esc(name)}" title="click to see every event that uses ${esc(name)}">${esc(text)}</span>`;
+function evHTML(e, map) {
+  const chips = [
+    ...e.sets.map(f => chipFor('on', f, 'turns on ' + f)),
+    ...e.clears.map(f => chipFor('off', f, 'turns off ' + f)),
+    ...e.needs.map(f => chipFor('need', f.split(' ')[0], 'needs ' + f)),
+    ...e.vars_set.map(v => chipFor('var', v.split(' ')[0], v)),
+    ...e.vars_checked.map(v => chipFor('need', v.split(' ')[0], 'if ' + v)),
+  ].join('');
+  const names = [...e.sets, ...e.clears, ...e.needs.map(f => f.split(' ')[0]), ...e.vars_set.map(v => v.split(' ')[0]), ...e.vars_checked.map(v => v.split(' ')[0])];
+  return `<div class="ev" data-names="${esc(names.join(' '))}"><span class="what">${esc(e.trigger ? e.trigger[0].toUpperCase() + e.trigger.slice(1) : nice(e.label, map))}</span>
+    <span class="muted"> · <a href="/maps?map=${encodeURIComponent(map)}&label=${encodeURIComponent(e.label)}">${esc(e.label)}</a></span><div>${chips}</div></div>`;
+}
+function mapHTML(m) {
+  return `<div class="mapcard" data-map="${esc(m.map)}"><b><a href="/maps?map=${encodeURIComponent(m.map)}">${esc(m.map)}</a></b>
+    ${m.events.length ? m.events.map(e => evHTML(e, m.map)).join('') : '<div class="muted">no story events</div>'}</div>`;
+}
+function render() {
+  const showQuiet = $('#quiet').checked;
+  let h = '', nav = '';
+  FLOW.chapters.forEach((c, i) => {
+    const maps = c.maps.filter(m => showQuiet || m.events.length);
+    nav += `<a href="#ch${i}">${i + 1}. ${esc(c.name)}</a>`;
+    h += `<h2 id="ch${i}">${i + 1}. ${esc(c.name)}</h2>`;
+    if (c.flags.length) h += `<div class="muted">At the end: ${c.flags.map(f => chipFor('on', f, f)).join('')}</div>`;
+    h += maps.map(mapHTML).join('') || '<div class="muted">No maps in this chapter yet. Put maps in it from <b>Map settings → Story chapter</b> in the map editor.</div>';
+  });
+  const un = FLOW.unplaced.filter(m => showQuiet || m.events.length);
+  nav += `<a href="#unplaced">Not in a chapter (${FLOW.unplaced.length})</a>`;
+  h += `<h2 id="unplaced">Maps not in a chapter yet (${FLOW.unplaced.length})</h2>
+    <div class="row"><button id="suggest" class="primary" title="find the chapter of the nearest map each one connects to">✨ Suggest chapters</button>
+    <span class="muted">Uses the doors and edges between maps.</span></div><div id="suggestions"></div>` + un.map(mapHTML).join('');
+  $('#main').innerHTML = h; $('#nav').innerHTML = nav;
+  bind(); applyFind();
+}
+function bind() {
+  document.querySelectorAll('.chip[data-name]').forEach(c => c.onclick = () => showFlag(c.dataset.name));
+  $('#suggest').onclick = suggest;
+}
+function showFlag(name) {
+  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('hit', c.dataset.name === name));
+  const u = FLOW.usage[name] || { set_by: [], checked_by: [] };
+  const li = (r) => `<li><a data-go="${esc(r.map)}">${esc(r.map)}</a>: ${esc(r.how)} <span class="muted">(${esc(r.label)})</span></li>`;
+  $('#detail').innerHTML = `<h3 style="margin:16px 0 4px">${esc(name)}</h3>
+    <b>Changed by</b><ul>${u.set_by.map(li).join('') || '<li class="muted">nothing (it may be set in code, or never)</li>'}</ul>
+    <b>Used by</b><ul>${u.checked_by.map(li).join('') || '<li class="muted">nothing checks it</li>'}</ul>
+    <button id="filter-this">Show only events using it</button>`;
+  $('#detail').querySelectorAll('[data-go]').forEach(a => a.onclick = () => {
+    const card = document.querySelector(`.mapcard[data-map="${CSS.escape(a.dataset.go)}"]`);
+    if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  $('#filter-this').onclick = () => { $('#find').value = name; applyFind(); };
+}
+function applyFind() {
+  const q = $('#find').value.trim().toUpperCase();
+  document.querySelectorAll('.ev').forEach(e => e.classList.toggle('hidden', !!q && !e.dataset.names.includes(q)));
+  document.querySelectorAll('.mapcard').forEach(c => c.classList.toggle('hidden', !!q && !c.querySelector('.ev:not(.hidden)')));
+}
+async function suggest() {
+  const host = $('#suggestions'); host.textContent = 'Looking…';
+  const s = await api('/api/story/suggest');
+  if (!s.length) { host.innerHTML = '<p class="muted">No suggestions: these maps aren\'t connected to any map in a chapter.</p>'; return; }
+  host.innerHTML = `<div class="mapcard">${s.map(x => `<label style="display:block"><input type="checkbox" checked value="${esc(x.map)}"> <b>${esc(x.map)}</b> → ${x.chapter + 1}. ${esc(x.chapter_name)} <span class="muted">(next to ${esc(x.via)})</span></label>`).join('')}
+    <div class="row" style="margin-top:6px"><button id="apply" class="primary">Put the ticked maps in these chapters</button></div></div>`;
+  $('#apply').onclick = async () => {
+    const maps = [...host.querySelectorAll('input:checked')].map(i => i.value);
+    const r = await api('/api/story/apply_suggestions', { maps });
+    host.innerHTML = `<p>Placed ${r.placed} map(s). Reloading…</p>`;
+    await load();
+  };
+}
+async function load() {
+  FLOW = await api('/api/story/flow');
+  render();
+}
+$('#quiet').onchange = render;
+$('#find').oninput = applyFind;
+load().catch(e => { $('#main').textContent = e.message; });
+</script>
+<script src="/history.js"></script>
+</body>
+</html>

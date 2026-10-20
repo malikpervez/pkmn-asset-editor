@@ -157,7 +157,9 @@ async function init() {
   const s = await api('/api/summary');
   if (s.mode === 'decomp') {
     $('#btn-build').textContent = 'Check & make'; $('#btn-validate').textContent = 'Check edits';
-    $('#btn-status').insertAdjacentHTML('beforebegin', '<a class="btn" href="/maps" title="towns, routes, people, doors and story">🗺️ Maps</a>');
+    $('#btn-status').insertAdjacentHTML('beforebegin', '<a class="btn" href="/maps" title="towns, routes, people, doors and story">🗺️ Maps</a>' +
+      '<a class="btn" href="/data" title="trainer teams, wild Pokémon and Pokémon stats">🔴 Pokémon &amp; Trainers</a>' +
+      '<a class="btn" href="/story" title="which events turn which flags on">📖 Story</a>');
   }
   $('#game').textContent = `${s.game.name} · ${s.game.code}`;
   const cats = Object.entries(s.categories).sort();
@@ -477,5 +479,6 @@ $('#btn-validate').onclick = () => build(true);
 $('#btn-build').onclick = () => build(false);
 init();
 </script>
+<script src="/history.js"></script>
 </body>
 </html>

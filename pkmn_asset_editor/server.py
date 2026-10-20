@@ -57,7 +57,8 @@ def make_handler(state: _State):
             self.send_response(status)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
+            if "Cache-Control" not in (headers or {}):
+                self.send_header("Cache-Control", "no-store")
             for k, v in (headers or {}).items():
                 self.send_header(k, v)
             self.end_headers()
@@ -97,6 +98,20 @@ def make_handler(state: _State):
                 return self._send((WEB / "maps.html").read_bytes(), "text/html; charset=utf-8")
             if path in ("/help", "/help.html"):
                 return self._send((WEB / "help.html").read_bytes(), "text/html; charset=utf-8")
+            if path in ("/story", "/story.html"):
+                return self._send((WEB / "story.html").read_bytes(), "text/html; charset=utf-8")
+            if path == "/history.js":
+                return self._send((WEB / "history.js").read_bytes(), "text/javascript; charset=utf-8")
+            if path == "/api/history":
+                h = self._history()
+                ok = h.available()
+                return self._json({"available": ok, "unsaved": h.unsaved() if ok else [], "points": h.points() if ok else []})
+            if path == "/api/history/show":
+                return self._json(self._history().show(q["sha"]))
+            if path in ("/data", "/data.html"):
+                return self._send((WEB / "data.html").read_bytes(), "text/html; charset=utf-8")
+            if path.startswith("/api/data/"):
+                return self._data_get(path, q)
             if path.startswith(("/api/map", "/api/story")) or path in ("/api/constants", "/api/labels"):
                 return self._map_get(path, q)
             if path == "/api/summary":
@@ -193,6 +208,58 @@ def make_handler(state: _State):
             save_indexed_png(buf, pixels, plte, transparent0=a.kind == "sprite" and bool(a.palettes))
             return buf.getvalue()
 
+        def _history(self):
+            from .history import History
+            if proj.kind != "decomp":
+                raise ProjectError("save points need a source tree (a git repository)")
+            return History(proj)
+
+        def _gamedata(self):
+            if proj.kind != "decomp":
+                raise ProjectError("trainers and Pokémon data need a pokeemerald-expansion source tree")
+            return proj.gamedata
+
+        def _data_get(self, path, q):
+            gd = self._gamedata()
+            if path == "/api/data/trainers":
+                return self._json(gd.trainers(q.get("q", "")))
+            if path == "/api/data/trainer":
+                return self._json(gd.get_trainer(q["id"]))
+            if path == "/api/data/species_list":
+                return self._json(gd.species_list(q.get("q", "")))
+            if path == "/api/data/species":
+                return self._json(gd.get_species(q["id"]))
+            if path == "/api/data/wild":
+                return self._json(gd.wild(q["map"]))
+            if path == "/api/data/names":
+                pre = q.get("prefix", "SPECIES_")
+                known = gd.known(pre)
+                names = gd.names().get(pre, {})
+                return self._json({c: names.get(c) or c for c in sorted(known or names)})
+            if path == "/api/data/icon":
+                f = gd.icon_file(q.get("species", ""))
+                if not f or f not in proj.assets:
+                    return self._error("no icon", HTTPStatus.NOT_FOUND)
+                im = proj.render_image(proj.assets[f]).crop((0, 0, 32, 32))
+                buf = io.BytesIO()
+                im.save(buf, "PNG")
+                return self._send(buf.getvalue(), "image/png", headers={"Cache-Control": "max-age=300"})
+            if path == "/api/data/trainer_battles":
+                return self._json(gd.trainer_maps(q["id"]))
+            return self._error("not found", HTTPStatus.NOT_FOUND)
+
+        def _data_post(self, path, q):
+            gd = self._gamedata()
+            body = json.loads(self._body() or b"{}")
+            if path == "/api/data/trainer":
+                return self._json(gd.set_trainer(q["id"], body))
+            if path == "/api/data/wild":
+                return self._json(gd.set_wild(q["map"], body["kind"], int(body.get("encounter_rate") or 0),
+                                              body.get("mons") or [], int(body.get("entry") or 0)))
+            if path == "/api/data/species":
+                return self._json(gd.set_species(q["id"], body))
+            return self._error("not found", HTTPStatus.NOT_FOUND)
+
         def _maps(self):
             m = getattr(proj, "maps", None)
             if m is None:
@@ -273,6 +340,10 @@ def make_handler(state: _State):
                 chapters = st.chapters()
                 return self._json({"chapters": chapters, "unplaced": st.unplaced_maps(),
                                    "map_chapter": {n: st.chapter_of(n, chapters) for n in m.maps}})
+            if path == "/api/story/flow":
+                return self._json(m.story.flow(q.get("temp") == "1"))
+            if path == "/api/story/suggest":
+                return self._json(m.story.suggest_chapters())
             if path == "/api/story/items":
                 return self._json(m.story.catch_up(int(q["chapter"]), q.get("extras") == "1"))
             if path == "/api/constants":
@@ -298,6 +369,16 @@ def make_handler(state: _State):
                 finally:
                     os.unlink(tmp.name)
                 return self._json(r)
+            if path == "/api/map/text_preview":
+                import base64
+                body = json.loads(self._body() or b"{}")
+                tb = proj.textbox
+                out = []
+                for t in tb.texts(body.get("text", "")):
+                    buf = io.BytesIO()
+                    tb.render(t, scale=1).save(buf, "PNG")
+                    out.append(dict(t.as_dict(), image="data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()))
+                return self._json(out)
             if path.startswith("/api/story"):
                 body = json.loads(self._body() or b"{}")
                 if path == "/api/story/map":
@@ -307,6 +388,8 @@ def make_handler(state: _State):
                 if path == "/api/story/chapter_add":
                     return self._json({"ok": True, "index": m.story.add_chapter(body["name"], body.get("at"),
                                                                                 body.get("flags"))})
+                if path == "/api/story/apply_suggestions":
+                    return self._json({"ok": True, "placed": m.story.apply_suggestions(body.get("maps"))})
                 if path == "/api/story/chapters":
                     m.story.save_chapters(body["chapters"])
                     return self._json({"ok": True})
@@ -448,6 +531,16 @@ def make_handler(state: _State):
                     return self._json({"ok": True, "done": proj.play.apply_state(body.get("state", []))})
                 if path == "/api/play/team":
                     return self._json({"ok": True, "team": proj.play.team()})
+                if path == "/api/play/battle":
+                    double = bool(body.get("double"))
+                    if body.get("trainer") and "double" not in body:
+                        t = proj.gamedata.get_trainer(body["trainer"])
+                        f = {x["key"]: x["value"] for x in t["fields"]}
+                        double = f.get("Double Battle", "").lower() == "yes" or f.get("Battle Type", "").lower() == "doubles"
+                    img = proj.play.start_battle(trainer=body.get("trainer") or None, species=body.get("species") or None,
+                                                 level=int(body.get("level") or 5), item=body.get("item") or None,
+                                                 double=double)
+                    return self._json({"ok": True, "image": png_url(img), "where": proj.play.where})
                 if path == "/api/play/press":
                     final, _ = proj.play.press(body.get("inputs", ""))
                     return self._json({"ok": True, "image": png_url(final)})
@@ -461,6 +554,17 @@ def make_handler(state: _State):
         def _post(self, path, q):
             if path.startswith("/api/play/"):
                 return self._play_post(path, q)
+            if path.startswith("/api/data/"):
+                return self._data_post(path, q)
+            if path == "/api/history/save":
+                body = json.loads(self._body() or b"{}")
+                return self._json(self._history().save(body.get("message", "")))
+            if path == "/api/history/back":
+                body = json.loads(self._body() or b"{}")
+                r = self._history().go_back(body["sha"])
+                if getattr(proj, "maps", None):
+                    proj.maps.reload()
+                return self._json(r)
             if path.startswith(("/api/map", "/api/story")):
                 return self._map_post(path, q)
             if path == "/api/upload":

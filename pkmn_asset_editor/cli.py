@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -249,6 +250,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--team", action="append", default=[],
                    help="add a Pokémon: 'SPECIES_MUDKIP lv20 ITEM_ORAN_BERRY MOVE_TACKLE' (repeatable)")
     p.add_argument("--clear-team", action="store_true", help="empty the team before adding --team Pokémon")
+    p.add_argument("--battle", help="start a battle against this trainer (TRAINER_X) on arrival")
+    p.add_argument("--wild", help="start a wild battle on arrival: SPECIES_X or SPECIES_X:level")
     p.add_argument("--save-as", help="after the inputs, save the game as a checkpoint with this name")
     p.add_argument("--x", type=int)
     p.add_argument("--y", type=int)
@@ -257,6 +260,53 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--gif", help="also record the inputs as an animated GIF")
     p.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
     p.add_argument("--scale", type=int, default=2)
+
+    p = with_project(sub.add_parser("savepoint", help="source tree: remember everything as it is now (a git commit)"))
+    p.add_argument("message", nargs="*", help="what you changed")
+    p = with_project(sub.add_parser("history", help="source tree: list save points, see one, or go back to one"))
+    p.add_argument("action", nargs="?", choices=["list", "show", "back"], default="list")
+    p.add_argument("sha", nargs="?")
+    p = sub.add_parser("text", help="source tree: dialogue in the game's font, and checks for text that won't fit")
+    xsub = p.add_subparsers(dest="text_cmd", required=True)
+    q = with_project(xsub.add_parser("check", help="check every text of a map (or of all maps)"))
+    q.add_argument("map", nargs="?")
+    q = with_project(xsub.add_parser("preview", help="render a text label as it looks in game"))
+    q.add_argument("map")
+    q.add_argument("label")
+    q.add_argument("-o", "--out", required=True)
+    p = sub.add_parser("trainer", help="source tree: trainer teams (src/data/trainers.party)")
+    tsub = p.add_subparsers(dest="trainer_cmd", required=True)
+    q = with_project(tsub.add_parser("list", help="list trainers"))
+    q.add_argument("query", nargs="?", default="")
+    q = with_project(tsub.add_parser("show", help="show a trainer and their team"))
+    q.add_argument("id")
+    q = with_project(tsub.add_parser("set", help="replace a trainer's team and/or fields"))
+    q.add_argument("id")
+    q.add_argument("--mon", action="append", default=[],
+                   help="'Geodude lv12 @Oran Berry : Tackle, Rock Throw' (repeat for each Pokémon; replaces the team)")
+    q.add_argument("--field", action="append", default=[], help="Key=Value, e.g. 'Items=Potion / Potion'")
+    p = sub.add_parser("wild", help="source tree: wild Pokémon per map (src/data/wild_encounters.json)")
+    wsub = p.add_subparsers(dest="wild_cmd", required=True)
+    q = with_project(wsub.add_parser("show", help="show a map's wild Pokémon"))
+    q.add_argument("map")
+    q = with_project(wsub.add_parser("set", help="set one kind of encounter on a map"))
+    q.add_argument("map")
+    q.add_argument("kind", choices=["land", "water", "rock_smash", "fishing"])
+    q.add_argument("slots", nargs="+", help="one per slot: 'Poochyena:2-3' (species:min-max)")
+    q.add_argument("--rate", type=int, default=20, help="how often (encounter rate, 20 = normal grass)")
+    p = sub.add_parser("species", help="source tree: Pokémon stats, types, abilities, evolutions, moves")
+    psub = p.add_subparsers(dest="species_cmd", required=True)
+    q = with_project(psub.add_parser("show", help="show a Pokémon's data"))
+    q.add_argument("id")
+    q = with_project(psub.add_parser("set", help="change a Pokémon's data"))
+    q.add_argument("id")
+    for k, flag in (("baseHP", "--hp"), ("baseAttack", "--atk"), ("baseDefense", "--def"), ("baseSpAttack", "--spa"),
+                    ("baseSpDefense", "--spd"), ("baseSpeed", "--spe"), ("catchRate", "--catch-rate"),
+                    ("expYield", "--exp")):
+        q.add_argument(flag, dest=k, type=int)
+    q.add_argument("--types", help="e.g. TYPE_WATER,TYPE_GROUND")
+    q.add_argument("--abilities", help="up to 3, e.g. ABILITY_TORRENT,,ABILITY_DAMP")
+    q.add_argument("--learn", action="append", help="replace the level-up moves: '1:Tackle' (repeatable)")
 
     p = sub.add_parser("story", help="source tree: story chapters, for play-tests that start later in the game")
     ssub = p.add_subparsers(dest="story_cmd", required=True)
@@ -267,6 +317,10 @@ def main(argv: list[str] | None = None) -> int:
     q = with_project(ssub.add_parser("move", help="put a map (and its inside maps) in a chapter"))
     q.add_argument("map")
     q.add_argument("chapter", help="chapter number, or 'none' to take it out of the story")
+    q = with_project(ssub.add_parser("suggest", help="suggest chapters for maps not in one (by their doors/edges)"))
+    q.add_argument("--apply", action="store_true", help="put the maps in the suggested chapters")
+    q = with_project(ssub.add_parser("flag", help="which events change and check a flag or variable"))
+    q.add_argument("name")
     q = with_project(ssub.add_parser("add", help="add a chapter"))
     q.add_argument("name")
     q.add_argument("--at", type=int, help="chapter number to insert at (default: the end)")
@@ -278,7 +332,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("name", nargs="?")
     p.add_argument("file", nargs="?", help="for import: a .sav from your emulator (mGBA, VBA, …)")
 
-    with_project(sub.add_parser("doctor", help="check that building and play-testing will work"))
+    p = with_project(sub.add_parser("doctor", help="check that building and play-testing will work"))
+    p.add_argument("--fix", action="store_true", help="fix what's missing (installs tools, turns on Quickstart, "
+                                                     "sets up save points, builds the game)")
+    p.add_argument("--yes", action="store_true", help="with --fix: don't ask before each fix")
 
     with_project(sub.add_parser("guide", help="print editing instructions for AI agents (AGENTS.md style)"))
 
@@ -317,6 +374,19 @@ def main(argv: list[str] | None = None) -> int:
     except ERRORS as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+
+
+def _parse_mon_arg(text: str) -> dict:
+    """'Geodude lv12 @Oran Berry : Tackle, Rock Throw' -> a trainers.party Pokémon."""
+    head, _, moves = text.partition(":")
+    item = ""
+    if "@" in head:
+        head, item = head.split("@", 1)
+    m = re.search(r"\b(?:lv|level)\s*(\d+)\b", head, re.I)
+    level = int(m.group(1)) if m else None
+    species = re.sub(r"\b(?:lv|level)\s*\d+\b", "", head, flags=re.I).strip()
+    return {"species": species, "level": level, "item": item.strip(),
+            "moves": [x.strip() for x in moves.split(",") if x.strip()]}
 
 
 def _run(args) -> int:
@@ -511,7 +581,7 @@ def _run(args) -> int:
             raise ProjectError(str(e))
         return 0
     if args.cmd == "doctor":
-        return _doctor(proj)
+        return _doctor(proj, fix=args.fix, yes=args.yes)
     if args.cmd == "play":
         if not decomp:
             raise ProjectError("`pae play` needs a source tree (it plays the ROM that `make` builds)")
@@ -533,6 +603,10 @@ def _run(args) -> int:
                                     script=args.script)
             for line in proj.play.where.get("state") or []:
                 print(f"state: {line}")
+            if args.battle or args.wild:
+                sp, _, lv = (args.wild or "").partition(":")
+                first = proj.play.start_battle(trainer=args.battle, species=sp or None, level=int(lv or 5))
+                print(f"battle: {proj.play.where.get('battle')}")
             final, frames = proj.play.press(args.inputs, record_every=4 if args.gif else 0) if args.inputs else (first, [])
             if args.save_as:
                 print(f"saved checkpoint {proj.play.save_checkpoint(args.save_as)['name']}")
@@ -600,6 +674,128 @@ def _run(args) -> int:
             m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
             print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")
         return 0
+    if args.cmd in ("savepoint", "history"):
+        from .history import History
+        if not decomp:
+            raise ProjectError("save points need a source tree")
+        h = History(proj)
+        if args.cmd == "savepoint":
+            p = h.save(" ".join(args.message))
+            print(f"save point {p['short']}: {p['message']} ({p['files']} file(s))")
+            return 0
+        if args.action == "list":
+            n = len(h.unsaved())
+            print(f"{n} file(s) changed since the last save point" if n else "everything is in a save point")
+            for p in h.points(30):
+                print(f"{p['short']}  {p['date']}  {p['message']}  ({p['files']} file(s))")
+        elif args.action == "show":
+            d = h.show(args.sha or "HEAD")
+            print(d["message"])
+            for f in d["files"]:
+                print(f"  {f['state']:<8} {f['file']}")
+        else:
+            if not args.sha:
+                raise ProjectError("which save point? (see `pae history`)")
+            r = h.go_back(args.sha)
+            if r["kept_unsaved"]:
+                print(f"kept your unsaved changes in save point {r['kept_unsaved']['short']}")
+            print(f"now at: {r['now']['message']}")
+        return 0
+    if args.cmd == "text":
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("text checks need a pokeemerald-style source tree")
+        tb = proj.textbox
+        if args.text_cmd == "preview":
+            name = m.resolve(args.map)
+            hit = [t for t in tb.texts(m.read_script(name)) if t.label == args.label]
+            if not hit:
+                raise ProjectError(f"no text label {args.label} in {name}")
+            tb.render(hit[0]).save(args.out)
+            for msg in hit[0].problems:
+                print(f"problem: {msg}")
+            print(f"wrote {args.out}")
+            return 0
+        names = [m.resolve(args.map)] if args.map else list(m.maps)
+        count = 0
+        for name in names:
+            try:
+                script = m.read_script(name)
+            except OSError:
+                continue
+            for t in tb.texts(script):
+                for msg in t.problems:
+                    count += 1
+                    print(f"{m.script_path(name).relative_to(proj.root)}:{t.line}: {t.label}: {msg}")
+        print(f"{count} problem(s)" if count else "every text fits its box")
+        return 1 if count else 0
+    if args.cmd in ("trainer", "wild", "species"):
+        if not decomp:
+            raise ProjectError("game data editing needs a pokeemerald-expansion source tree")
+        gd = proj.gamedata
+        if args.cmd == "trainer":
+            if args.trainer_cmd == "list":
+                for t in gd.trainers(args.query):
+                    print(f"{t['id']:<40} {t['name']:<12} {t['class']:<18} " + ", ".join(
+                        f"{n} {lv}" if lv else n for n, lv in zip(t["party"], t["levels"])))
+                return 0
+            if args.trainer_cmd == "set":
+                body = {}
+                if args.mon:
+                    body["mons"] = [_parse_mon_arg(m) for m in args.mon]
+                if args.field:
+                    cur = gd.get_trainer(args.id)["fields"]
+                    new = dict(f.split("=", 1) for f in args.field)
+                    body["fields"] = [{"key": f["key"], "value": new.pop(f["key"], f["value"])} for f in cur] + \
+                        [{"key": k, "value": v} for k, v in new.items()]
+                gd.set_trainer(args.id, body)
+            t = gd.get_trainer(args.id)
+            for f in t["fields"]:
+                print(f"{f['key']}: {f['value']}")
+            for m in t["mons"]:
+                item = f" @ {m['item_name']}" if m["item"] else ""
+                print(f"  {m['species_name']} lv{m['level']}{item}: {', '.join(m['move_names']) or '(default moves)'}")
+            if t["used_on"]:
+                print("battled in: " + ", ".join(sorted({u['map'] for u in t['used_on']})))
+            return 0
+        if args.cmd == "wild":
+            if args.wild_cmd == "set":
+                mons = []
+                for slot in args.slots:
+                    sp, _, lv = slot.partition(":")
+                    lo, _, hi = (lv or "5").partition("-")
+                    mons.append({"species": sp, "min_level": int(lo), "max_level": int(hi or lo)})
+                gd.set_wild(args.map, f"{args.kind}_mons", args.rate, mons)
+            w = gd.wild(args.map)
+            if not w["entries"]:
+                print(f"{w['map']}: no wild Pokémon")
+            for e in w["entries"]:
+                for k, v in e["kinds"].items():
+                    if v["mons"]:
+                        slots = ", ".join(f"{m['name']} {m['min_level']}-{m['max_level']} ({r}%)"
+                                          for m, r in zip(v["mons"], v["slot_rates"]))
+                        print(f"{v['label']} (rate {v['encounter_rate']}): {slots}")
+            return 0
+        if args.species_cmd == "set":
+            changes = {k: getattr(args, k) for k in ("baseHP", "baseAttack", "baseDefense", "baseSpAttack",
+                                                     "baseSpDefense", "baseSpeed", "catchRate", "expYield")
+                       if getattr(args, k) is not None}
+            if args.types:
+                changes["types"] = [t.strip() for t in args.types.split(",") if t.strip()]
+            if args.abilities is not None:
+                changes["abilities"] = [a.strip() or "ABILITY_NONE" for a in args.abilities.split(",")]
+            if args.learn:
+                changes["learnset"] = [{"level": int(x.split(":", 1)[0]), "move": x.split(":", 1)[1]} for x in args.learn]
+            gd.set_species(args.id, changes)
+        d = gd.get_species(args.id)
+        print(f"{d['name']} ({d['id']})  {' / '.join(t.replace('TYPE_', '').title() for t in dict.fromkeys(d['types']))}")
+        print("  " + "  ".join(f"{k.replace('base', '')} {v}" for k, v in d["stats"].items()) + f"  (total {d['total']})")
+        print("  abilities: " + ", ".join(n for a, n in zip(d["abilities"], d["ability_names"]) if a != "ABILITY_NONE"))
+        print(f"  catch rate {d['catchRate']}, exp {d['expYield']}")
+        for e in d["evolutions"]:
+            print(f"  evolves into {e['target_name']} ({e['method']} {e['param']})")
+        print("  learns: " + ", ".join(f"{m['level']} {m['name']}" for m in d["learnset"]))
+        return 0
     if args.cmd == "story":
         m = getattr(proj, "maps", None)
         if m is None:
@@ -625,6 +821,23 @@ def _run(args) -> int:
             ch = None if args.chapter.lower() == "none" else int(args.chapter) - 1
             st.set_chapter(args.map, ch)
             print(f"{m.resolve(args.map)} -> " + ("not in the story" if ch is None else st.chapters()[ch]["name"]))
+        elif c == "suggest":
+            sg = st.suggest_chapters()
+            for x in sg:
+                print(f"{x['map']:<40} -> {x['chapter'] + 1}. {x['chapter_name']}  (next to {x['via']})")
+            if args.apply:
+                print(f"placed {st.apply_suggestions()} map(s)")
+            elif not sg:
+                print("no suggestions")
+        elif c == "flag":
+            u = st.flow()["usage"].get(args.name.upper())
+            if not u:
+                print(f"no event uses {args.name.upper()}")
+            else:
+                for title, key in (("changed by", "set_by"), ("used by", "checked_by")):
+                    print(title + ":")
+                    for r in u[key]:
+                        print(f"  {r['map']}: {r['how']} ({r['label']})")
         elif c == "add":
             i = st.add_chapter(args.name, args.at - 1 if args.at else None, args.flag)
             print(f"added chapter {i + 1}: {args.name}")
@@ -719,41 +932,90 @@ if __name__ == "__main__":
 
 
 
-def _doctor(proj) -> int:
-    """Report what building and play-testing need, and what is missing."""
+def _doctor(proj, fix: bool = False, yes: bool = False) -> int:
+    """Report what building and play-testing need, what is missing, and (with fix) fix it."""
+    import re
     import shutil
-
-    rows = []
-
-    def check(name, ok, fix=""):
-        rows.append((name, ok, fix))
+    import subprocess
 
     if proj.kind != "decomp":
         print("ROM projects need nothing else: `pae build` writes the ROM directly.")
         return 0
-    for tool, fix in (("make", "install make"), ("arm-none-eabi-gcc", "scripts/setup-toolchain.sh (or devkitARM)"),
-                      ("cc", "install a C compiler (build-essential / Xcode tools)")):
-        check(f"{tool} on PATH", shutil.which(tool) is not None, fix)
-    has_png = any(Path(p).exists() for p in ("/usr/include/png.h", "/usr/local/include/png.h",
-                                             "/opt/homebrew/include/png.h"))
-    check("libpng headers (for the repo's tools)", has_png, "install libpng-dev")
     from .playtest import PlaytestError, driver_path, find_rom
-    try:
-        driver_path(proj.root / ".pae" / "cache")
-        check("libmgba (headless emulator for pae play)", True)
-    except PlaytestError:
-        check("libmgba (headless emulator for pae play)", False, "install libmgba-dev / brew install mgba")
-    import re
+    setup = Path(__file__).parent / "tools" / "setup-toolchain.sh"
+
+    def run_setup():
+        subprocess.run(["bash", str(setup)], check=False)
+
+    def has_png():
+        return any(Path(p).exists() for p in ("/usr/include/png.h", "/usr/local/include/png.h",
+                                              "/opt/homebrew/include/png.h"))
+
+    def has_mgba():
+        try:
+            driver_path(proj.root / ".pae" / "cache")
+            return True
+        except PlaytestError:
+            return False
+
     cfg = proj.root / "include" / "config" / "quickstart.h"
-    qs = cfg.exists() and bool(re.search(r"#define\s+ENABLE_QUICKSTART\s+TRUE", cfg.read_text()))
-    check("Quickstart enabled (pae play starts games with it)", qs,
-          "set ENABLE_QUICKSTART TRUE in include/config/quickstart.h (non-release builds)")
-    try:
-        rom = find_rom(proj.root)
-        check(f"built ROM: {rom.name} (+ .elf)", True)
-    except PlaytestError:
-        check("built ROM (.gba + .elf)", False, "run `pae build`")
-    width = max(len(r[0]) for r in rows)
-    for name, ok, fix in rows:
-        print(f"{'ok ' if ok else 'MISSING'}  {name:<{width}}" + ("" if ok else f"   -> {fix}"))
-    return 0 if all(ok for _, ok, _ in rows) else 1
+
+    def quickstart_on():
+        return cfg.exists() and bool(re.search(r"#define\s+ENABLE_QUICKSTART\s+TRUE", cfg.read_text()))
+
+    def turn_quickstart_on():
+        proj._backup(str(cfg.relative_to(proj.root)))
+        cfg.write_text(re.sub(r"(#define\s+ENABLE_QUICKSTART\s+)FALSE", r"\1TRUE", cfg.read_text()))
+
+    def is_git():
+        r = subprocess.run(["git", "-C", str(proj.root), "rev-parse", "--is-inside-work-tree"], capture_output=True,
+                           text=True)
+        return r.returncode == 0 and r.stdout.strip() == "true"
+
+    def git_init():
+        from .history import AUTHOR
+        subprocess.run(["git", "-C", str(proj.root), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(proj.root), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(proj.root), *AUTHOR, "commit", "-qm", "First save point"], check=False)
+
+    def has_rom():
+        try:
+            find_rom(proj.root)
+            return True
+        except PlaytestError:
+            return False
+
+    def build():
+        rep = proj.build_rom()
+        print("\n".join(rep.output.rstrip().splitlines()[-8:]))
+
+    tools = all(shutil.which(t) for t in ("make", "arm-none-eabi-gcc", "cc"))
+    checks = [
+        ("Tools that build your game (make, a C compiler, arm-none-eabi-gcc)", lambda: tools and has_png(),
+         "install them", run_setup),
+        ("The test-play emulator (libmgba)", has_mgba, "install it", run_setup),
+        ("Quickstart (needed to test from a brand-new game)", quickstart_on,
+         "set ENABLE_QUICKSTART to TRUE in include/config/quickstart.h", turn_quickstart_on if cfg.exists() else None),
+        ("Save points (the game folder is a git repository)", is_git, "run `git init` and make a first save point",
+         git_init),
+        ("Your game is built (.gba and .elf)", has_rom, "build it with `make` (the first time takes a few minutes)",
+         build),
+    ]
+    missing = 0
+    for name, ok, how, action in checks:
+        good = ok()
+        if not good and fix and action is not None:
+            answer = "y" if yes else input(f"{name}: missing. Fix it now ({how})? [Y/n] ").strip().lower()
+            if answer in ("", "y", "yes"):
+                action()
+                if name.startswith("Tools"):
+                    tools = all(shutil.which(t) for t in ("make", "arm-none-eabi-gcc", "cc"))
+                    good = tools and has_png()
+                else:
+                    good = ok()
+        print(f"{'✅' if good else '❌'}  {name}" + ("" if good else f"\n      -> {how}" +
+                                                       ("" if fix else " (or run `pae doctor --fix`)")))
+        missing += not good
+    print("\nEverything is ready. Run `pae serve` and open http://localhost:8765" if not missing else
+          f"\n{missing} thing(s) still missing.")
+    return 0 if not missing else 1

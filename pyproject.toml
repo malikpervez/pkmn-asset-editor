@@ -20,7 +20,7 @@ pae = "pkmn_asset_editor.cli:main"
 packages = ["pkmn_asset_editor"]
 
 [tool.setuptools.package-data]
-pkmn_asset_editor = ["web/*", "native/*.c"]
+pkmn_asset_editor = ["web/*", "native/*.c", "tools/*.sh"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -640,6 +640,22 @@ class DecompProject:
         return self._maps
 
     @property
+    def textbox(self):
+        """Dialogue previews in the game's font (see textbox.py)."""
+        if not hasattr(self, "_textbox"):
+            from .textbox import TextBox
+            self._textbox = TextBox(self.root)
+        return self._textbox
+
+    @property
+    def gamedata(self):
+        """Trainers, wild Pokémon and species data (see gamedata.py)."""
+        if not hasattr(self, "_gamedata"):
+            from .gamedata import GameData
+            self._gamedata = GameData(self)
+        return self._gamedata
+
+    @property
     def play(self):
         """Headless play-test session for the built ROM (see playtest.py)."""
         if not hasattr(self, "_play"):
@@ -753,7 +769,8 @@ class DecompProject:
 
     def _changed_files(self) -> dict[str, str]:
         r = self._run_git("status", "--porcelain", "-uall", "--", "graphics", "data/tilesets", "data/maps",
-                          "data/layouts", "src/data/tilesets")
+                          "data/layouts", "data/text", "data/scripts", "src/data", "src/tileset_anims.c",
+                          "include/tileset_anims.h")
         out = {}
         if r is not None and r.returncode == 0:
             for line in r.stdout.decode(errors="replace").splitlines():
@@ -1252,6 +1269,15 @@ class DecompProject:
                 and self.maps is not None:
             for level, f, msg in self.maps.tileset_editor.check():
                 rep.issues.append(Issue(level, f, msg))
+        text_files = [f for f in changed if f.startswith(("data/maps/", "data/text/", "data/scripts/"))
+                      and f.endswith((".inc", ".pory"))]
+        if text_files:
+            for level, f, msg in self.textbox.check_changed(self, text_files):
+                rep.issues.append(Issue(level, f, msg))
+        if any(f.endswith(".party") or f == "src/data/wild_encounters.json" for f in changed):
+            for level, f, msg in self.gamedata.check(changed):
+                rep.issues.append(Issue(level, f, msg))
+            rep.checked += 1
         if self.maps is not None and any(f.startswith(("src/tileset_anims.c", "src/data/tilesets/headers.h"))
                                          or "/anim/" in f for f in changed):
             for level, f, msg in self.maps.tileset_anims.check(only_changed):
