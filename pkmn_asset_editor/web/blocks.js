@@ -138,7 +138,7 @@
   }
   async function preview() {
     try {
-      const r = await call('/api/map/blocks_preview', { label: $('#bl-label').value.trim(), kind: B.kind, blocks: B.blocks });
+      const r = await call('/api/map/event_blocks_preview', { label: $('#bl-label').value.trim(), kind: B.kind, blocks: B.blocks });
       $('#bl-script').textContent = r.script;
       $('#bl-texts').innerHTML = r.texts.map(t => `<div style="margin:6px 0">${t.problems.length ? `<div style="color:var(--accent);font-size:11px">⚠ ${esc(t.problems.join('; '))}</div>` : ''}<img src="${t.image}" alt="" style="image-rendering:pixelated;width:100%;max-width:464px"></div>`).join('') || '<div class="muted">No dialogue yet.</div>';
     } catch (e) { $('#bl-texts').innerHTML = `<div style="color:var(--accent)">${esc(e.message)}</div>`; }
@@ -146,7 +146,7 @@
   async function save(test) {
     try {
       const label = $('#bl-label').value.trim();
-      const r = await call('/api/map/blocks?name=' + encodeURIComponent(B.map), { label, kind: B.kind, blocks: B.blocks });
+      const r = await call('/api/map/event_blocks?name=' + encodeURIComponent(B.map), { label, kind: B.kind, blocks: B.blocks });
       box.style.display = 'none';
       if (B.onSaved) await B.onSaved(r.label, test, r);
     } catch (e) { alert(e.message); }
@@ -159,7 +159,7 @@
     $('#bl-label').value = opts.label;
     $('#bl-title').textContent = `${opts.map} · ${opts.label}`;
     try {
-      const r = await call(`/api/map/blocks?name=${encodeURIComponent(opts.map)}&label=${encodeURIComponent(opts.label)}&kind=${B.kind}`);
+      const r = await call(`/api/map/event_blocks?name=${encodeURIComponent(opts.map)}&label=${encodeURIComponent(opts.label)}&kind=${B.kind}`);
       B.blocks = r.blocks.length ? r.blocks : [{ type: 'say', text: opts.kind === 'sign' ? 'This is a sign.' : 'Hello!' }];
       if (r.blocks.length && !r.built) $('#bl-title').textContent += ' (made from the existing script: check it before saving)';
     } catch (e) { B.blocks = [{ type: 'say', text: 'Hello!' }]; }

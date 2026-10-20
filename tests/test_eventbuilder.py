@@ -68,3 +68,30 @@ def test_server_and_mcp(root):  # noqa: F811
     assert "lockall" in r["script"] and r["problems"] == []
     back = json.loads(srv.call("get_blocks_script", {"map": "Town", "label": "Town_EventScript_New"})[0]["text"])
     assert back["kind"] == "trigger" and back["built"]
+
+
+def test_web_routes(root):  # noqa: F811
+    import http.client
+    import threading
+    from http.server import ThreadingHTTPServer
+    from pkmn_asset_editor.server import _State, make_handler
+    srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(_State(DecompProject(root))))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        def req(method, path, body=None):
+            c = http.client.HTTPConnection("127.0.0.1", srv.server_port, timeout=30)
+            c.request(method, path, body=None if body is None else json.dumps(body))
+            r = c.getresponse()
+            return r.status, json.loads(r.read())
+        st, r = req("POST", "/api/map/event_blocks_preview", {"label": "Town_EventScript_X", "kind": "npc",
+                                                            "blocks": [{"type": "say", "text": "Hi!"}]})
+        assert st == 200 and r["texts"][0]["image"].startswith("data:image/png")
+        st, r = req("POST", "/api/map/event_blocks?name=Town", {"label": "Town_EventScript_X", "kind": "npc",
+                                                              "blocks": [{"type": "say", "text": "Hi!"}]})
+        assert st == 200 and r["label"] == "Town_EventScript_X"
+        st, r = req("GET", "/api/map/event_blocks?name=Town&label=Town_EventScript_X")
+        assert st == 200 and r["built"] and r["blocks"] == [{"type": "say", "text": "Hi!"}]
+        st, r = req("GET", "/api/map/event_blocks?name=Town&label=Town_EventScript_Nope")
+        assert st == 200 and r["new"]
+    finally:
+        srv.shutdown()

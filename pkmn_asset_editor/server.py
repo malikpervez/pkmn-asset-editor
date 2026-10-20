@@ -361,7 +361,7 @@ def make_handler(state: _State):
                                   "behaviors": atlas.behaviors},
                     "script_file": str(script.relative_to(proj.root)),
                     "shared_layout": [n for n, x in m.maps.items() if x["layout"] == lay["id"] and n != name]})
-            if path == "/api/map/blocks":
+            if path == "/api/map/event_blocks":
                 from . import eventbuilder as eb
                 name = m.resolve(q["name"])
                 try:
@@ -452,11 +452,11 @@ def make_handler(state: _State):
                 finally:
                     os.unlink(tmp.name)
                 return self._json(r)
-            if path in ("/api/map/blocks", "/api/map/blocks_preview"):
+            if path in ("/api/map/event_blocks", "/api/map/event_blocks_preview"):
                 import base64
                 from . import eventbuilder as eb
                 body = json.loads(self._body() or b"{}")
-                if path == "/api/map/blocks":
+                if path == "/api/map/event_blocks":
                     r = eb.save(m, q["name"], body["label"], body.get("kind", "npc"), body.get("blocks") or [])
                 else:
                     r = {"script": eb.generate(body.get("label") or "Preview", body.get("kind", "npc"),
