@@ -193,9 +193,56 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("dest_map")
     q.add_argument("dest_warp", type=int)
 
+    p = sub.add_parser("anim", help="source tree: tileset animations - water, flowers, waterfalls… (see `pae anim -h`)")
+    asub = p.add_subparsers(dest="anim_cmd", required=True)
+    q = with_project(asub.add_parser("list", help="list tileset animations (all, or those a map shows)"))
+    q.add_argument("--map")
+    q = with_project(asub.add_parser("show", help="render an animation's frames in their in-game colours"))
+    q.add_argument("id")
+    q.add_argument("-o", "--out", required=True)
+    q.add_argument("--map", help="map whose palettes to use (default: one that uses the tileset)")
+    q = with_project(asub.add_parser("preview", help="record a map's animations as an animated GIF"))
+    q.add_argument("map")
+    q.add_argument("-o", "--out", required=True)
+    q.add_argument("--region", help="x,y,w,h in blocks (default: the whole map)")
+    q.add_argument("--scale", type=int, default=1)
+    q = with_project(asub.add_parser("speed", help="game frames each animation frame stays up (60 = 1 s)"))
+    q.add_argument("id")
+    q.add_argument("frames", type=int)
+    q = with_project(asub.add_parser("order", help="set the play order, e.g. 0,1,0,2"))
+    q.add_argument("id")
+    q.add_argument("order")
+    q = with_project(asub.add_parser("frame", help="replace a frame's art with an image"))
+    q.add_argument("id")
+    q.add_argument("frame", type=int)
+    q.add_argument("image")
+    q.add_argument("--map", help="map whose palettes the image's colours are matched to")
+    q = with_project(asub.add_parser("add-frame", help="add a frame (copy of one, or an image)"))
+    q.add_argument("id")
+    q.add_argument("--image")
+    q.add_argument("--copy", type=int, help="frame to copy (default: the last)")
+    q.add_argument("--at", type=int, help="position in the play order (default: the end)")
+    q.add_argument("--map")
+    q = with_project(asub.add_parser("remove-frame", help="take a frame out of an animation"))
+    q.add_argument("id")
+    q.add_argument("frame", type=int)
+    q = with_project(asub.add_parser("new", help="animate tiles of a map's tileset (e.g. your own water)"))
+    q.add_argument("map")
+    q.add_argument("name", help="e.g. PondWater")
+    q.add_argument("--tile", required=True, help="first tile id, as the metatile editor shows it")
+    q.add_argument("--count", type=int, required=True, help="number of tiles animated")
+    q.add_argument("--frames", type=int, default=2, help="frames (copies of the current tiles, to redraw)")
+    q.add_argument("--speed", type=int, default=16, help="game frames per animation frame")
+    q.add_argument("--images", nargs="*", help="frame images instead of copies")
+
     p = with_project(sub.add_parser("play", help="source tree: build, then play-test a map headlessly and save "
                                                   "screenshots (needs libmgba)"))
-    p.add_argument("map", help="map name, e.g. PetalburgCity")
+    p.add_argument("map", nargs="?", help="map name, e.g. PetalburgCity (optional with --from)")
+    p.add_argument("--from", dest="checkpoint", help="continue from a saved checkpoint (story progress, party…)")
+    p.add_argument("--state", action="append", default=[],
+                   help="story state before arriving: FLAG_X, !FLAG_X, VAR_X=3, ITEM_X*5 (repeatable)")
+    p.add_argument("--script", help="start this script label on arrival (e.g. a cutscene)")
+    p.add_argument("--save-as", help="after the inputs, save the game as a checkpoint with this name")
     p.add_argument("--x", type=int)
     p.add_argument("--y", type=int)
     p.add_argument("--inputs", default="", help="e.g. 'UP, wait 10, A, wait 60' (KEY*N holds N frames)")
@@ -203,6 +250,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--gif", help="also record the inputs as an animated GIF")
     p.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
     p.add_argument("--scale", type=int, default=2)
+
+    p = with_project(sub.add_parser("checkpoint", help="source tree: saved games to start play-tests from"))
+    p.add_argument("action", choices=["list", "import", "delete"])
+    p.add_argument("name", nargs="?")
+    p.add_argument("file", nargs="?", help="for import: a .sav from your emulator (mGBA, VBA, …)")
 
     with_project(sub.add_parser("doctor", help="check that building and play-testing will work"))
 
@@ -414,6 +466,28 @@ def _run(args) -> int:
         for f in args.images:
             print(f"updated {proj.palette_from_png(proj.get(f))}")
         return 0
+    if args.cmd == "checkpoint":
+        if not decomp:
+            raise ProjectError("checkpoints belong to source-tree play-testing")
+        from .playtest import PlaytestError
+        try:
+            if args.action == "list":
+                cps = proj.play.checkpoints()
+                for c in cps:
+                    where = f"{c.get('map')} ({c.get('x')},{c.get('y')})" if c.get("map") else ""
+                    print(f"{c['name']:<24} {c.get('created', ''):<17} {where:<32} {c.get('note', '')}")
+                if not cps:
+                    print("no checkpoints yet: `pae play MAP --inputs ... --save-as NAME` or `pae checkpoint import NAME FILE.sav`")
+            elif args.action == "import":
+                if not args.name or not args.file:
+                    raise ProjectError("usage: pae checkpoint import NAME FILE.sav")
+                print(f"imported {proj.play.import_save(args.file, args.name)['name']}")
+            else:
+                proj.play.delete_checkpoint(args.name or "")
+                print(f"deleted {args.name}")
+        except PlaytestError as e:
+            raise ProjectError(str(e))
+        return 0
     if args.cmd == "doctor":
         return _doctor(proj)
     if args.cmd == "play":
@@ -428,9 +502,14 @@ def _run(args) -> int:
                 return 1
             print(f"built in {rep.seconds:.0f}s")
         try:
-            name = proj.maps.resolve(args.map) if proj.maps else args.map
-            first = proj.play.start(name, args.x, args.y)
+            name = (proj.maps.resolve(args.map) if proj.maps else args.map) if args.map else None
+            first = proj.play.start(name, args.x, args.y, checkpoint=args.checkpoint, state=args.state,
+                                    script=args.script)
+            for line in proj.play.where.get("state") or []:
+                print(f"state: {line}")
             final, frames = proj.play.press(args.inputs, record_every=4 if args.gif else 0) if args.inputs else (first, [])
+            if args.save_as:
+                print(f"saved checkpoint {proj.play.save_checkpoint(args.save_as)['name']}")
         except PlaytestError as e:
             raise ProjectError(str(e))
         final.resize((final.width * args.scale, final.height * args.scale)).save(args.out)
@@ -494,6 +573,54 @@ def _run(args) -> int:
         elif args.map_cmd == "link":
             m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
             print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")
+        return 0
+    if args.cmd == "anim":
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("tileset animations need a pokeemerald-style source tree")
+        ta = m.tileset_anims
+        c = args.anim_cmd
+        if c == "list":
+            for a in ta.list(args.map):
+                speed = f"every {a['period']:>3}f" if a["period"] else "custom    "
+                tiles = ", ".join(f"{s['dest']}" for s in a["slots"][:2]) + ("…" if len(a["slots"]) > 2 else "")
+                print(f"{a['id']:<38} {len(a['frames']):>2} frames  plays {len(a['sequence']):>2}  {speed}  "
+                      f"{a['count']:>3} tiles @ {tiles:<10} {', '.join(t.replace('gTileset_', '') for t in a['tilesets'])}")
+            for pa in ta.parse()["palette"] if args.map is None else []:
+                print(f"{pa['function']:<38} palette animation (not editable here)")
+        elif c == "show":
+            ta.frames_image(args.id, args.map).save(args.out)
+            print(f"wrote {args.out}")
+        elif c == "preview":
+            region = tuple(int(v) for v in args.region.split(",")) if args.region else None
+            frames, ms = ta.map_frames(args.map, region)
+            from PIL import Image
+            if args.scale > 1:
+                frames = [f.resize((f.width * args.scale, f.height * args.scale), Image.NEAREST) for f in frames]
+            frames[0].save(args.out, save_all=True, append_images=frames[1:], duration=ms, loop=0, disposal=1)
+            print(f"wrote {args.out} ({len(frames)} frames)")
+        elif c == "speed":
+            a = ta.set_speed(args.id, args.frames)
+            print(f"{a.id}: a new frame every {a.period} game frames")
+        elif c == "order":
+            a = ta.set_sequence(args.id, [None if v.strip() in ("-", "NULL") else int(v) for v in args.order.split(",")])
+            print(f"{a.id}: plays {' '.join('-' if i is None else str(i) for i in a.sequence)}")
+        elif c == "frame":
+            for n in ta.set_frame(args.id, args.frame, args.image, args.map):
+                print(f"note: {n}")
+            print(f"updated frame {args.frame} of {args.id}")
+        elif c == "add-frame":
+            r = ta.add_frame(args.id, args.image, args.copy, args.at, args.map)
+            print(f"added frame {r['frame']} ({r['png']}); plays {r['anim']['sequence']}")
+        elif c == "remove-frame":
+            for n in ta.remove_frame(args.id, args.frame):
+                print(f"note: {n}")
+            print(f"removed frame {args.frame} from {args.id}")
+        elif c == "new":
+            r = ta.create(args.map, args.name, int(args.tile, 0), args.count, args.frames, args.speed, args.images)
+            for n in r["notes"]:
+                print(f"note: {n}")
+            print(f"created {r['anim']['id']}: frames in {', '.join(r['pngs'])}")
         return 0
     if args.cmd == "guide":
         from .previews import agents_guide, decomp_guide

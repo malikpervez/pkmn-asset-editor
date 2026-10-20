@@ -7,15 +7,21 @@
  *   w8|w16|w32 ADDR V   write memory through the bus
  *   shot PATH           write the current frame as raw RGBA (240x160x4)
  *   save PATH | load PATH   savestate to/from a file
+ *   reset               power-cycle (keeps the save data)
+ *   call ADDR [R0..R3]  run a game function (thumb address) to completion -> "ok R0"
  *   quit
  * Numbers may be decimal or 0x-prefixed hex.
  *
+ * Usage: pae_mgba ROM [SAVEFILE]   SAVEFILE is the cartridge save (.sav), created if missing and written
+ *        by the game itself when it saves (flushed a few frames after each write).
  * Build: cc -O2 -o pae_mgba pae_mgba.c -lmgba   (Debian/Ubuntu: apt install libmgba-dev)
  */
 #include <mgba/core/core.h>
 #include <mgba/core/config.h>
 #include <mgba/core/log.h>
 #include <mgba/core/serialize.h>
+#include <mgba/internal/arm/arm.h>
+#include <mgba/internal/arm/isa-inlines.h>
 #include <mgba-util/vfs.h>
 
 #include <fcntl.h>
@@ -63,6 +69,46 @@ static int writeShot(const char* path) {
 	return 1;
 }
 
+/* Call a function inside the running game, the way a debugger would: save the CPU state, point PC at
+ * the function with arguments in r0-r3 and a sentinel return address in LR, single-step until it
+ * returns there, then restore the CPU so the game carries on exactly where it was. Interrupts stay
+ * as they were, so code that waits on timers or VBlank (e.g. flash saving) still works. */
+#define CALL_SENTINEL 0x08000000u
+static int callFunction(struct mCore* core, uint32_t addr, const uint32_t* args, int nargs, uint32_t* result) {
+	struct ARMCore* cpu = core->cpu;
+	struct ARMRegisterFile saved = cpu->regs;
+	uint32_t savedPrefetch[2] = { cpu->prefetch[0], cpu->prefetch[1] };
+	enum ExecutionMode savedMode = cpu->executionMode;
+	int savedHalted = cpu->halted;
+	for (int i = 0; i < nargs && i < 4; ++i) {
+		cpu->gprs[i] = args[i];
+	}
+	cpu->gprs[ARM_SP] -= 0x200; /* stay clear of whatever the interrupted code keeps on its stack */
+	cpu->gprs[ARM_LR] = CALL_SENTINEL | 1;
+	cpu->halted = 0;
+	_ARMSetMode(cpu, MODE_THUMB);
+	cpu->gprs[ARM_PC] = addr & ~1u;
+	ThumbWritePC(cpu);
+	long steps = 0;
+	int ok = 0;
+	while (steps++ < 400000000L) {
+		uint32_t pc = (uint32_t) cpu->gprs[ARM_PC] - (cpu->executionMode == MODE_THUMB ? 4 : 8);
+		if ((pc & ~1u) == CALL_SENTINEL) {
+			ok = 1;
+			break;
+		}
+		core->step(core);
+	}
+	*result = (uint32_t) cpu->gprs[0];
+	cpu->regs = saved;
+	_ARMSetMode(cpu, savedMode);
+	cpu->memory.setActiveRegion(cpu, cpu->gprs[ARM_PC]);
+	cpu->prefetch[0] = savedPrefetch[0];
+	cpu->prefetch[1] = savedPrefetch[1];
+	cpu->halted = savedHalted;
+	return ok;
+}
+
 int main(int argc, char** argv) {
 	if (argc < 2) {
 		fprintf(stderr, "usage: %s ROM\n", argv[0]);
@@ -81,6 +127,13 @@ int main(int argc, char** argv) {
 	if (!mCoreLoadFile(core, argv[1])) {
 		fprintf(stderr, "cannot load %s\n", argv[1]);
 		return 1;
+	}
+	if (argc > 2) {
+		struct VFile* save = VFileOpen(argv[2], O_CREAT | O_RDWR);
+		if (!save || !core->loadSave(core, save)) {
+			fprintf(stderr, "cannot use save file %s\n", argv[2]);
+			return 1;
+		}
 	}
 	core->reset(core);
 	setvbuf(stdout, NULL, _IOLBF, 0);
@@ -130,6 +183,26 @@ int main(int argc, char** argv) {
 			                     : mCoreLoadStateNamed(core, vf, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
 			vf->close(vf);
 			puts(okState ? "ok" : "err state failed");
+		} else if (!strcmp(cmd, "call")) {
+			uint32_t args[4] = { 0 };
+			unsigned long v[5] = { 0 };
+			int n = sscanf(line, "%*s %li %li %li %li %li", (long*) &v[0], (long*) &v[1], (long*) &v[2], (long*) &v[3], (long*) &v[4]);
+			if (n < 1) {
+				puts("err usage: call ADDR [ARGS]");
+				continue;
+			}
+			for (int i = 1; i < n; ++i) {
+				args[i - 1] = v[i];
+			}
+			uint32_t r0 = 0;
+			if (callFunction(core, v[0], args, n - 1, &r0)) {
+				printf("ok %u\n", r0);
+			} else {
+				puts("err function did not return");
+			}
+		} else if (!strcmp(cmd, "reset")) {
+			core->reset(core);
+			puts("ok");
 		} else if (!strcmp(cmd, "quit")) {
 			puts("ok");
 			break;

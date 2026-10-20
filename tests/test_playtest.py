@@ -80,3 +80,83 @@ def test_play_real_rom(tmp_path):
         assert again.getbbox() is not None
     finally:
         session.close()
+
+
+def test_parse_state():
+    assert pt.parse_state("FLAG_BADGE01_GET, !flag_hide_x\nVAR_STORY=3\nITEM_POTION*5\n# note\nITEM_ANTIDOTE") == [
+        ("flag", "FLAG_BADGE01_GET", 1), ("flag", "FLAG_HIDE_X", 0), ("var", "VAR_STORY", 3),
+        ("item", "ITEM_POTION", 5), ("item", "ITEM_ANTIDOTE", 1)]
+    assert pt.parse_state(["FLAG_A=false", "VAR_B = 0x10"]) == [("flag", "FLAG_A", 0), ("var", "VAR_B", 16)]
+    with pytest.raises(pt.PlaytestError, match="can't read"):
+        pt.parse_state("give me a pokemon")
+
+
+def test_constants_cache(tmp_path, monkeypatch):
+    (tmp_path / "include/constants").mkdir(parents=True)
+    (tmp_path / "include/constants/flags.h").write_text("#define FLAG_A 0x20\n")
+    calls = []
+
+    def fake(self, names, version):
+        calls.append(list(names))
+        return {n: i for i, n in enumerate(names)}
+
+    monkeypatch.setattr(pt.Constants, "_compile", fake)
+    c = pt.Constants(tmp_path, tmp_path / "cache")
+    assert c.values(["FLAG_A", "FLAG_B"]) == {"FLAG_A": 0, "FLAG_B": 1}
+    assert pt.Constants(tmp_path, tmp_path / "cache").values(["FLAG_B"]) == {"FLAG_B": 1}  # from disk
+    assert calls == [["FLAG_A", "FLAG_B"]]
+
+
+@pytest.mark.skipif(not pt.shutil.which("arm-none-eabi-gcc"), reason="needs arm-none-eabi-gcc")
+def test_constants_compiled(tmp_path):
+    inc = tmp_path / "include/constants"
+    inc.mkdir(parents=True)
+    (inc / "flags.h").write_text("#define FLAG_BASE 0x50\n#define FLAG_X (FLAG_BASE + 3)\n")
+    (inc / "items.h").write_text("enum { ITEM_NONE, ITEM_POTION = 13, ITEM_SUPER };\n")
+    c = pt.Constants(tmp_path, tmp_path / "cache")
+    assert c.values(["FLAG_X", "ITEM_SUPER"]) == {"FLAG_X": 0x53, "ITEM_SUPER": 14}
+    with pytest.raises(pt.PlaytestError, match="unknown constant.*FLAG_NOPE"):
+        c.values(["FLAG_NOPE"])
+
+
+def test_checkpoints_import_delete(tmp_path):
+    root = decomp_fixture.build(tmp_path / "game")
+    s = pt.PlaySession(root, cache_dir=tmp_path / "cache")
+    (tmp_path / "game.sav").write_bytes(b"\xff" * 0x20000)
+    meta = s.import_save(tmp_path / "game.sav", "before gym")
+    assert meta["source"] == "import"
+    assert [c["name"] for c in s.checkpoints()] == ["before gym"]
+    (tmp_path / "bad.sav").write_bytes(b"\0" * 100)
+    with pytest.raises(pt.PlaytestError, match="64 or 128 KiB"):
+        s.import_save(tmp_path / "bad.sav", "bad")
+    with pytest.raises(pt.PlaytestError, match="names may use"):
+        s.import_save(tmp_path / "game.sav", "../escape")
+    s.delete_checkpoint("before gym")
+    assert s.checkpoints() == []
+    with pytest.raises(pt.PlaytestError, match="no checkpoint"):
+        s.delete_checkpoint("before gym")
+    with pytest.raises(pt.PlaytestError, match="start a play-test"):
+        s.save_checkpoint("x")
+
+
+@pytest.mark.skipif(not EXPANSION, reason="set PAE_TEST_EXPANSION to a built pokeemerald-expansion checkout")
+def test_checkpoint_real_rom(tmp_path):
+    root = Path(EXPANSION)
+    session = pt.PlaySession(root, cache_dir=tmp_path)
+    session.checkpoint_dir = tmp_path / "checkpoints"
+    try:
+        session.start("PetalburgCity", 17, 11, state=["FLAG_BADGE01_GET", "VAR_PETALBURG_GYM_STATE=2", "ITEM_POTION*2"])
+        g = session.game
+        values = session.constants.values(["VAR_PETALBURG_GYM_STATE", "FLAG_BADGE01_GET"])
+        session.save_checkpoint("t", "test")
+        session.start(checkpoint="t")
+        assert session.location()["map"] == "PetalburgCity"
+        assert g is not session.game
+        assert session.game.call("VarGet", values["VAR_PETALBURG_GYM_STATE"]) == 2
+        assert session.game.call("FlagGet", values["FLAG_BADGE01_GET"]) == 1
+        # from a checkpoint, warping elsewhere keeps the progress
+        session.start("PetalburgCity_House1", 3, 7, checkpoint="t")
+        assert session.location()["map"] == "PetalburgCity_House1"
+        assert session.game.call("FlagGet", values["FLAG_BADGE01_GET"]) == 1
+    finally:
+        session.close()

@@ -139,7 +139,48 @@ MCP map tools: `list_maps`, `view_map`, `get_map`, `view_metatiles`,
 (header + add/update/delete events), `get_script`/`write_script`/`new_script`,
 `duplicate_map`, `link_warps`, `resize_map`, `find_constants`, `tileset_info`,
 `get_metatile`/`set_metatile`/`add_metatiles`, `view_tiles`,
-`import_art_as_metatiles`, `playtest_start`/`playtest_press`.
+`import_art_as_metatiles`, `playtest_start`/`playtest_press`,
+`playtest_save_checkpoint`/`list_checkpoints`, `playtest_set_state`,
+`playtest_run_script`, `list_tileset_anims`, `view_tileset_anim`,
+`edit_tileset_anim`, `set_anim_frame`/`add_anim_frame`/`remove_anim_frame`,
+`create_tileset_anim`.
+
+### Tileset animations (water, flowers, waterfalls…)
+
+Animated tiles are read from `src/tileset_anims.c` (frame PNGs, frame tables,
+the tiles each animation overwrites, and the `timer % N` timing in each
+tileset's callback), so custom animations in your fork are picked up too.
+
+* Tick **animate** in the map editor to play them on the map. The preview runs
+  the same timing as the game: it was checked frame by frame against the
+  emulator's video memory, including Rustboro's staggered wind-blown water.
+* The **Anims** tab lists the map's animations with their frames in in-game
+  colours. You can change the speed, set the play order (`0 1 0 2`), add a
+  frame (a copy, or from an image), replace a frame's art (colours are matched
+  to the palette those tiles use) and remove frames.
+* **New animation** animates a run of tiles of your own tilesets (for example
+  water you drew for a new town). It writes the frame PNGs, table, queue
+  function and callback, and hooks up the tileset's `InitTilesetAnim_*` (and
+  `headers.h` if it had none). The frames start as copies of the current tiles,
+  ready to be redrawn.
+
+```bash
+pae anim list --map Route104
+pae anim show General_Water -o water.png            # frames in their in-game colours
+pae anim preview Route109 -o sea.gif --region 0,20,20,12
+pae anim speed General_Water 12                     # game frames per animation frame (60 = 1 s)
+pae anim order General_Flower 0,1,0,2
+pae anim frame General_Water 3 my_water.png --map Route109
+pae anim add-frame General_Water --image extra.png
+pae anim new PetalburgCity PondWater --tile 532 --count 4 --frames 4 --speed 16
+```
+
+`pae check` warns about frame images with fewer tiles than are copied, frame
+counts that don't divide the animation counter's cycle (a visible jump once per
+cycle), animations that never run, and too many tile copies on one game frame.
+Animations with custom logic (Mauville's flowers) are previewed approximately,
+and their timing is left to hand edits. Palette animations (Battle Dome) are
+listed but not edited.
 
 ### Build and play-test
 
@@ -165,9 +206,38 @@ How it works:
 4. Inputs are a small script: `KEY`, `KEY*frames` (16 frames = one step),
    `A+B 4`, `wait 60`. Results come back as a PNG, or as a GIF with `--gif`.
 
+#### Test saves: start from anywhere in the story
+
+A play-test can start from a **checkpoint** (a real cartridge save) instead of a
+new game, so you can test the part of the story you are working on without
+replaying everything before it.
+
+```bash
+pae checkpoint import before-gym ~/emerald.sav       # use a save from your emulator / flash cart
+pae play --from before-gym                           # continue it, where it was saved
+pae play PetalburgCity --x 17 --y 11 --from before-gym   # continue it, then warp to a map
+pae play PetalburgCity --state "FLAG_BADGE01_GET, VAR_PETALBURG_GYM_STATE=2, ITEM_POTION*5" \
+    --script PetalburgCity_EventScript_GymSign --save-as gym-test
+pae checkpoint list / delete NAME
+```
+
+* `--state` sets story state before the test starts: `FLAG_X` (set), `!FLAG_X`
+  (clear), `VAR_X=5`, `ITEM_X*3` (give). Values come from *your* headers (they
+  are compiled with your toolchain), so renumbered or new flags in a fork work.
+  The game's own `FlagSet`/`VarSet`/`AddBagItem` are called.
+* `--script LABEL` starts any script (event, cutscene, sign) immediately, as if
+  it had been triggered.
+* `--save-as NAME` (or **Save checkpoint** in the play window) saves with the
+  game's own save routine at the current spot, so the checkpoint has the party,
+  bag, flags and position exactly as they are. Checkpoints live in
+  `.pae/checkpoints/` as plain `.sav` files that any emulator can load.
+* A checkpoint keeps working after you rebuild, as long as the save layout
+  does not change (the same rule as for real saves).
+
 * In the map editor, **▶ Play-test** opens the game at the selected event or the
-  clicked tile. You can then play it with on-screen buttons or the keyboard,
-  and rebuild/restart after edits.
+  clicked tile, from a new game or a checkpoint (or import a `.sav`), with
+  optional story state and a script to run. You can then play it with on-screen
+  buttons or the keyboard, save checkpoints, and rebuild/restart after edits.
 * AI assistants get `playtest_start` and `playtest_press` MCP tools that return
   screenshots.
 * **Changes** (graphics page) shows before/after renders of every edited sprite,
@@ -345,7 +415,9 @@ anything `pae check` reports, then build."*
 | `pae status` / `pae validate` / `pae build [-o FILE] [--no-patch]` | check and build |
 | `pae revert ID… / --all` | restore originals |
 | `pae doctor` | check toolchain, emulator, Quickstart and built ROM |
-| `pae play MAP [--x --y --inputs … -o PNG --gif GIF]` | build, then play-test a map headlessly |
+| `pae play [MAP] [--x --y --from CKPT --state … --script LABEL --save-as NAME --inputs … -o PNG --gif GIF]` | build, then play-test headlessly |
+| `pae checkpoint list / import NAME FILE / delete NAME` | test saves |
+| `pae anim list / show / preview / speed / order / frame / add-frame / remove-frame / new` | tileset animations |
 | `pae map list / render / metatiles / events / new / link` | maps, events and warps |
 | `pae serve` / `pae mcp` | web editor / MCP server |
 | `pae apply-patch ROM PATCH -o OUT` | apply UPS/IPS |
@@ -389,10 +461,12 @@ by the shape of its entries:
   automatically.
 * ROM mode edits graphics and palettes only. Maps, events and scripts are
   edited in source-tree mode.
-* Tileset animations (animated water and flowers) are not edited, and
-  imported art always goes into the map's secondary tileset.
-* Play-testing starts from a new save (Quickstart), so flags and vars are
-  unset. It needs a non-release build with `ENABLE_QUICKSTART`, and libmgba.
+* Imported art always goes into the map's secondary tileset. Tileset
+  animations with custom code (more than a `timer % N` trigger) only have their
+  frames edited here.
+* Play-testing a new game needs a non-release build with `ENABLE_QUICKSTART`,
+  and libmgba. Checkpoints made before a change to the save layout (SaveBlock
+  structs) are not readable, just as with real saves.
 * Relocation updates every aligned word in the ROM that equals the old
   address. This is the standard approach in ROM-hacking tools. A random data
   word that happens to equal the address would also be changed, but this is
