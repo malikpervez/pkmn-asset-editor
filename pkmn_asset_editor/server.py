@@ -300,6 +300,14 @@ def make_handler(state: _State):
                                               body.get("mons") or [], int(body.get("entry") or 0)))
             if path == "/api/data/species":
                 return self._json(gd.set_species(q["id"], body))
+            if path == "/api/data/new_species":
+                import base64
+                images = {k: base64.b64decode(v.split(",", 1)[-1]) for k, v in (body.get("images") or {}).items() if v}
+                r = proj.newmon.create(body["name"], body["template"], body.get("changes") or {},
+                                       body.get("evolves_from"), images)
+                return self._json(r)
+            if path == "/api/data/new_species_check":
+                return self._json(proj.newmon.check(body.get("name", ""), body.get("template", "")))
             if path == "/api/data/item":
                 return self._json(gd.set_item(q["id"], body))
             if path == "/api/data/move":

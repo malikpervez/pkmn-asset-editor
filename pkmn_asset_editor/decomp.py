@@ -640,6 +640,12 @@ class DecompProject:
         return self._maps
 
     @property
+    def newmon(self):
+        """Add a new Pokémon by copying another (see newmon.py)."""
+        from .newmon import NewPokemon
+        return NewPokemon(self)
+
+    @property
     def release(self):
         """Release builds, patches and a README to share the game (see release.py)."""
         from .release import Release

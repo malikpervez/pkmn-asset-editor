@@ -372,6 +372,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--no-build", action="store_true", help="use the release ROM already built")
     p.add_argument("--force", action="store_true", help="make it even if Check for problems found errors")
     p.add_argument("--ups", action="store_true", help="also make a .ups patch (much bigger than the .bps)")
+    p = with_project(sub.add_parser("new-pokemon", help="source tree: add a new Pokémon, copied from one you pick "
+                                                        "(constants, Pokédex, graphics, learnsets, everything)"))
+    p.add_argument("name", help="its name, e.g. Sparkit")
+    p.add_argument("--from", dest="template", required=True, help="the Pokémon to copy, e.g. pichu")
+    p.add_argument("--types", help="e.g. TYPE_ELECTRIC,TYPE_FAIRY")
+    p.add_argument("--stats", help="HP,Atk,Def,SpA,SpD,Spe, e.g. 35,45,30,55,40,70")
+    p.add_argument("--category", help="Pokédex category, e.g. Spark")
+    p.add_argument("--description", help="Pokédex text (\\n for a new line)")
+    p.add_argument("--evolves-from", help="SPECIES:LEVEL, e.g. pichu:12 (adds an EVO_LEVEL evolution)")
+    for k in ("front", "back", "icon"):
+        p.add_argument(f"--{k}", help=f"a picture for its {k} sprite (any PNG; fitted and recoloured)")
     p = sub.add_parser("story", help="source tree: story chapters, for play-tests that start later in the game")
     ssub = p.add_subparsers(dest="story_cmd", required=True)
     with_project(ssub.add_parser("list", help="list the chapters and their maps"))
@@ -811,6 +822,31 @@ def _run(args) -> int:
                     print(f"{m.script_path(name).relative_to(proj.root)}:{t.line}: {t.label}: {msg}")
         print(f"{count} problem(s)" if count else "every text fits its box")
         return 1 if count else 0
+    if args.cmd == "new-pokemon":
+        if not decomp:
+            raise ProjectError("adding Pokémon needs a pokeemerald-expansion source tree")
+        ch = {}
+        if args.types:
+            ch["types"] = [t.strip() for t in args.types.split(",") if t.strip()]
+        if args.stats:
+            vals = [int(x) for x in args.stats.split(",")]
+            ch.update(dict(zip(("baseHP", "baseAttack", "baseDefense", "baseSpAttack", "baseSpDefense", "baseSpeed"),
+                               vals)))
+        if args.category:
+            ch["category"] = args.category
+        if args.description:
+            ch["description"] = args.description.replace("\\n", "\n")
+        evo = None
+        if args.evolves_from:
+            sp, _, lv = args.evolves_from.partition(":")
+            evo = {"species": sp, "method": "EVO_LEVEL", "param": int(lv or 16)}
+        images = {k: Path(getattr(args, k)).read_bytes() for k in ("front", "back", "icon") if getattr(args, k)}
+        r = proj.newmon.create(args.name, args.template, ch, evo, images)
+        for w in r["warnings"]:
+            print("⚠ " + w)
+        print(f"added {r['name']} ({r['species']}), made from {r['template']}; graphics in {r['graphics']}/")
+        print(f"changed {len(r['files'])} file(s); build the game to meet it")
+        return 0
     if args.cmd == "release":
         if not decomp:
             raise ProjectError("releases are made from a pokeemerald-expansion source tree (ROM projects: pae build)")

@@ -224,6 +224,12 @@ TOOLS = [
      _schema({"map": S, "name": S, "tile": I, "count": I, "frames": I, "speed": I}, ["map", "name", "tile", "count"])),
     ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
      "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
+    ("create_pokemon", "Add a brand-new Pokémon by copying `template` (e.g. SPECIES_PICHU): species and Pokédex "
+     "constants, its species entry, graphics folder and INCGFX lines, follower sprite, learnsets, TM/tutor moves. "
+     "`changes` are set_species fields (stats, types, abilities, category, height, weight, description, learnset); "
+     "`evolves_from` = {species, method, param}. Replace its pictures afterwards with import_image.",
+     _schema({"name": S, "template": S, "changes": {"type": "object"}, "evolves_from": {"type": "object"}},
+             ["name", "template"])),
     ("make_release", "Build a release (make release: no debug menus or Quickstart) and make BPS and UPS patches "
      "against the original ROM (`base_rom`, remembered), a README and a zip in .pae/releases. Only when the user "
      "asks for a release.", _schema({"name": S, "version": S, "author": S, "description": S, "base_rom": S,
@@ -248,7 +254,7 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "create_tileset_anim", "list_story_chapters", "story_items", "set_map_chapter", "playtest_team",
              "list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species",
              "playtest_battle", "story_flag", "suggest_map_chapters", "list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
-             "get_teachable", "list_marts", "set_mart", "difficulty_report", "find_text", "replace_text", "make_release"}
+             "get_teachable", "list_marts", "set_mart", "difficulty_report", "find_text", "replace_text", "make_release", "create_pokemon"}
 
 
 class Server:
@@ -492,6 +498,9 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
+        if name == "create_pokemon":
+            return txt(self.proj.newmon.create(args["name"], args["template"], args.get("changes") or {},
+                                               args.get("evolves_from")))
         if name == "make_release":
             settings = {k: args[k] for k in ("name", "version", "author", "description", "base_rom") if args.get(k)}
             r = self.proj.release.build(notes=args.get("notes"), **settings)

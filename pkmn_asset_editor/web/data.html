@@ -70,6 +70,9 @@
   .msg { padding: 8px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); max-width: 420px; }
   .msg.err { border-color: var(--accent); }
   .msg.ok { border-color: var(--ok); }
+  .modal { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 12; }
+  .modal.open { display: flex; }
+  .modal .box { background: var(--panel); border-radius: 12px; padding: 14px; max-height: 96vh; overflow: auto; }
   #playbox { position: fixed; inset: 0; background: rgba(0,0,0,.5); display: none; align-items: center; justify-content: center; z-index: 10; }
   #playbox.open { display: flex; }
   #playbox .box { background: var(--panel); border-radius: 12px; padding: 14px; width: min(760px, 96vw); max-height: 96vh; overflow: auto; }
@@ -115,7 +118,7 @@
   <button id="save" class="primary" disabled title="save your changes (Ctrl+S)">Save</button>
 </header>
 <div class="app">
-  <aside><input type="search" id="search" placeholder="Search…"><div id="list"></div></aside>
+  <aside><input type="search" id="search" placeholder="Search…"><div id="list-actions" style="padding:0 8px 6px"></div><div id="list"></div></aside>
   <main id="main"><p class="muted">Pick something on the left.</p></main>
 </div>
 
@@ -135,6 +138,22 @@
   </div>
 </div></div>
 <div id="toast"></div><div id="tip"></div>
+<div id="newmon" class="modal"><div class="box" style="width:min(720px,96vw)">
+  <div class="row" style="justify-content:space-between;margin-top:0"><b style="font-size:15px">✨ A new Pokémon</b><button id="nm-close">Close</button></div>
+  <p class="muted" style="margin:4px 0 8px">Your new Pokémon starts as a copy of one you pick: its sprites, moves, cry and everything else. Then change what you like. All the game's files it needs are made for you.</p>
+  <div class="field"><label>name</label><input id="nm-name" maxlength="12" placeholder="e.g. Sparkit"></div>
+  <div class="field"><label title="the Pokémon to copy">start from</label><input id="nm-template" list="dl-SPECIES" placeholder="e.g. Pichu"></div>
+  <div id="nm-check" class="hint"></div>
+  <div class="field"><label>type</label><div class="row" style="margin:0"><select id="nm-type1"></select><select id="nm-type2"></select></div></div>
+  <div class="field"><label title="HP / Attack / Defense / Sp. Atk / Sp. Def / Speed (empty = like the one you copy)">base stats</label>
+    <div class="row" style="margin:0"><input class="nm-stat" placeholder="HP" style="width:58px"><input class="nm-stat" placeholder="Atk" style="width:58px"><input class="nm-stat" placeholder="Def" style="width:58px"><input class="nm-stat" placeholder="SpA" style="width:58px"><input class="nm-stat" placeholder="SpD" style="width:58px"><input class="nm-stat" placeholder="Spe" style="width:58px"></div></div>
+  <div class="field"><label>kind of Pokémon</label><input id="nm-category" maxlength="12" placeholder="e.g. Spark (shown as 'Spark Pokémon')"></div>
+  <div class="field"><label>Pokédex text</label><textarea id="nm-desc" rows="3"></textarea></div>
+  <div class="field"><label title="another Pokémon that evolves into this one">evolves from</label><div class="row" style="margin:0"><input id="nm-evo" list="dl-SPECIES" placeholder="(nothing)" style="width:180px"> at level <input id="nm-evolv" type="number" min="1" max="100" value="16" style="width:64px"></div></div>
+  <div class="field"><label title="any picture; it is fitted and given colours (you can draw on it later in Graphics)">pictures (optional)</label>
+    <div class="row" style="margin:0;font-size:12px"><label>front <input type="file" id="nm-front" accept="image/*"></label><label>back <input type="file" id="nm-back" accept="image/*"></label><label>icon <input type="file" id="nm-icon" accept="image/*"></label></div></div>
+  <div class="row"><button id="nm-go" class="primary">✨ Make it</button><span id="nm-status" class="muted"></span></div>
+</div></div>
 <datalist id="dl-SPECIES"></datalist><datalist id="dl-MOVE"></datalist><datalist id="dl-ITEM"></datalist>
 <datalist id="dl-ABILITY"></datalist><datalist id="dl-maps"></datalist><datalist id="dl-EVO"></datalist>
 <datalist id="dl-EFFECT"></datalist>
@@ -219,6 +238,8 @@ async function renderList() {
     const r = await api('/api/data/species_list?q=' + encodeURIComponent(q));
     rows = r.slice(0, 500).map(s => ({ id: s.id, html: `${icon(s.id)}<div>${esc(s.name)}<br><small>${esc(s.id)}</small></div>` }));
   }
+  $('#list-actions').innerHTML = S.tab === 'species' ? '<button id="nm-open" style="width:100%" title="make a brand-new Pokémon, starting from a copy of another">✨ New Pokémon</button>' : '';
+  if (S.tab === 'species') $('#nm-open').onclick = openNewmon;
   host.innerHTML = rows.map(r => `<div class="item${r.id === S.sel ? ' sel' : ''}" data-id="${esc(r.id)}">${r.html}</div>`).join('') || '<p class="muted" style="padding:10px">Nothing found.</p>';
   host.querySelectorAll('.item').forEach(el => el.onclick = () => open(el.dataset.id));
   if ((S.tab === 'tms' || S.tab === 'difficulty') && !S.sel) open(S.tab);
@@ -447,6 +468,51 @@ function main_species_extra(d) {
     $('#egg-add').onclick = () => { $('#egg').insertAdjacentHTML('beforeend', '<tr><td><input data-g list="dl-MOVE"></td><td><button data-gdel>✕</button></td></tr>'); bind(); };
   }).catch(e => { $('#teach').textContent = e.message; $('#eggs').textContent = ''; });
 }
+
+// ------------------------------------------------------------------ a new Pokémon
+async function openNewmon() {
+  await loadNames('SPECIES_');
+  if (!S.types) S.types = await api('/api/constants?prefix=TYPE_');
+  const opts = (blank) => (blank ? '<option value="">(like the one you copy)</option>' : '<option value="">(none)</option>') + S.types.filter(t => !/TYPE_(NONE|MYSTERY|COUNT|NUMBER)/.test(t)).map(t => `<option value="${t}">${esc(t.replace('TYPE_', '').toLowerCase())}</option>`).join('');
+  $('#nm-type1').innerHTML = opts(true); $('#nm-type2').innerHTML = opts(false);
+  $('#nm-status').textContent = ''; $('#nm-check').textContent = '';
+  $('#newmon').classList.add('open'); $('#nm-name').focus();
+}
+let nmTimer;
+const nmCheck = () => { clearTimeout(nmTimer); nmTimer = setTimeout(async () => {
+  const name = $('#nm-name').value.trim(), template = constOf('SPECIES_', $('#nm-template').value);
+  if (!name || !template) { $('#nm-check').textContent = ''; return; }
+  try {
+    const r = await api('/api/data/new_species_check', { name, template });
+    $('#nm-check').style.color = '';
+    $('#nm-check').textContent = `Will be ${r.names.const}, with its pictures in graphics/pokemon/${r.names.dir}/.` + (r.warnings.length ? ' ⚠ ' + r.warnings.join('; ') : '');
+  } catch (e) { $('#nm-check').style.color = 'var(--accent)'; $('#nm-check').textContent = e.message; }
+}, 300); };
+$('#nm-name').oninput = nmCheck; $('#nm-template').oninput = nmCheck;
+$('#nm-close').onclick = () => $('#newmon').classList.remove('open');
+const fileData = (inp) => new Promise((res) => { const f = inp.files[0]; if (!f) return res(null); const r = new FileReader(); r.onload = () => res(r.result); r.readAsDataURL(f); });
+$('#nm-go').onclick = async () => {
+  const name = $('#nm-name').value.trim(), template = constOf('SPECIES_', $('#nm-template').value);
+  if (!name || !template) { $('#nm-status').textContent = 'Give it a name and pick a Pokémon to start from.'; return; }
+  const changes = {};
+  const t = [$('#nm-type1').value, $('#nm-type2').value].filter(Boolean);
+  if ($('#nm-type1').value) changes.types = t;
+  const keys = ['baseHP', 'baseAttack', 'baseDefense', 'baseSpAttack', 'baseSpDefense', 'baseSpeed'];
+  document.querySelectorAll('.nm-stat').forEach((inp, i) => { if (inp.value !== '') changes[keys[i]] = +inp.value; });
+  if ($('#nm-category').value.trim()) changes.category = $('#nm-category').value.trim();
+  if ($('#nm-desc').value.trim()) changes.description = $('#nm-desc').value.trim();
+  const evo = $('#nm-evo').value.trim() ? { species: constOf('SPECIES_', $('#nm-evo').value), method: 'EVO_LEVEL', param: +$('#nm-evolv').value || 16 } : null;
+  const images = {};
+  for (const k of ['front', 'back', 'icon']) { const d = await fileData($('#nm-' + k)); if (d) images[k] = d; }
+  $('#nm-go').disabled = true; $('#nm-status').textContent = 'Making it…';
+  try {
+    const r = await api('/api/data/new_species', { name, template, changes, evolves_from: evo, images });
+    $('#newmon').classList.remove('open'); S.names = {}; S.rev = {};
+    toast(`${r.name} is in your game! ${r.files.length} files changed. Build the game (or test a battle) to meet it.`, 'ok', 9000);
+    S.sel = null; await renderList(); open(r.species);
+  } catch (e) { $('#nm-status').textContent = e.message; }
+  finally { $('#nm-go').disabled = false; }
+};
 
 // ------------------------------------------------------------------ items
 async function constants(prefix) {

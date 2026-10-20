@@ -516,7 +516,8 @@ class GameData:
 
     def _species_index(self) -> dict:
         if self._species is None:
-            rels = [str(f.relative_to(self.root)) for f in sorted((self.root / SPECIES_DIR).glob("*.h"))]
+            files = sorted((self.root / SPECIES_DIR).glob("*.h"), key=lambda f: (f.name.startswith("custom"), f.name))
+            rels = [str(f.relative_to(self.root)) for f in files]  # your own Pokémon (custom_families.h) last
             self._species = self._table_index(rels, "SPECIES_")
         return self._species
 
@@ -667,6 +668,7 @@ class GameData:
         values, spans = self._species_fields(sid)
         info = self._species_index()[sid]
         repl: dict[str, str] = {}
+        add_lines: list[str] = []  # fields the entry doesn't have yet
         for k in NUMBER_FIELDS:
             if k in changes and changes[k] not in (None, ""):
                 v = int(changes[k])
@@ -694,10 +696,10 @@ class GameData:
                     raise DecompError(f"unknown species {e['target']}")
             groups = ", ".join("{" + ", ".join([e["method"], str(e["param"]), e["target"], *e.get("extra", [])]) + "}"
                                for e in evs)
-            if "evolutions" not in spans and evs:
-                raise DecompError(f"{sid} has no .evolutions line to change; add one by hand first")
             if "evolutions" in spans:
                 repl["evolutions"] = f"EVOLUTION({groups})" if evs else "NULL"
+            elif evs:
+                add_lines.append(f".evolutions = EVOLUTION({groups}),")
         if changes.get("name") is not None:
             self._check_name("SPECIES_", changes["name"])
             repl["speciesName"] = c_string_value(values.get("speciesName", ""), changes["name"].strip())
@@ -715,11 +717,27 @@ class GameData:
             problems = self._check_description(info["file"], "SPECIES_", changes["description"])
             if any("can't be shown" in p for p in problems):
                 raise DecompError("; ".join(problems))
-            repl["description"] = c_string_value(values.get("description", "COMPOUND_STRING()"), changes["description"])
+            repl["description"] = c_string_value(values.get("description", "COMPOUND_STRING()"), changes["description"], default="COMPOUND_STRING")
         for k in repl:
             if k not in spans:
                 raise DecompError(f"{sid} has no .{k} field to change")
         self._write_entry(info["file"], spans, repl)
+        if add_lines:
+            info = self._species_index()[sid]
+            path = self.root / info["file"]
+            raw = path.read_text(errors="replace")
+            close = info["end"]
+            line_start = raw.rfind("\n", 0, close) + 1
+            prev = raw[raw.rfind("\n", 0, line_start - 1) + 1:line_start]
+            indent = re.match(r"[ \t]*", prev).group(0) or "        "
+            if raw[line_start:close].strip():  # "}" on the same line as the last field
+                raw = raw[:close] + "\n" + "".join(f"{indent}{x}\n" for x in add_lines) + raw[close:]
+            else:
+                raw = raw[:line_start] + "".join(f"{indent}{x}\n" for x in add_lines) + raw[line_start:]
+            self.dp._backup(info["file"])
+            path.write_text(raw)
+            self._tables, self._species, self._files = {}, None, {}
+            self.dp._changed = None
         if changes.get("teachable"):
             self.set_teachable(sid, changes["teachable"])
         if changes.get("egg_moves") is not None:
@@ -892,7 +910,7 @@ class GameData:
             problems = self._check_description(ITEMS_FILE, "ITEM_", changes["description"])
             if any("can't be shown" in p for p in problems):
                 raise DecompError("; ".join(problems))
-            repl["description"] = c_string_value(values.get("description", "COMPOUND_STRING()"), changes["description"])
+            repl["description"] = c_string_value(values.get("description", "COMPOUND_STRING()"), changes["description"], default="COMPOUND_STRING")
         self._write_entry(info["file"], spans, repl)
         return self.get_item(iid)
 
@@ -961,7 +979,7 @@ class GameData:
             problems = self._check_description(MOVES_FILE, "MOVE_", changes["description"])
             if any("can't be shown" in p for p in problems):
                 raise DecompError("; ".join(problems))
-            repl["description"] = c_string_value(values.get("description", "COMPOUND_STRING()"), changes["description"])
+            repl["description"] = c_string_value(values.get("description", "COMPOUND_STRING()"), changes["description"], default="COMPOUND_STRING")
         self._write_entry(info["file"], spans, repl)
         return self.get_move(mid)
 
@@ -1457,10 +1475,13 @@ def c_strings(value: str) -> str:
     return "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', value))
 
 
-def c_string_value(old: str, text: str, indent: str = "        ") -> str:
+def c_string_value(old: str, text: str, indent: str = "        ", default: str = "_") -> str:
     """Write ``text`` (game text, with real newlines) the way ``old`` was written: same wrapper macro
-    (_, COMPOUND_STRING, ITEM_NAME), one literal per line when it has several lines."""
-    wrapper = (re.match(r"\s*(\w+)\s*\(", old) or [None, "_"])[1]
+    (_, COMPOUND_STRING, ITEM_NAME), one literal per line when it has several lines. When ``old`` isn't a string
+    (a shared text symbol), ``default`` is the wrapper: COMPOUND_STRING for text pointers like descriptions."""
+    wrapper = (re.match(r"\s*(\w+)\s*\(", old) or [None, default])[1]
+    if default == "COMPOUND_STRING" and wrapper == "_":  # _() makes an array, which a text pointer can't hold
+        wrapper = default
     esc = text.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "")
     pieces = esc.split("\n")
     if len(pieces) == 1:
