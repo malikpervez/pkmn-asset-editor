@@ -269,6 +269,7 @@
       <div class="col"><button data-k="A" class="ab">A</button><button data-k="B" class="ab">B</button></div>
       <div class="col"><button data-k="L">L</button><button data-k="R">R</button><button data-k="START">Start</button><button data-k="SELECT">Select</button></div>
       <div class="col"><label>walk steps <input id="play-steps" type="number" value="1" min="1" style="width:52px"></label>
+        <button id="play-rec" title="walk the path you want with the arrows; then use it in a 🚶 Move block of 🧩 Build what happens">🎬 Record steps</button>
         <button id="play-wait">wait 1s</button><input id="play-custom" placeholder="e.g. UP*32, A, wait 60" style="width:180px"><button id="play-run">Run inputs</button>
         <span class="adv"><input id="play-runscript" list="dl-labels" placeholder="script label" style="width:180px"><button id="play-runscript-go">Run script now</button></span></div>
     </div>
@@ -718,7 +719,7 @@ async function renderEventForm() {
     h += `<div class="field${lab.hidden ? ' adv' : ''}"><label title="${esc(lab.title)}">${esc(lab.text)}</label><input data-k="${esc(k)}" data-num="${type === 'number'}" type="${type}" value="${esc(v)}" ${list ? `list="${list}"` : ''} title="${esc(lab.title)}"></div>`;
   }
   h += '<div class="row">';
-  if ('script' in ev) h += `<button id="ev-newscript" title="write what happens, and the tool makes the script">${kind === 'coord_events' ? 'Write what happens…' : 'Write what they say…'}</button><button id="ev-openscript" title="open the script in the Scripts tab">Open script</button>`;
+  if ('script' in ev) h += `<button id="ev-blocks" class="primary" title="make what happens from blocks: say, ask, give, battle, move…">🧩 Build what happens</button><button id="ev-newscript" title="write what happens, and the tool makes the script">${kind === 'coord_events' ? 'Write what happens…' : 'Write what they say…'}</button><button id="ev-openscript" title="open the script in the Scripts tab">Open script</button>`;
   if (kind === 'warp_events') h += `<button id="ev-link" title="make the door on the other map lead back here too">Make two-way</button><button id="ev-goto">Go to that map</button>`;
   h += `<button id="ev-dup">Duplicate</button><button id="ev-del">Delete</button></div>`;
   host.innerHTML = h;
@@ -738,6 +739,28 @@ async function renderEventForm() {
   on('ev-del', deleteEvent);
   on('ev-dup', () => { snapshot(); const c = JSON.parse(JSON.stringify(ev)); c.x = Math.min(c.x + 1, S.cur.layout.width - 1); delete c.local_id; S.cur.data[kind].push(c); S.sel = { kind, i: S.cur.data[kind].length - 1 }; S.dirtyData = true; renderEvents(); drawOver(); updateButtons(); });
   on('ev-openscript', () => openLabel(ev.script));
+  on('ev-blocks', async () => {
+    if (dirty() && !(await saveAll(true))) return;
+    const kindName = { object_events: 'npc', bg_events: 'sign', coord_events: 'trigger' }[kind] || 'npc';
+    const has = ev.script && ev.script !== '0' && !/^0x/.test(ev.script);
+    const word = { npc: 'Person', sign: 'Sign', trigger: 'Trigger' }[kindName];
+    let label = ev.script;
+    if (!has) {
+      const used = new Set((S.cur.data.object_events || []).concat(S.cur.data.bg_events || [], S.cur.data.coord_events || []).map(e => e.script));
+      let n = i + 1; label = `${S.cur.name}_EventScript_${word}${n}`;
+      while (used.has(label)) label = `${S.cur.name}_EventScript_${word}${++n}`;
+    }
+    openBlockBuilder({
+      map: S.cur.name, label, kind: kindName,
+      localIds: (S.cur.data.object_events || []).map(e => e.local_id).filter(Boolean),
+      onSaved: async (lbl, test, r) => {
+        ev.script = lbl; S.dirtyData = true; await saveAll(true); await loadScript();
+        toast(`Saved ${lbl}` + (r.problems.length ? ` (⚠ ${r.problems.length} text problem(s))` : ''));
+        renderEventForm();
+        if (test) $('#play').click();
+      },
+    });
+  });
   on('ev-newscript', async () => {
     const text = prompt('What should this ' + KIND_LABEL[kind] + ' say?', 'Hello there!');
     if (text === null) return;
@@ -1378,7 +1401,23 @@ async function playPress(inputs) {
   } catch (e) { $('#play-status').textContent = e.message; }
   finally { playBusy = false; }
 }
+// 🎬 the cutscene recorder: direction presses while recording become movement steps for the block builder
+let recording = null;
+$('#play-rec').onclick = () => {
+  if (recording) {
+    window.paeRecordedSteps = recording; recording = null;
+    $('#play-rec').textContent = '🎬 Record steps';
+    toast(`Recorded ${window.paeRecordedSteps.length} step(s). Use them in a 🚶 Move block (🧩 Build what happens).`, 'ok', 7000);
+  } else { recording = []; $('#play-rec').textContent = '⏹ Stop recording (0)'; }
+};
+function recordKey(k) {
+  if (!recording || !['UP', 'DOWN', 'LEFT', 'RIGHT'].includes(k)) return;
+  const n = Math.max(1, +$('#play-steps').value || 1);
+  for (let i = 0; i < n; i++) recording.push(k.toLowerCase());
+  $('#play-rec').textContent = `⏹ Stop recording (${recording.length})`;
+}
 function keyInput(k) {
+  recordKey(k);
   const dirs = ['UP', 'DOWN', 'LEFT', 'RIGHT'];
   return dirs.includes(k) ? `${k}*${16 * Math.max(1, +$('#play-steps').value || 1)}, wait 4` : `${k}, wait 45`;
 }
@@ -1403,6 +1442,7 @@ loadMaps().then(() => {
 }).catch(e => toast(e.message, 'err', 10000));
 </script>
 <script src="/history.js"></script>
+<script src="/blocks.js"></script>
 <script src="/findtext.js"></script>
 </body>
 </html>

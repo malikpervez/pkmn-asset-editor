@@ -224,6 +224,18 @@ TOOLS = [
      _schema({"map": S, "name": S, "tile": I, "count": I, "frames": I, "speed": I}, ["map", "name", "tile", "count"])),
     ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
      "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
+    ("build_script", "Write an event script from blocks (see eventbuilder.py): [{type: say, text}, {type: ask, text, "
+     "yes: [...], no: [...]}, {type: give_item, item, amount}, {type: give_mon, species, level}, {type: trainer, "
+     "trainer, intro, defeat}, {type: wild, species, level}, {type: flag, flag, on}, {type: var, var, value}, "
+     "{type: if_flag, flag, on, then, else}, {type: if_var, var, value, then, else}, {type: move, who, steps: "
+     "[up, down, left, right, run_up, face_up, face_player, jump_down, '!', '?', wait]}, {type: hide|show, who}, "
+     "{type: heal}, {type: sound, se}, {type: music, bgm}, {type: wait, frames}, {type: fade, out}, {type: warp, map, "
+     "x, y}, {type: custom, line}]. kind: npc (lock/faceplayer), sign or trigger. Texts are wrapped to fit the box. "
+     "Point an event's script at the label with edit_map. get_blocks_script reads a script back as blocks.",
+     _schema({"map": S, "label": S, "kind": S, "blocks": {"type": "array", "items": {"type": "object"}}},
+             ["map", "label", "blocks"])),
+    ("get_blocks_script", "A script as blocks (the builder's own, or read back from a hand-written one).",
+     _schema({"map": S, "label": S}, ["map", "label"])),
     ("view_world", "A picture of a whole area of the world (all maps joined by their connections; area 0 is the "
      "biggest), with each map's position and size in blocks, and connection problems.",
      _schema({"area": I, "scale": {"type": "number"}})),
@@ -266,7 +278,7 @@ MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks",
              "list_trainers", "get_trainer", "set_trainer", "get_wild", "set_wild", "get_species", "set_species",
              "playtest_battle", "story_flag", "suggest_map_chapters", "list_items", "get_item", "set_item", "list_moves", "get_move", "set_move", "get_tms", "set_tms",
              "get_teachable", "list_marts", "set_mart", "difficulty_report", "find_text", "replace_text", "make_release", "create_pokemon", "view_world", "region_map", "attach_map",
-             "set_fly_spot"}
+             "set_fly_spot", "build_script", "get_blocks_script"}
 
 
 class Server:
@@ -510,6 +522,13 @@ class Server:
             r["rows_for_set_blocks"] = [" ".join(f"{i:03x}" for i in r["ids"][y * r["w"]:(y + 1) * r["w"]])
                                         for y in range(r["h"])]
             return txt(r)
+        if name in ("build_script", "get_blocks_script"):
+            from . import eventbuilder as eb
+            m = self.proj.maps
+            if name == "get_blocks_script":
+                return txt(eb.parse(m.read_script(m.resolve(args["map"])), args["label"]))
+            r = eb.save(m, args["map"], args["label"], args.get("kind") or "npc", args["blocks"])
+            return txt({"label": r["label"], "problems": r["problems"], "script": r["script"]})
         if name in ("view_world", "region_map", "attach_map", "set_fly_spot"):
             w = self.proj.maps.world
             if name == "view_world":

@@ -132,7 +132,7 @@ def make_handler(state: _State):
                 ctype = "text/plain; charset=utf-8" if f.suffix == ".txt" else "application/octet-stream"
                 hdr = {} if f.suffix == ".txt" else {"Content-Disposition": f'attachment; filename="{f.name}"'}
                 return self._send(f.read_bytes(), ctype, headers=hdr)
-            if path in ("/history.js", "/findtext.js"):
+            if path in ("/history.js", "/findtext.js", "/blocks.js"):
                 return self._send((WEB / path[1:]).read_bytes(), "text/javascript; charset=utf-8")
             if path == "/api/text/search":
                 if proj.kind != "decomp":
@@ -361,6 +361,13 @@ def make_handler(state: _State):
                                   "behaviors": atlas.behaviors},
                     "script_file": str(script.relative_to(proj.root)),
                     "shared_layout": [n for n, x in m.maps.items() if x["layout"] == lay["id"] and n != name]})
+            if path == "/api/map/blocks":
+                from . import eventbuilder as eb
+                name = m.resolve(q["name"])
+                try:
+                    return self._json(eb.parse(m.read_script(name), q["label"]))
+                except DecompError:
+                    return self._json({"blocks": [], "kind": q.get("kind", "npc"), "built": False, "new": True})
             if path == "/api/map/atlas":
                 im = Image.fromarray(m.layout_atlas(m.layout_of(q["name"])).image, "RGBA")
                 return self._send(m.png_bytes(im), "image/png")
@@ -445,6 +452,22 @@ def make_handler(state: _State):
                 finally:
                     os.unlink(tmp.name)
                 return self._json(r)
+            if path in ("/api/map/blocks", "/api/map/blocks_preview"):
+                import base64
+                from . import eventbuilder as eb
+                body = json.loads(self._body() or b"{}")
+                if path == "/api/map/blocks":
+                    r = eb.save(m, q["name"], body["label"], body.get("kind", "npc"), body.get("blocks") or [])
+                else:
+                    r = {"script": eb.generate(body.get("label") or "Preview", body.get("kind", "npc"),
+                                               body.get("blocks") or [], proj.textbox.wrap)}
+                tb = proj.textbox
+                shots = []
+                for t in tb.texts(r["script"]):
+                    buf = io.BytesIO()
+                    tb.render(t, scale=1).save(buf, "PNG")
+                    shots.append(dict(t.as_dict(), image="data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()))
+                return self._json(dict(r, texts=shots))
             if path == "/api/map/text_preview":
                 import base64
                 body = json.loads(self._body() or b"{}")
