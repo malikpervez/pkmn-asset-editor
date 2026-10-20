@@ -558,7 +558,7 @@ class PlaySession:
             raise PlaytestError("you have no Pokémon: add some to your team first")
         version = game_version(g.rom)
         if trainer:
-            tid = trainer.upper() if trainer.upper().startswith("TRAINER_") else "TRAINER_" + trainer.upper()
+            tid = game_trainer(self.root, trainer)
             need = ["BattleSetup_StartTrainerBattle_Debug", "CreateNPCTrainerPartyFromTrainer", "gTrainers",
                     "gTrainerBattleParameter", "gBattleTypeFlags", "CalculateEnemyPartyCount"]
             missing = [n for n in need if n not in g.sym]
@@ -568,10 +568,16 @@ class PlaySession:
             v = self.constants.values([tid, "TRAINERS_COUNT", "DIFFICULTY_COUNT"], version)
             n_tr, n_diff = v["TRAINERS_COUNT"], max(1, v["DIFFICULTY_COUNT"])
             size = g.sym_size.get("gTrainers", 0) // (n_tr * n_diff)
-            if size <= 0 or not 0 <= v[tid] < n_tr:
+            table, index, count = "gTrainers", v[tid], n_tr
+            if size > 0 and v[tid] >= n_tr and "gJohtoTrainers" in g.sym:
+                # a second region's trainers: gJohtoTrainers[difficulty][id - JOHTO_TRAINER_ID_BASE] (see data.h)
+                j = self.constants.values(["JOHTO_TRAINER_ID_BASE", "JOHTO_TRAINER_CATALOG_COUNT"], version)
+                if 0 <= v[tid] - j["JOHTO_TRAINER_ID_BASE"] < j["JOHTO_TRAINER_CATALOG_COUNT"]:
+                    table, index, count = "gJohtoTrainers", v[tid] - j["JOHTO_TRAINER_ID_BASE"], j["JOHTO_TRAINER_CATALOG_COUNT"]
+            if size <= 0 or not 0 <= index < count:
                 raise PlaytestError(f"{tid} is not a regular trainer (partners and debug trainers can't be battled here)")
             diff = g.call("GetTrainerDifficultyLevel", v[tid]) & 0xFF if "GetTrainerDifficultyLevel" in g.sym else 0
-            tr_ptr = g.sym["gTrainers"] + (min(diff, n_diff - 1) * n_tr + v[tid]) * size
+            tr_ptr = g.sym[table] + (min(diff, n_diff - 1) * count + index) * size
             param = g.sym["gTrainerBattleParameter"]
             for i in range(g.sym_size.get("gTrainerBattleParameter", 40)):
                 g.emu.write(param + i, 0, 1)
@@ -641,7 +647,7 @@ class PlaySession:
 
     def trainers_beaten(self, names: list[str]) -> dict[str, bool]:
         g = self._require()
-        ids = [n.upper() if n.upper().startswith("TRAINER_") else "TRAINER_" + n.upper() for n in names]
+        ids = [game_trainer(self.root, n) for n in names]
         v = self.constants.values(ids, game_version(g.rom)) if ids else {}
         fn = "HasTrainerBeenFought" if "HasTrainerBeenFought" in g.sym else None
         if fn is None:
@@ -797,6 +803,24 @@ def strip(frames: list[Image.Image], max_frames: int = 6) -> Image.Image:
 GAME_VERSIONS = {"BPE": "EMERALD", "BPR": "FIRERED", "BPG": "LEAFGREEN", "AXV": "RUBY", "AXP": "SAPPHIRE"}
 
 
+_TRAINER_ALIASES: dict[str, dict[str, str]] = {}
+
+
+def game_trainer(root: Path, name: str) -> str:
+    """The constant the game uses for a trainer of a .party file. Usually the same; a fork that builds a second
+    region's trainers under other IDs defines aliases like `#define TRAINER_JOHTO_AL_HNS (JOHTO_TRAINER_ID_BASE + 170)`
+    for the .party file's TRAINER_AL_HNS, and the game's trainer is the alias."""
+    tid = name.upper() if name.upper().startswith("TRAINER_") else "TRAINER_" + name.upper()
+    key = str(Path(root).resolve())
+    if key not in _TRAINER_ALIASES:
+        aliases = {}
+        for f in (Path(root) / "include" / "constants").glob("*.h"):
+            for region, rest in re.findall(r"^\s*#\s*define\s+TRAINER_(JOHTO)_([A-Z0-9_]+)\s*\(", f.read_text(errors="replace"), re.M):
+                aliases[f"TRAINER_{rest}"] = f"TRAINER_{region}_{rest}"
+        _TRAINER_ALIASES[key] = aliases
+    return _TRAINER_ALIASES[key].get(tid, tid)
+
+
 def game_version(rom: Path) -> str:
     with open(rom, "rb") as fh:
         fh.seek(0xAC)
@@ -878,11 +902,12 @@ class Constants:
     """Values of FLAG_/VAR_/ITEM_ (any C constant) as *your* headers define them, by compiling a tiny file
     with the project's own toolchain, so renumbered or added constants in a fork are always right."""
 
+    CACHE_VERSION = 2  # bump when the way values are worked out changes (old caches are then thrown away)
     HEADERS = ("global.h", "constants/flags.h", "constants/vars.h", "constants/items.h", "constants/species.h",
                "constants/moves.h", "pokemon.h", "constants/opponents.h", "constants/difficulty.h")
 
     def __init__(self, root: Path, cache_dir: Path):
-        self.root = Path(root)
+        self.root = Path(root).resolve()  # the compiler runs in the project folder
         self.cache_file = Path(cache_dir) / "constants.json"
         self._cache: dict | None = None
 
@@ -897,7 +922,7 @@ class Constants:
                 self._cache = json.loads(self.cache_file.read_text())
             except (OSError, ValueError):
                 self._cache = {}
-        sig = f"{self._signature()}:{version}"
+        sig = f"{self.CACHE_VERSION}:{self._signature()}:{version}"
         if self._cache.get("_sig") != sig:
             self._cache = {"_sig": sig}
         missing = [n for n in dict.fromkeys(names) if n not in self._cache]
@@ -913,6 +938,17 @@ class Constants:
         vals = self.values(list(keys.values()), version)
         return {f: vals[k] for f, k in keys.items()}
 
+    def _headers_defining(self, names: list[str]) -> list[str]:
+        """Other headers in include/constants/ that define these names (forks add their own, e.g. johto_ids.h)."""
+        want = {n for n in names if not n.startswith("offsetof(")}
+        out = []
+        for f in sorted((self.root / "include" / "constants").glob("*.h")):
+            text = f.read_text(errors="replace")
+            if any(re.search(rf"^\s*#\s*define\s+{re.escape(n)}\b", text, re.M) or re.search(rf"\b{re.escape(n)}\s*=", text)
+                   for n in want):
+                out.append(f"constants/{f.name}")
+        return out
+
     def _compile(self, names: list[str], version: str) -> dict[str, int]:
         cc = shutil.which("arm-none-eabi-gcc")
         if cc is None:
@@ -922,8 +958,12 @@ class Constants:
                 raise PlaytestError(f"not a constant name: {n}")
         work = self.cache_file.parent / "consts"
         work.mkdir(parents=True, exist_ok=True)
+        headers = [h for h in self.HEADERS if (self.root / "include" / h).exists()]
+        return self._compile_with(names, version, headers, work, cc, retry=True)
+
+    def _compile_with(self, names, version, headers, work, cc, retry: bool) -> dict[str, int]:
         src = work / "pae_consts.c"
-        includes = "".join(f'#include "{h}"\n' for h in self.HEADERS if (self.root / "include" / h).exists())
+        includes = "".join(f'#include "{h}"\n' for h in headers)
         includes += "#ifndef offsetof\n#define offsetof(t, m) __builtin_offsetof(t, m)\n#endif\n"
         src.write_text(includes + "const unsigned int pae_v[] = {\n" + "".join(f"    {n},\n" for n in names) + "};\n")
         # the same target flags the repository's Makefile uses (apcs-gnu changes enum sizes)
@@ -933,6 +973,14 @@ class Constants:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=self.root)
         if r.returncode != 0:
             bad = sorted(set(re.findall(r"'([A-Z_][A-Z0-9_]*)' undeclared", r.stderr)))
+            extra = [h for h in self._headers_defining(bad) if h not in headers] if retry else []
+            if bad and extra:
+                # names only another header defines (a fork's own, like johto_ids.h): those names alone, with it,
+                # so that header can't change any other value (a dead target's flags_*.h would)
+                rest = [n for n in names if n not in bad]
+                out = self._compile_with(rest, version, headers, work, cc, retry=False) if rest else {}
+                out.update(self._compile_with(bad, version, headers + extra, work, cc, retry=False))
+                return {n: out[n] for n in names}
             if bad:
                 raise PlaytestError(f"unknown constant(s): {', '.join(bad)}")
             raise PlaytestError("could not evaluate constants:\n" + r.stderr[-1200:])

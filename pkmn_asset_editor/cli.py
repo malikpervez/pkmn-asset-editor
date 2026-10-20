@@ -275,7 +275,7 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("map", help="source tree: maps, events, scripts and tilesets (see `pae map -h`)")
     msub = p.add_subparsers(dest="map_cmd", required=True)
-    q = with_project(msub.add_parser("list", help="list maps"))
+    q = with_project(msub.add_parser("list", help="list maps (name, id, group, region; filter by any of them)"))
     q.add_argument("query", nargs="?", default="")
     q = with_project(msub.add_parser("render", help="render a map (with events) to a PNG"))
     q.add_argument("name")
@@ -845,8 +845,9 @@ def _run(args) -> int:
             raise ProjectError("map commands need a pokeemerald-style source tree with data/maps")
         if args.map_cmd == "list":
             for x in m.list_maps():
-                if args.query.lower() in (x["name"] + x["id"]).lower():
-                    print(f"{x['name']:<44} {x['id']:<48} {x['group'].replace('gMapGroup_', '')}")
+                region = x.get("region", "").replace("REGION_", "").title()
+                if args.query.lower() in (x["name"] + x["id"] + region).lower():
+                    print(f"{x['name']:<44} {x['id']:<48} {x['group'].replace('gMapGroup_', ''):<28} {region}".rstrip())
         elif args.map_cmd == "render":
             m.render(args.name, events=not args.no_events, grid=args.grid, scale=args.scale).save(args.out)
             print(f"wrote {args.out}")
@@ -1342,9 +1343,6 @@ def _run(args) -> int:
     raise AssertionError(args.cmd)
 
 
-if __name__ == "__main__":
-    sys.exit(main())
-
 
 
 def _doctor(proj, fix: bool = False, yes: bool = False) -> int:
@@ -1437,3 +1435,7 @@ def _doctor(proj, fix: bool = False, yes: bool = False) -> int:
     print("\nEverything is ready. Run `pae serve` and open http://localhost:8765" if not missing else
           f"\n{missing} thing(s) still missing.")
     return 0 if not missing else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

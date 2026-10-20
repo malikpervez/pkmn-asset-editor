@@ -135,7 +135,8 @@ class TextSearch:
                 "more": max(0, len(out) - limit)}
 
     def _party_files(self) -> list[str]:
-        return [str(p.relative_to(self.root)) for p in sorted((self.root / "src" / "data").glob("*.party"))]
+        from .gamedata import built_party_files
+        return built_party_files(self.root)
 
     # ------------------------------------------------------------------ replace
     def replace(self, query: str, replacement: str, match_case: bool = False, whole_word: bool = False,

@@ -126,7 +126,8 @@ class MapEditor:
         self.groups_json = json.loads(gpath.read_text())
         self.group_order: list[str] = self.groups_json.get("group_order", [])
         self.layouts_json = json.loads((root / "data" / "layouts" / "layouts.json").read_text())
-        self.layouts = {l["id"]: l for l in self.layouts_json["layouts"] if "id" in l}
+        # "removed": a layout of a map the game no longer has, kept only so other layouts keep their numbers
+        self.layouts = {l["id"]: l for l in self.layouts_json["layouts"] if "id" in l and not l.get("removed")}
         self.maps: dict[str, dict] = {}
         for g in self.group_order:
             for name in self.groups_json.get(g, []):
@@ -138,7 +139,7 @@ class MapEditor:
                 except ValueError:
                     head = {}
                 self.maps[name] = {"name": name, "group": g, "id": head.get("id", ""), "layout": head.get("layout", ""),
-                                   "map_type": head.get("map_type", "")}
+                                   "map_type": head.get("map_type", ""), "region": head.get("region", "")}
         self.map_by_id = {m["id"]: n for n, m in self.maps.items() if m["id"]}
         self._parse_tilesets()
         self._labels = None
