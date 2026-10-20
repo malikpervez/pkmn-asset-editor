@@ -21,6 +21,29 @@ from pathlib import Path
 from .decomp import DecompError, strip_comments
 
 PARTY_FILES = ("src/data/trainers.party", "src/data/trainers_frlg.party", "src/data/battle_partners.party")
+
+
+def built_party_files(root: Path) -> list[str]:
+    """The .party files the game is built from: those whose generated header the C code includes (directly, or
+    through a make rule like `trainers_firered_johto.h: trainers_hns.h ... trainers_hns.party`). Falls back to the
+    usual names when that can't be told."""
+    root = Path(root)
+    parties = sorted(str(p.relative_to(root)) for p in (root / "src" / "data").glob("*.party"))
+    if not parties:
+        return []
+    included = set()
+    for f in (root / "src").rglob("*.c"):
+        included |= set(re.findall(r'^\s*#\s*include\s+"data/(\w+)\.h"', f.read_text(errors="replace"), re.M))
+    rules = "\n".join(f.read_text(errors="replace") for f in list(root.glob("*.mk")) + [root / "Makefile"] if f.exists())
+    used = set()
+    for rel in parties:
+        stem = Path(rel).stem
+        if stem in included:
+            used.add(rel)
+        for m in re.finditer(rf"^src/data/(\w+)\.h\s*:[^\n]*\b{re.escape(rel)}\b", rules, re.M):
+            if m.group(1) in included:
+                used.add(rel)
+    return [p for p in parties if p in used] or [f for f in PARTY_FILES if (root / f).exists()]
 WILD_FILE = "src/data/wild_encounters.json"
 SPECIES_DIR = "src/data/pokemon/species_info"
 LEARNSET_DIR = "src/data/pokemon/level_up_learnsets"
@@ -218,7 +241,7 @@ class GameData:
 
     # ------------------------------------------------------------------ trainers
     def _party_files(self) -> list[str]:
-        return [f for f in PARTY_FILES if (self.root / f).exists()]
+        return built_party_files(self.root)
 
     def _parse_party(self, rel: str) -> list[dict]:
         raw = (self.root / rel).read_text(errors="replace")

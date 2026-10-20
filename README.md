@@ -797,10 +797,15 @@ by the shape of its entries:
 * Also tried on a pokehns-expansion FireRed fork (a Kanto → Johto hack,
   `make firered`): building, checks, graphics, trainers, wild Pokémon (with
   its FireRed/LeafGreen/night tables), dialogue and play-testing (new games,
-  warps, battles, checkpoints, replay tests) work. Its build switches maps
-  to `firered_campaign` versions (other people, connections and geometry for
-  the FireRed game, and blocks changed through sparse overrides). pae shows
-  and edits the base map, so check those maps in the test window.
+  warps, battles, checkpoints, replay tests) work. pae also follows what such
+  a two-region game does differently: it edits the trainer files the game is
+  built from (a second region's `.party` file that a make rule converts), and
+  plays a second region's trainers under the IDs the game gives them (an alias
+  like `TRAINER_JOHTO_AL_HNS` for the file's `TRAINER_AL_HNS`); it reads
+  constants from the fork's own headers (`johto_ids.h`) without letting a dead
+  target's headers change other values; `pae map list` shows each map's
+  region (`pae map list johto`); and layouts kept only as placeholders
+  (`"removed": true`) are skipped.
 * `install.sh` and Docker were tested on Ubuntu 24.04. The Windows script and
   macOS (Homebrew) have not been tested yet.
 * Play-testing needs a non-release build and libmgba. With `ENABLE_QUICKSTART`
