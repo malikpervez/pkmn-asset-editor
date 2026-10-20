@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pokémon Asset Editor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='7' fill='%23d23c3c'/><rect x='1' y='7' width='14' height='2' fill='%23222'/><circle cx='8' cy='8' r='2.5' fill='%23fff' stroke='%23222'/></svg>">
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --line: #dcdce2; --text: #1d1d24; --muted: #6b6b78;
+    --accent: #d23c3c; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b7791f; --chip: #ececf1;
+    --checker-a: #e4e4ea; --checker-b: #f7f7f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+      --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34;
+      --checker-a: #2a2a32; --checker-b: #34343e;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+    --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34;
+    --checker-a: #2a2a32; --checker-b: #34343e;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; }
+  header { display: flex; gap: 12px; align-items: center; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; white-space: nowrap; }
+  header .game { color: var(--muted); font-size: 13px; }
+  header input[type=search] { flex: 1; min-width: 160px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+  button, .btn { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid var(--line); background: var(--chip); color: var(--text); cursor: pointer; text-decoration: none; display: inline-block; }
+  button:hover, .btn:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.active { outline: 2px solid var(--accent); }
+  .layout { display: grid; grid-template-columns: 200px 1fr; min-height: calc(100vh - 54px); }
+  nav { border-right: 1px solid var(--line); padding: 12px 8px; background: var(--panel); }
+  nav a { display: flex; justify-content: space-between; padding: 6px 10px; border-radius: 6px; color: var(--text); text-decoration: none; cursor: pointer; }
+  nav a.sel { background: var(--chip); font-weight: 600; }
+  nav a span { color: var(--muted); }
+  main { padding: 16px; overflow: auto; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 8px; cursor: pointer; display: flex; flex-direction: column; gap: 6px; position: relative; }
+  .card:hover { border-color: var(--muted); }
+  .thumb { height: 96px; display: flex; align-items: center; justify-content: center; border-radius: 6px;
+           background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0/12px 12px; overflow: hidden; }
+  .thumb img { max-width: 100%; max-height: 96px; image-rendering: pixelated; }
+  .card .name { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card .kind { font-size: 11px; color: var(--muted); }
+  .badge { position: absolute; top: 6px; right: 6px; background: var(--warn); color: #000; font-size: 10px; padding: 1px 6px; border-radius: 10px; }
+  .more { margin: 16px auto; display: block; }
+  #detail { position: fixed; top: var(--header-h, 54px); right: 0; bottom: 0; width: min(720px, 100vw); background: var(--panel); border-left: 1px solid var(--line); overflow: auto; padding: 16px; z-index: 10; display: none; box-shadow: -8px 0 24px rgba(0,0,0,.2); }
+  #detail.open { display: block; }
+  #detail h2 { margin: 0 0 4px; font-size: 16px; word-break: break-all; }
+  .muted { color: var(--muted); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+  .canvas-wrap { overflow: auto; max-height: 60vh; border-radius: 8px; border: 1px solid var(--line);
+                 background: repeating-conic-gradient(var(--checker-a) 0 25%, var(--checker-b) 0 50%) 0 0/16px 16px; }
+  canvas { image-rendering: pixelated; display: block; cursor: crosshair; }
+  .pal { display: grid; grid-template-columns: 26px repeat(16, 22px); gap: 3px; align-items: center; margin: 4px 0; }
+  .pal .bank { font-size: 11px; color: var(--muted); }
+  .sw { width: 22px; height: 22px; border-radius: 4px; border: 1px solid var(--line); cursor: pointer; }
+  .sw.sel { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .sw.t { background-image: linear-gradient(45deg, transparent 45%, var(--accent) 45% 55%, transparent 55%) !important; }
+  table { border-collapse: collapse; font-size: 12px; }
+  td { padding: 2px 8px 2px 0; vertical-align: top; }
+  pre { background: var(--bg); padding: 8px; border-radius: 8px; overflow: auto; font-size: 12px; max-height: 260px; }
+  .msg { padding: 8px 10px; border-radius: 8px; margin: 6px 0; font-size: 13px; }
+  .msg.err { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .msg.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); }
+  .msg.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 20; padding: 16px; }
+  #modal.open { display: flex; }
+  #modal .box { background: var(--panel); border-radius: 12px; padding: 16px; width: min(640px, 100%); max-height: 85vh; overflow: auto; }
+  @media (max-width: 700px) {
+    .layout { grid-template-columns: 1fr; }
+    nav { display: flex; overflow-x: auto; gap: 4px; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; }
+    nav a { white-space: nowrap; }
+    nav a span { margin-left: 6px; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Pokémon Asset Editor</h1>
+  <span class="game" id="game"></span>
+  <input type="search" id="search" placeholder="Search assets (id, name, alias)…">
+  <button id="btn-status">Changes</button>
+  <button id="btn-validate">Validate</button>
+  <button id="btn-build" class="primary">Build ROM</button>
+</header>
+<div class="layout">
+  <nav id="cats"></nav>
+  <main>
+    <div class="grid" id="grid"></div>
+    <button class="more" id="more" hidden>Show more</button>
+  </main>
+</div>
+
+<aside id="detail">
+  <div class="row" style="justify-content: space-between; margin-top: 0">
+    <div><h2 id="d-id"></h2><div class="muted" id="d-label"></div></div>
+    <button id="d-close">Close</button>
+  </div>
+  <div id="d-msgs"></div>
+  <div id="d-image-tools">
+    <div class="row">
+      <button data-tool="pencil" class="active">Pencil</button>
+      <button data-tool="fill">Fill</button>
+      <button data-tool="pick">Eyedropper</button>
+      <label>Zoom <input type="range" id="zoom" min="1" max="12" value="4"></label>
+      <select id="altpal"></select>
+    </div>
+    <div class="canvas-wrap"><canvas id="cv"></canvas></div>
+    <div class="row">
+      <button class="primary" id="save-pixels" disabled>Save pixel edits</button>
+      <button id="undo" disabled>Undo</button>
+      <a class="btn" id="download">Download file</a>
+      <button id="revert">Revert to original</button>
+    </div>
+    <div class="row">
+      <label class="btn">Replace with image… <input type="file" id="upload" accept="image/*" hidden></label>
+      <label><input type="checkbox" id="opt-resize"> resize to fit</label>
+      <label><input type="checkbox" id="opt-newpal"> build new palette</label>
+    </div>
+  </div>
+  <h3 style="font-size:14px">Palettes</h3>
+  <div class="muted" style="font-size:12px">Click a colour to draw with it. Shift+click (or double-click) to change the colour itself.</div>
+  <div id="d-pals"></div>
+  <input type="color" id="colorpick" hidden>
+  <h3 style="font-size:14px">Details &amp; constraints</h3>
+  <table id="d-table"></table>
+  <details><summary class="muted">Raw manifest entry</summary><pre id="d-json"></pre></details>
+</aside>
+
+<div id="modal"><div class="box"><div id="modal-body"></div><div class="row"><button id="modal-close">Close</button></div></div></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const api = async (path, opts) => {
+  const r = await fetch(path, opts);
+  const ct = r.headers.get('content-type') || '';
+  const data = ct.includes('json') ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(data.error || data);
+  return data;
+};
+const esc = (s) => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const hex = (c) => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+let state = { cat: null, q: '', rows: [], shown: 0, asset: null, tool: 'pencil', color: null, colorIsTransparent: false,
+              dirty: false, history: [], pals: {}, palDirty: new Set(), bust: Date.now() };
+
+const syncHeader = () => document.documentElement.style.setProperty('--header-h', document.querySelector('header').offsetHeight + 'px');
+window.addEventListener('resize', syncHeader);
+async function init() {
+  syncHeader();
+  const s = await api('/api/summary');
+  if (s.mode === 'decomp') {
+    $('#btn-build').textContent = 'Check & make'; $('#btn-validate').textContent = 'Check edits';
+    $('#btn-status').insertAdjacentHTML('beforebegin', '<a class="btn" href="/maps">Maps &amp; events</a>');
+  }
+  $('#game').textContent = `${s.game.name} · ${s.game.code}`;
+  const cats = Object.entries(s.categories).sort();
+  const nav = $('#cats');
+  const total = cats.reduce((n, [, v]) => n + v, 0);
+  nav.innerHTML = `<a data-cat="">All <span>${total}</span></a>` +
+    cats.map(([c, n]) => `<a data-cat="${esc(c)}">${esc(c.replace('_', ' '))} <span>${n}</span></a>`).join('');
+  nav.onclick = (e) => { const a = e.target.closest('a'); if (!a) return; state.cat = a.dataset.cat || null; load(); };
+  load();
+}
+
+async function load() {
+  document.querySelectorAll('#cats a').forEach(a => a.classList.toggle('sel', (a.dataset.cat || null) === state.cat));
+  const params = new URLSearchParams();
+  if (state.cat) params.set('category', state.cat);
+  if (state.q) params.set('q', state.q);
+  state.rows = await api('/api/assets?' + params);
+  state.shown = 0;
+  $('#grid').innerHTML = '';
+  more();
+}
+
+function more() {
+  const grid = $('#grid');
+  const next = state.rows.slice(state.shown, state.shown + 240);
+  for (const r of next) {
+    const el = document.createElement('div');
+    el.className = 'card';
+    el.innerHTML = `<div class="thumb"><img loading="lazy" alt="" src="/api/image?id=${encodeURIComponent(r.id)}&t=${state.bust}"></div>
+      <div class="name" title="${esc(r.id)}">${esc(r.id.split('/').slice(1).join('/') || r.id)}</div>
+      <div class="kind">${esc(r.kind)}${r.aliases.length ? ` · +${r.aliases.length} alias` : ''}</div>
+      ${r.modified ? '<span class="badge">edited</span>' : ''}`;
+    el.onclick = () => openAsset(r.id);
+    grid.appendChild(el);
+  }
+  state.shown += next.length;
+  $('#more').hidden = state.shown >= state.rows.length;
+}
+$('#more').onclick = more;
+let qTimer;
+$('#search').oninput = (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.q = e.target.value; load(); }, 200); };
+
+// ------------------------------------------------------------------ detail
+async function openAsset(id, msgs = []) {
+  const d = await api('/api/asset?id=' + encodeURIComponent(id));
+  state.asset = d; state.dirty = false; state.history = []; state.pals = d.palette_colors; state.palDirty = new Set();
+  $('#detail').classList.add('open');
+  $('#d-id').textContent = d.id;
+  $('#d-label').textContent = d.label + (d.aliases.length ? ` · also: ${d.aliases.slice(0, 6).join(', ')}${d.aliases.length > 6 ? '…' : ''}` : '');
+  $('#d-msgs').innerHTML = msgs.join('');
+  $('#d-json').textContent = JSON.stringify(d, null, 1);
+  $('#download').href = '/api/file?id=' + encodeURIComponent(d.id);
+  const isImage = d.kind !== 'palette';
+  $('#d-image-tools').style.display = isImage ? '' : 'none';
+  $('#opt-newpal').parentElement.style.display = d.kind === 'tileset' ? 'none' : '';
+  const alt = $('#altpal');
+  const alts = (d.meta.alt_palettes || []);
+  alt.innerHTML = '<option value="">Palette: as edited</option>' + alts.map(p => `<option value="${esc(p)}">Preview with ${esc(p.split('/').pop())}</option>`).join('');
+  alt.style.display = alts.length && d.kind === 'sprite' ? '' : 'none';
+  renderTable(d);
+  renderPalettes();
+  if (isImage) await loadCanvas();
+  updateButtons();
+}
+
+function renderTable(d) {
+  const c = d.constraints || {};
+  const rows = [['kind', d.kind], ['file', d.file]];
+  for (const [k, v] of Object.entries(c)) rows.push([k.replace(/_/g, ' '), typeof v === 'object' ? JSON.stringify(v) : v]);
+  if (d.meta) for (const [k, v] of Object.entries(d.meta)) if (k !== 'alt_palettes') rows.push([k, typeof v === 'object' ? JSON.stringify(v) : v]);
+  $('#d-table').innerHTML = rows.map(([k, v]) => `<tr><td class="muted">${esc(k)}</td><td>${esc(v)}</td></tr>`).join('');
+}
+
+function paletteRows() {
+  const d = state.asset;
+  if (d.kind === 'palette') {
+    const cols = state.pals[d.id] || [];
+    const out = [];
+    for (let b = 0; b * 16 < cols.length; b++) out.push({ pid: d.id, bank: b, png: null });
+    return out;
+  }
+  return d.palettes.map(l => ({ pid: l.palette, bank: l.pal_bank, png: l.png_bank }));
+}
+
+function renderPalettes() {
+  const host = $('#d-pals');
+  host.innerHTML = '';
+  const byPid = {};
+  for (const r of paletteRows()) (byPid[r.pid] = byPid[r.pid] || []).push(r);
+  if (!Object.keys(byPid).length) host.innerHTML = '<div class="muted">This image has no palette of its own (shown in grayscale). Use <code>pae set --palette</code> to attach one.</div>';
+  for (const [pid, rows] of Object.entries(byPid)) {
+    const box = document.createElement('div');
+    box.innerHTML = `<div class="row" style="margin:6px 0 2px"><b style="font-size:12px">${esc(pid)}</b>
+      <button data-save="${esc(pid)}" ${state.palDirty.has(pid) ? '' : 'disabled'}>Save palette</button></div>`;
+    for (const r of rows) {
+      const cols = (state.pals[pid] || []).slice(r.bank * 16, r.bank * 16 + 16);
+      const line = document.createElement('div');
+      line.className = 'pal';
+      line.innerHTML = `<span class="bank">${r.png ?? r.bank}</span>` + cols.map((c, i) =>
+        `<div class="sw ${i === 0 && state.asset.kind === 'sprite' ? 't' : ''}" title="${hex(c)} (index ${i})" style="background:${hex(c)}"
+              data-pid="${esc(pid)}" data-ci="${r.bank * 16 + i}" data-i="${i}"></div>`).join('');
+      box.appendChild(line);
+    }
+    host.appendChild(box);
+  }
+  host.querySelectorAll('.sw').forEach(sw => {
+    sw.onclick = (e) => e.shiftKey ? editColor(sw) : selectSwatch(sw);
+    sw.ondblclick = () => editColor(sw);
+  });
+  host.querySelectorAll('[data-save]').forEach(b => b.onclick = () => savePalette(b.dataset.save));
+}
+
+function selectSwatch(sw) {
+  document.querySelectorAll('.sw.sel').forEach(x => x.classList.remove('sel'));
+  sw.classList.add('sel');
+  const c = state.pals[sw.dataset.pid][+sw.dataset.ci];
+  state.color = c;
+  state.colorIsTransparent = state.asset.kind === 'sprite' && sw.dataset.i === '0';
+}
+
+function editColor(sw) {
+  const pick = $('#colorpick');
+  const pid = sw.dataset.pid, ci = +sw.dataset.ci;
+  pick.value = hex(state.pals[pid][ci]);
+  pick.oninput = () => {
+    const v = pick.value;
+    const c = [1, 3, 5].map(i => parseInt(v.slice(i, i + 2), 16) & 0xF8);
+    state.pals[pid][ci] = c;
+    state.palDirty.add(pid);
+    renderPalettes();
+  };
+  pick.click();
+}
+
+async function savePalette(pid) {
+  try {
+    const r = await api('/api/palette?id=' + encodeURIComponent(pid), { method: 'POST', body: JSON.stringify({ colors: state.pals[pid] }) });
+    state.bust = Date.now();
+    await openAsset(state.asset.id, [`<div class="msg ok">Saved ${esc(pid)} · recoloured ${r.recoloured.length} image(s)</div>`]);
+    refreshGrid();
+  } catch (e) { showMsg(e.message, 'err'); }
+}
+
+// ------------------------------------------------------------------ canvas editing
+const cv = $('#cv');
+const ctx = cv.getContext('2d', { willReadFrequently: true });
+async function loadCanvas() {
+  const alt = $('#altpal').value;
+  const img = new Image();
+  img.src = `/api/image?id=${encodeURIComponent(state.asset.id)}${alt ? '&palette=' + encodeURIComponent(alt) : ''}&t=${Date.now()}`;
+  await img.decode();
+  cv.width = img.width; cv.height = img.height;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.drawImage(img, 0, 0);
+  applyZoom();
+}
+function applyZoom() {
+  const z = +$('#zoom').value;
+  cv.style.width = cv.width * z + 'px';
+  cv.style.height = cv.height * z + 'px';
+}
+$('#zoom').oninput = applyZoom;
+$('#altpal').onchange = () => { if (state.dirty && !confirm('Discard unsaved pixel edits?')) return; state.dirty = false; loadCanvas(); updateButtons(); };
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => {
+  state.tool = b.dataset.tool;
+  document.querySelectorAll('[data-tool]').forEach(x => x.classList.toggle('active', x === b));
+});
+
+function px(e) {
+  const r = cv.getBoundingClientRect();
+  return [Math.floor((e.clientX - r.left) / r.width * cv.width), Math.floor((e.clientY - r.top) / r.height * cv.height)];
+}
+function snapshot() { state.history.push(ctx.getImageData(0, 0, cv.width, cv.height)); if (state.history.length > 50) state.history.shift(); }
+function setPixel(x, y) {
+  if (x < 0 || y < 0 || x >= cv.width || y >= cv.height) return;
+  if (state.colorIsTransparent) ctx.clearRect(x, y, 1, 1);
+  else { ctx.fillStyle = hex(state.color); ctx.fillRect(x, y, 1, 1); }
+}
+function fill(x, y) {
+  const im = ctx.getImageData(0, 0, cv.width, cv.height), d = im.data, w = cv.width, h = cv.height;
+  const at = (i) => d.slice(i * 4, i * 4 + 4).join(',');
+  const target = at(y * w + x);
+  const rep = state.colorIsTransparent ? [0, 0, 0, 0] : [...state.color, 255];
+  if (target === rep.join(',')) return;
+  const stack = [y * w + x], seen = new Uint8Array(w * h);
+  while (stack.length) {
+    const i = stack.pop();
+    if (seen[i] || at(i) !== target) continue;
+    seen[i] = 1; d.set(rep, i * 4);
+    const cx = i % w, cy = (i / w) | 0;
+    if (cx > 0) stack.push(i - 1); if (cx < w - 1) stack.push(i + 1);
+    if (cy > 0) stack.push(i - w); if (cy < h - 1) stack.push(i + w);
+  }
+  ctx.putImageData(im, 0, 0);
+}
+function pick(x, y) {
+  const [r, g, b, a] = ctx.getImageData(x, y, 1, 1).data;
+  for (const sw of document.querySelectorAll('.sw')) {
+    const c = state.pals[sw.dataset.pid][+sw.dataset.ci];
+    const transparentSw = state.asset.kind === 'sprite' && sw.dataset.i === '0';
+    if ((a < 128 && transparentSw) || (a >= 128 && c[0] >> 3 === r >> 3 && c[1] >> 3 === g >> 3 && c[2] >> 3 === b >> 3)) { selectSwatch(sw); return; }
+  }
+}
+let drawing = false, last = null;
+function line(x0, y0, x1, y1) {
+  const dx = Math.abs(x1 - x0), dy = -Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+  let err = dx + dy;
+  for (;;) {
+    setPixel(x0, y0);
+    if (x0 === x1 && y0 === y1) break;
+    const e2 = 2 * err;
+    if (e2 >= dy) { err += dy; x0 += sx; }
+    if (e2 <= dx) { err += dx; y0 += sy; }
+  }
+}
+cv.onpointerdown = (e) => {
+  const [x, y] = px(e);
+  if (state.tool === 'pick') return pick(x, y);
+  if (!state.color && !state.colorIsTransparent) return showMsg('Pick a colour from the palette first.', 'warn');
+  snapshot();
+  if (state.tool === 'fill') fill(x, y); else { drawing = true; last = [x, y]; setPixel(x, y); cv.setPointerCapture(e.pointerId); }
+  state.dirty = true; updateButtons();
+};
+cv.onpointermove = (e) => { if (drawing) { const [x, y] = px(e); line(last[0], last[1], x, y); last = [x, y]; } };
+cv.onpointerup = () => { drawing = false; };
+$('#undo').onclick = () => { const s = state.history.pop(); if (s) ctx.putImageData(s, 0, 0); state.dirty = state.history.length > 0; updateButtons(); };
+function updateButtons() { $('#save-pixels').disabled = !state.dirty; $('#undo').disabled = !state.history.length; }
+
+$('#save-pixels').onclick = async () => {
+  const blob = await new Promise(r => cv.toBlob(r, 'image/png'));
+  await upload(blob, false, false);
+};
+$('#upload').onchange = async (e) => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (f) await upload(f, $('#opt-resize').checked, $('#opt-newpal').checked);
+};
+async function upload(blob, resize, newpal) {
+  try {
+    const q = new URLSearchParams({ id: state.asset.id, resize: resize ? '1' : '0', new_palette: newpal ? '1' : '0' });
+    const r = await api('/api/upload?' + q, { method: 'POST', body: blob });
+    state.bust = Date.now();
+    await openAsset(state.asset.id, ['<div class="msg ok">Saved.</div>', ...r.notes.map(n => `<div class="msg warn">${esc(n)}</div>`)]);
+    refreshGrid();
+  } catch (e) { showMsg(e.message, 'err'); }
+}
+$('#revert').onclick = async () => {
+  if (!confirm('Restore this asset to the original ROM contents?')) return;
+  await api('/api/revert?id=' + encodeURIComponent(state.asset.id), { method: 'POST' });
+  state.bust = Date.now();
+  await openAsset(state.asset.id, ['<div class="msg ok">Reverted.</div>']);
+  refreshGrid();
+};
+$('#d-close').onclick = () => {
+  if (state.dirty && !confirm('Discard unsaved pixel edits?')) return;
+  $('#detail').classList.remove('open');
+};
+function showMsg(text, kind) { $('#d-msgs').innerHTML = `<div class="msg ${kind}">${esc(text)}</div>`; }
+function refreshGrid() {
+  const rows = state.rows.length;
+  load().then(() => { while (state.shown < Math.min(rows, state.rows.length)) more(); });
+}
+
+// ------------------------------------------------------------------ build
+function modal(html) { $('#modal-body').innerHTML = html; $('#modal').classList.add('open'); }
+$('#modal-close').onclick = () => $('#modal').classList.remove('open');
+$('#btn-status').onclick = async () => {
+  const st = await api('/api/status');
+  modal(`<h3>Changes</h3>` + (st.length ? '<table>' + st.map(s => `<tr><td>${esc(s.state)}</td><td><a href="#" data-open="${esc(s.id)}">${esc(s.id)}</a>${s.error ? ' – ' + esc(s.error) : ''}</td></tr>`).join('') + '</table>' : '<p class="muted">No edits yet.</p>'));
+  document.querySelectorAll('[data-open]').forEach(a => a.onclick = (e) => { e.preventDefault(); $('#modal').classList.remove('open'); openAsset(a.dataset.open); });
+};
+async function build(dry) {
+  modal('<p>Working…</p>');
+  try {
+    const r = await api('/api/build' + (dry ? '?dry=1' : ''), { method: 'POST' });
+    let h = `<h3>${dry ? 'Validation' : 'Build'} ${r.ok ? 'succeeded' : 'failed'}</h3>`;
+    h += r.errors.map(e => `<div class="msg err">${esc(e)}</div>`).join('');
+    h += r.warnings.map(e => `<div class="msg warn">${esc(e)}</div>`).join('');
+    if (r.checked !== undefined) {
+      // source-tree mode: validation of edited files, then `make`
+      if (r.checked !== undefined) h += `<p>${r.checked} edited file(s) checked.</p>`;
+      if (r.command) h += `<p class="muted">$ ${esc(r.command)} → exit ${r.returncode} (${r.seconds}s)</p>`;
+      if (r.output) h += `<pre>${esc(r.output.split('\n').slice(-40).join('\n'))}</pre>`;
+      if (r.ok && !dry) h += `<div class="row"><a class="btn" href="/api/download?what=rom">Download ROM</a></div>`;
+    } else if (r.ok) {
+      h += `<p>${r.changed_assets.length} asset(s) changed · ${r.in_place.length} block(s) written in place · ${r.relocated.length} relocated to free space.</p>`;
+      if (r.relocated.length) h += '<pre>' + r.relocated.map(x => `${x.from} → ${x.to} (${x.size} bytes, ${x.pointers_updated} pointer(s) updated)`).join('\n') + '</pre>';
+      if (!dry) h += `<div class="row"><a class="btn" href="/api/download?what=rom">Download ROM</a>` +
+        r.patches.map(p => { const ext = p.split('.').pop(); return `<a class="btn" href="/api/download?what=${ext}">Download .${ext} patch</a>`; }).join('') + '</div>';
+    }
+    modal(h);
+  } catch (e) { modal(`<div class="msg err">${esc(e.message)}</div>`); }
+}
+$('#btn-validate').onclick = () => build(true);
+$('#btn-build').onclick = () => build(false);
+init();
+</script>
+</body>
+</html>

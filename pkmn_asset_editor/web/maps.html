@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Map Editor</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' rx='3' fill='%2338a169'/><rect x='3' y='3' width='4' height='4' fill='%23fff'/><rect x='9' y='9' width='4' height='4' fill='%23fff'/></svg>">
+<style>
+  :root {
+    --bg: #f4f4f6; --panel: #ffffff; --line: #dcdce2; --text: #1d1d24; --muted: #6b6b78;
+    --accent: #d23c3c; --accent-text: #ffffff; --ok: #1f8a4c; --warn: #b7791f; --chip: #ececf1; --sel: #2563eb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+      --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17171c; --panel: #202027; --line: #33333d; --text: #ececf1; --muted: #9a9aa8;
+    --accent: #ef5a5a; --accent-text: #ffffff; --ok: #4ccb84; --warn: #e3b341; --chip: #2b2b34; --sel: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, -apple-system, Segoe UI, sans-serif; height: 100vh; display: flex; flex-direction: column; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 8px 0 0; white-space: nowrap; }
+  header a { color: var(--muted); }
+  button, .btn, select, input, textarea { font: inherit; color: var(--text); }
+  button, .btn { padding: 5px 10px; border-radius: 7px; border: 1px solid var(--line); background: var(--chip); cursor: pointer; text-decoration: none; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.active { outline: 2px solid var(--sel); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select, textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; }
+  .app { flex: 1; display: grid; grid-template-columns: 230px 1fr 360px; grid-template-rows: minmax(0, 1fr); min-height: 0; overflow: hidden; }
+  #maplist { border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 8px; }
+  #maplist input { width: 100%; margin-bottom: 6px; }
+  .grp { font-weight: 600; color: var(--muted); margin: 8px 0 2px; cursor: pointer; font-size: 12px; }
+  .mapitem { padding: 3px 8px; border-radius: 5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mapitem:hover { background: var(--chip); }
+  .mapitem.sel { background: var(--sel); color: #fff; }
+  #center { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+  .toolbar { display: flex; gap: 6px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line); background: var(--panel); flex-wrap: wrap; }
+  .toolbar .sep { width: 1px; height: 22px; background: var(--line); }
+  #viewport { flex: 1; overflow: auto; position: relative; background: repeating-conic-gradient(var(--chip) 0 25%, var(--bg) 0 50%) 0 0/16px 16px; }
+  #stack { position: relative; margin: 16px; }
+  #stack canvas { position: absolute; left: 0; top: 0; image-rendering: pixelated; }
+  #status { padding: 4px 10px; border-top: 1px solid var(--line); background: var(--panel); color: var(--muted); font-size: 12px; display: flex; gap: 14px; flex-wrap: wrap; }
+  #side { border-left: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .tabs { display: flex; border-bottom: 1px solid var(--line); }
+  .tabs button { flex: 1; border: 0; border-radius: 0; background: transparent; padding: 8px 4px; }
+  .tabs button.on { border-bottom: 2px solid var(--accent); font-weight: 600; }
+  .tab { flex: 1; overflow: auto; padding: 10px; display: none; }
+  .tab.on { display: block; }
+  #atlaswrap { overflow: auto; max-height: calc(100vh - 230px); border: 1px solid var(--line); border-radius: 6px; background: #000; }
+  #atlas { image-rendering: pixelated; display: block; cursor: crosshair; }
+  .field { display: grid; grid-template-columns: 130px 1fr; gap: 6px; align-items: center; margin: 4px 0; }
+  .field label { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+  .field input, .field select { width: 100%; min-width: 0; }
+  .evlist div { padding: 3px 6px; border-radius: 5px; cursor: pointer; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .evlist div:hover { background: var(--chip); }
+  .evlist div.sel { background: var(--sel); color: #fff; }
+  h3 { font-size: 13px; margin: 12px 0 6px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin: 6px 0; }
+  #script { width: 100%; height: calc(100vh - 200px); font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; tab-size: 4; }
+  .msg { padding: 6px 8px; border-radius: 6px; margin: 4px 0; font-size: 12px; }
+  .msg.err { background: color-mix(in srgb, var(--accent) 18%, transparent); }
+  .msg.warn { background: color-mix(in srgb, var(--warn) 18%, transparent); }
+  .msg.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); }
+  #toast { position: fixed; bottom: 14px; left: 50%; transform: translateX(-50%); max-width: 80vw; z-index: 30; }
+  #modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 20; padding: 16px; }
+  #modal.open { display: flex; }
+  #modal .box { background: var(--panel); border-radius: 12px; padding: 16px; width: min(560px, 100%); max-height: 85vh; overflow: auto; }
+  .dirty::after { content: " •"; color: var(--accent); }
+  .muted { color: var(--muted); }
+  @media (max-width: 900px) {
+    body { height: auto; }
+    .app { grid-template-columns: 1fr; grid-template-rows: 160px 60vh auto; overflow: visible; }
+    #maplist, #side { border: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Map Editor</h1>
+  <a href="/">Graphics</a>
+  <span class="muted" id="mapname">no map open</span>
+  <span style="flex:1"></span>
+  <button id="undo" title="Ctrl+Z" disabled>Undo</button>
+  <button id="redo" title="Ctrl+Y" disabled>Redo</button>
+  <button id="newmap">New map…</button>
+  <button id="check">Check</button>
+  <button id="revert">Revert map</button>
+  <button id="save" class="primary" disabled>Save</button>
+</header>
+<div class="app">
+  <aside id="maplist"><input type="search" id="mapsearch" placeholder="Filter maps…"><div id="maps"></div></aside>
+  <section id="center">
+    <div class="toolbar">
+      <button data-tool="paint" class="active" title="P">Paint</button>
+      <button data-tool="fill" title="F">Fill</button>
+      <button data-tool="pick" title="I: click or drag to copy blocks as a stamp">Copy</button>
+      <button data-tool="collision" title="C">Collision</button>
+      <button data-tool="events" title="E: select / drag events">Events</button>
+      <span class="sep"></span>
+      <span class="muted">Add:</span>
+      <button data-add="object_events">NPC</button>
+      <button data-add="warp_events">Warp</button>
+      <button data-add="coord_events">Trigger</button>
+      <button data-add="bg_events">Sign</button>
+      <span class="sep"></span>
+      <select id="zoom"><option value="1">1x</option><option value="2" selected>2x</option><option value="3">3x</option><option value="4">4x</option></select>
+      <label><input type="checkbox" id="showgrid"> grid</label>
+      <label><input type="checkbox" id="showev" checked> events</label>
+      <label><input type="checkbox" id="showcol"> collision</label>
+      <span id="colopts" hidden>
+        <select id="colval"><option value="0">passable</option><option value="1">impassable</option></select>
+        elevation <select id="elev"></select>
+      </span>
+    </div>
+    <div id="viewport"><div id="stack"><canvas id="base"></canvas><canvas id="over"></canvas></div></div>
+    <div id="status"><span id="st-pos">–</span><span id="st-block"></span><span id="st-stamp"></span><span id="st-hint" class="muted">Open a map on the left.</span></div>
+  </section>
+  <aside id="side">
+    <div class="tabs">
+      <button data-tab="tiles" class="on">Metatiles</button>
+      <button data-tab="event">Events</button>
+      <button data-tab="header">Map</button>
+      <button data-tab="scripts">Scripts</button>
+    </div>
+    <div class="tab on" id="tab-tiles">
+      <div class="muted" style="margin-bottom:6px">Click a metatile, or drag to pick a multi-block stamp (e.g. a whole house). On the map, use <b>Copy</b> to grab blocks you've already placed.</div>
+      <div id="atlaswrap"><canvas id="atlas"></canvas></div>
+    </div>
+    <div class="tab" id="tab-event">
+      <div class="evlist" id="evlist"></div>
+      <div id="evform"></div>
+    </div>
+    <div class="tab" id="tab-header"><div id="hdrform"></div></div>
+    <div class="tab" id="tab-scripts">
+      <div class="row">
+        <select id="labelsel" style="flex:1"></select>
+        <button id="savescript" disabled>Save script</button>
+      </div>
+      <div class="muted" id="scriptfile" style="margin-bottom:4px"></div>
+      <textarea id="script" spellcheck="false"></textarea>
+    </div>
+  </aside>
+</div>
+<div id="toast"></div>
+<div id="modal"><div class="box"><div id="modal-body"></div><div class="row"><button id="modal-close">Close</button></div></div></div>
+<datalist id="dl-labels"></datalist>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const api = async (path, body) => {
+  const opts = body === undefined ? {} : { method: 'POST', body: JSON.stringify(body) };
+  const r = await fetch(path, opts);
+  const ct = r.headers.get('content-type') || '';
+  const data = ct.includes('json') ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(data.error || data);
+  return data;
+};
+function toast(text, kind = 'ok', ms = 3500) {
+  const el = document.createElement('div');
+  el.className = 'msg ' + kind; el.textContent = text;
+  $('#toast').appendChild(el); setTimeout(() => el.remove(), ms);
+}
+const KIND_LABEL = { object_events: 'NPC', warp_events: 'Warp', coord_events: 'Trigger', bg_events: 'Sign' };
+const KIND_COLOR = { object_events: '#f6c90e', warp_events: '#e53e3e', coord_events: '#3182ce', bg_events: '#b83280' };
+// constants offered as suggestions for each field
+const FIELD_PREFIX = { graphics_id: 'OBJ_EVENT_GFX_', movement_type: 'MOVEMENT_TYPE_', trainer_type: 'TRAINER_TYPE_',
+  flag: 'FLAG_', var: 'VAR_', dest_map: 'MAP_', player_facing_dir: 'BG_EVENT_PLAYER_FACING_', item: 'ITEM_',
+  music: 'MUS_', weather: 'WEATHER_', map_type: 'MAP_TYPE_', region_map_section: 'MAPSEC_', battle_scene: 'MAP_BATTLE_SCENE_',
+  layout: 'LAYOUT_', map: 'MAP_', region: 'REGION_' };
+
+let S = { maps: [], groups: [], cur: null, atlasImg: null, tool: 'paint', stamp: { w: 1, h: 1, ids: [1] },
+          undo: [], redo: [], dirtyBlocks: false, dirtyData: false, dirtyScript: false, sel: null, sprites: {},
+          constants: {}, drag: null, hover: null, collapsed: {} };
+
+// ------------------------------------------------------------------ map list
+async function loadMaps() {
+  const r = await api('/api/maps');
+  S.maps = r.maps; S.groups = r.groups;
+  renderMapList();
+}
+function renderMapList() {
+  const q = $('#mapsearch').value.toLowerCase();
+  const host = $('#maps'); host.innerHTML = '';
+  for (const g of S.groups) {
+    const items = S.maps.filter(m => m.group === g && (!q || m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q)));
+    if (!items.length) continue;
+    const h = document.createElement('div');
+    h.className = 'grp'; h.textContent = `${g.replace('gMapGroup_', '')} (${items.length})`;
+    h.onclick = () => { S.collapsed[g] = !S.collapsed[g]; renderMapList(); };
+    host.appendChild(h);
+    if (S.collapsed[g] && !q) continue;
+    for (const m of items) {
+      const d = document.createElement('div');
+      d.className = 'mapitem' + (S.cur && S.cur.name === m.name ? ' sel' : '');
+      d.textContent = m.name; d.title = `${m.id} · ${m.layout}`;
+      d.onclick = () => openMap(m.name);
+      host.appendChild(d);
+    }
+  }
+}
+$('#mapsearch').oninput = renderMapList;
+
+// ------------------------------------------------------------------ open / draw
+function dirty() { return S.dirtyBlocks || S.dirtyData || S.dirtyScript; }
+async function openMap(name, keepSel = false) {
+  if (S.cur && dirty() && S.cur.name !== name && !confirm('Discard unsaved changes to ' + S.cur.name + '?')) return;
+  const m = await api('/api/map?name=' + encodeURIComponent(name));
+  m.blocks = Int32Array.from(m.blocks);
+  S.cur = m; S.undo = []; S.redo = []; S.dirtyBlocks = S.dirtyData = S.dirtyScript = false;
+  if (!keepSel) S.sel = null;
+  const img = new Image();
+  img.src = '/api/map/atlas?name=' + encodeURIComponent(name) + '&t=' + Date.now();
+  await img.decode();
+  S.atlasImg = img;
+  $('#mapname').textContent = `${m.name} · ${m.layout.width}×${m.layout.height} · ${m.layout.primary_tileset} + ${m.layout.secondary_tileset}` +
+    (m.shared_layout.length ? ` · layout shared with ${m.shared_layout.length} map(s)` : '');
+  $('#st-hint').textContent = m.shared_layout.length ? 'Block edits also change: ' + m.shared_layout.slice(0, 4).join(', ') : '';
+  renderMapList(); drawAtlas(); drawBase(); drawOver(); renderEvents(); renderHeader(); loadScript(); updateButtons();
+}
+const Z = () => +$('#zoom').value;
+function sizeCanvas(c, w, h) { c.width = w; c.height = h; c.style.width = w * Z() + 'px'; c.style.height = h * Z() + 'px'; }
+function drawBase() {
+  const m = S.cur, W = m.layout.width, H = m.layout.height, c = $('#base');
+  sizeCanvas(c, W * 16, H * 16);
+  $('#stack').style.width = W * 16 * Z() + 'px'; $('#stack').style.height = H * 16 * Z() + 'px';
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) drawBlock(ctx, x, y);
+}
+function drawBlock(ctx, x, y) {
+  const id = S.cur.blocks[y * S.cur.layout.width + x] & 0x3FF;
+  ctx.clearRect(x * 16, y * 16, 16, 16);
+  if (id < S.cur.metatiles.count) ctx.drawImage(S.atlasImg, (id % 8) * 16, Math.floor(id / 8) * 16, 16, 16, x * 16, y * 16, 16, 16);
+  else { ctx.fillStyle = '#f0f'; ctx.fillRect(x * 16, y * 16, 16, 16); }
+}
+function sprite(gfx) {
+  if (!(gfx in S.sprites)) {
+    const img = new Image();
+    S.sprites[gfx] = null;
+    img.onload = () => { S.sprites[gfx] = img; drawOver(); };
+    img.src = '/api/map/sprite?gfx=' + encodeURIComponent(gfx);
+  }
+  return S.sprites[gfx];
+}
+function drawOver() {
+  const m = S.cur; if (!m) return;
+  const W = m.layout.width, H = m.layout.height, c = $('#over');
+  sizeCanvas(c, W * 16, H * 16);
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, c.width, c.height);
+  if ($('#showcol').checked || S.tool === 'collision') {
+    ctx.font = '8px monospace';
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const v = m.blocks[y * W + x], col = (v >> 10) & 3, el = (v >> 12) & 15;
+      ctx.fillStyle = col ? 'rgba(220,30,30,.45)' : 'rgba(30,200,90,.18)';
+      ctx.fillRect(x * 16, y * 16, 16, 16);
+      ctx.fillStyle = '#fff'; ctx.fillText(el.toString(16), x * 16 + 5, y * 16 + 11);
+    }
+  }
+  if ($('#showgrid').checked) {
+    ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1;
+    for (let x = 0; x <= W; x++) { ctx.beginPath(); ctx.moveTo(x * 16 + .5, 0); ctx.lineTo(x * 16 + .5, H * 16); ctx.stroke(); }
+    for (let y = 0; y <= H; y++) { ctx.beginPath(); ctx.moveTo(0, y * 16 + .5); ctx.lineTo(W * 16, y * 16 + .5); ctx.stroke(); }
+  }
+  if ($('#showev').checked || S.tool === 'events') {
+    for (const kind of ['warp_events', 'coord_events', 'bg_events', 'object_events']) {
+      (m.data[kind] || []).forEach((e, i) => {
+        const x = e.x * 16, y = e.y * 16;
+        if (kind === 'object_events') {
+          const spr = sprite(e.graphics_id);
+          if (spr) ctx.drawImage(spr, x + (16 - spr.width) / 2, y + 16 - spr.height);
+          else { ctx.strokeStyle = KIND_COLOR[kind]; ctx.lineWidth = 2; ctx.strokeRect(x + 2, y + 2, 12, 12); }
+        } else {
+          ctx.fillStyle = KIND_COLOR[kind] + '55'; ctx.fillRect(x, y, 16, 16);
+          ctx.strokeStyle = KIND_COLOR[kind]; ctx.lineWidth = 1.5; ctx.strokeRect(x + 1, y + 1, 14, 14);
+          ctx.fillStyle = '#fff'; ctx.font = 'bold 9px sans-serif'; ctx.fillText(KIND_LABEL[kind][0] + i, x + 2, y + 11);
+        }
+        if (S.sel && S.sel.kind === kind && S.sel.i === i) {
+          ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.strokeRect(x - 1, y - 1, 18, 18);
+          ctx.strokeStyle = '#2563eb'; ctx.lineWidth = 1; ctx.strokeRect(x - 1, y - 1, 18, 18);
+        }
+      });
+    }
+  }
+  // stamp / selection preview
+  if (S.hover && ['paint', 'fill'].includes(S.tool)) {
+    const [hx, hy] = S.hover, st = S.stamp;
+    ctx.globalAlpha = .6;
+    for (let j = 0; j < st.h; j++) for (let i = 0; i < st.w; i++) {
+      const id = st.ids[j * st.w + i] & 0x3FF;
+      ctx.drawImage(S.atlasImg, (id % 8) * 16, Math.floor(id / 8) * 16, 16, 16, (hx + i) * 16, (hy + j) * 16, 16, 16);
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#2563eb'; ctx.strokeRect(hx * 16 + .5, hy * 16 + .5, st.w * 16 - 1, st.h * 16 - 1);
+  }
+  if (S.drag && S.drag.type === 'pick') {
+    const [x0, y0, x1, y1] = rect(S.drag.start, S.drag.end);
+    ctx.strokeStyle = '#fff'; ctx.setLineDash([3, 2]); ctx.strokeRect(x0 * 16 + .5, y0 * 16 + .5, (x1 - x0 + 1) * 16 - 1, (y1 - y0 + 1) * 16 - 1); ctx.setLineDash([]);
+  }
+}
+function rect(a, b) { return [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[0], b[0]), Math.max(a[1], b[1])]; }
+
+// ------------------------------------------------------------------ atlas (metatile picker)
+let atlasDrag = null;
+function drawAtlas() {
+  const c = $('#atlas'), img = S.atlasImg, z = 2;
+  c.width = img.width; c.height = img.height; c.style.width = img.width * z + 'px'; c.style.height = img.height * z + 'px';
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  const np = S.cur.metatiles.num_primary;
+  ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillRect(0, Math.floor(np / 8) * 16 - 1, 128, 2);
+  const st = S.stamp;
+  if (st.src) { ctx.strokeStyle = '#ff0'; ctx.lineWidth = 1; ctx.strokeRect(st.src[0] * 16 + .5, st.src[1] * 16 + .5, st.w * 16 - 1, st.h * 16 - 1); }
+}
+function atlasCell(e) {
+  const r = $('#atlas').getBoundingClientRect();
+  return [Math.max(0, Math.min(7, Math.floor((e.clientX - r.left) / r.width * 8))),
+          Math.max(0, Math.floor((e.clientY - r.top) / r.height * (S.atlasImg.height / 16)))];
+}
+$('#atlas').onpointerdown = (e) => { atlasDrag = { start: atlasCell(e) }; $('#atlas').setPointerCapture(e.pointerId); pickAtlas(atlasDrag.start, atlasDrag.start); };
+$('#atlas').onpointermove = (e) => {
+  const [cx, cy] = atlasCell(e), id = cy * 8 + cx;
+  $('#atlas').title = `metatile 0x${id.toString(16).padStart(3, '0')} · behavior 0x${((S.cur.metatiles.behaviors || [])[id] || 0).toString(16)}`;
+  if (atlasDrag) pickAtlas(atlasDrag.start, [cx, cy]);
+};
+$('#atlas').onpointerup = () => { atlasDrag = null; };
+function pickAtlas(a, b) {
+  const [x0, y0, x1, y1] = rect(a, b), w = x1 - x0 + 1, h = y1 - y0 + 1, ids = [];
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) ids.push((y * 8 + x) | defaultAttrs());
+  S.stamp = { w, h, ids, src: [x0, y0], fromAtlas: true };
+  if (!['paint', 'fill'].includes(S.tool)) setTool('paint');
+  showStamp(); drawAtlas();
+}
+function defaultAttrs() { return (+$('#colval').value << 10) | ((+$('#elev').value || 3) << 12); }
+function showStamp() {
+  const st = S.stamp;
+  $('#st-stamp').textContent = st.w * st.h > 1 ? `stamp ${st.w}×${st.h}` : `metatile 0x${(st.ids[0] & 0x3FF).toString(16).padStart(3, '0')}`;
+}
+
+// ------------------------------------------------------------------ map interaction
+function cellOf(e) {
+  const r = $('#over').getBoundingClientRect();
+  return [Math.floor((e.clientX - r.left) / r.width * S.cur.layout.width), Math.floor((e.clientY - r.top) / r.height * S.cur.layout.height)];
+}
+function inMap([x, y]) { return x >= 0 && y >= 0 && x < S.cur.layout.width && y < S.cur.layout.height; }
+function snapshot() { S.undo.push({ blocks: S.cur.blocks.slice(), data: JSON.stringify(S.cur.data) }); if (S.undo.length > 100) S.undo.shift(); S.redo = []; }
+function setBlock(x, y, v) {
+  if (!inMap([x, y])) return;
+  const i = y * S.cur.layout.width + x;
+  if (S.cur.blocks[i] === v) return;
+  S.cur.blocks[i] = v; drawBlock($('#base').getContext('2d'), x, y); S.dirtyBlocks = true;
+}
+function paintStamp(x, y) {
+  const st = S.stamp;
+  for (let j = 0; j < st.h; j++) for (let i = 0; i < st.w; i++) {
+    let v = st.ids[j * st.w + i];
+    if (st.fromAtlas) {  // keep the existing collision/elevation unless painting a fresh area
+      const cur = S.cur.blocks[(y + j) * S.cur.layout.width + (x + i)];
+      if (cur !== undefined && inMap([x + i, y + j])) v = (cur & ~0x3FF) | (v & 0x3FF);
+    }
+    setBlock(x + i, y + j, v);
+  }
+}
+function floodFill(x, y) {
+  const W = S.cur.layout.width, H = S.cur.layout.height, b = S.cur.blocks;
+  const target = b[y * W + x] & 0x3FF, rep = S.stamp.ids[0] & 0x3FF;
+  if (target === rep) return;
+  const stack = [[x, y]], seen = new Uint8Array(W * H);
+  while (stack.length) {
+    const [cx, cy] = stack.pop(), i = cy * W + cx;
+    if (cx < 0 || cy < 0 || cx >= W || cy >= H || seen[i] || (b[i] & 0x3FF) !== target) continue;
+    seen[i] = 1;
+    // tile the stamp across the filled area
+    const st = S.stamp, sv = st.ids[((cy - y) % st.h + st.h) % st.h * st.w + ((cx - x) % st.w + st.w) % st.w];
+    b[i] = (b[i] & ~0x3FF) | (sv & 0x3FF);
+    stack.push([cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]);
+  }
+  S.dirtyBlocks = true; drawBase();
+}
+function eventAt([x, y]) {
+  for (const kind of ['object_events', 'bg_events', 'coord_events', 'warp_events']) {
+    const list = S.cur.data[kind] || [];
+    for (let i = list.length - 1; i >= 0; i--) if (+list[i].x === x && +list[i].y === y) return { kind, i };
+  }
+  return null;
+}
+let adding = null;
+document.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+  adding = b.dataset.add; setTool('events');
+  $('#st-hint').textContent = `Click on the map to place the new ${KIND_LABEL[adding]}.`;
+});
+$('#over').onpointerdown = async (e) => {
+  if (!S.cur) return;
+  const c = cellOf(e); if (!inMap(c)) return;
+  $('#over').setPointerCapture(e.pointerId);
+  if (adding) {
+    snapshot();
+    const ev = Object.assign({}, DEFAULTS[adding], { x: c[0], y: c[1] });
+    (S.cur.data[adding] = S.cur.data[adding] || []).push(ev);
+    S.sel = { kind: adding, i: S.cur.data[adding].length - 1 };
+    adding = null; S.dirtyData = true; $('#st-hint').textContent = '';
+    showTab('event'); renderEvents(); drawOver(); updateButtons();
+    return;
+  }
+  if (S.tool === 'events') {
+    S.sel = eventAt(c);
+    if (S.sel) { snapshot(); S.drag = { type: 'event', moved: false }; showTab('event'); }
+    renderEvents(); drawOver(); return;
+  }
+  if (S.tool === 'pick') { S.drag = { type: 'pick', start: c, end: c }; drawOver(); return; }
+  snapshot();
+  if (S.tool === 'fill') { floodFill(c[0], c[1]); updateButtons(); return; }
+  S.drag = { type: S.tool };
+  applyTool(c);
+};
+$('#over').onpointermove = (e) => {
+  if (!S.cur) return;
+  const c = cellOf(e);
+  S.hover = inMap(c) ? c : null;
+  if (inMap(c)) {
+    const v = S.cur.blocks[c[1] * S.cur.layout.width + c[0]];
+    $('#st-pos').textContent = `x ${c[0]}, y ${c[1]}`;
+    $('#st-block').textContent = `metatile 0x${(v & 0x3FF).toString(16).padStart(3, '0')} · collision ${(v >> 10) & 3} · elevation ${(v >> 12) & 15}`;
+  }
+  if (S.drag && S.drag.type === 'event' && S.sel && inMap(c)) {
+    const ev = S.cur.data[S.sel.kind][S.sel.i];
+    if (ev.x !== c[0] || ev.y !== c[1]) { ev.x = c[0]; ev.y = c[1]; S.drag.moved = true; S.dirtyData = true; renderEventForm(); }
+  } else if (S.drag && S.drag.type === 'pick') { S.drag.end = c; }
+  else if (S.drag) applyTool(c);
+  drawOver();
+};
+$('#over').onpointerup = () => {
+  if (S.drag && S.drag.type === 'pick') {
+    const [x0, y0, x1, y1] = rect(S.drag.start, S.drag.end), W = S.cur.layout.width, ids = [];
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) ids.push(S.cur.blocks[y * W + x]);
+    S.stamp = { w: x1 - x0 + 1, h: y1 - y0 + 1, ids, fromAtlas: false };
+    showStamp(); setTool('paint'); toast(`Copied ${S.stamp.w}×${S.stamp.h} blocks; click to paste.`);
+  }
+  if (S.drag && S.drag.type === 'event' && !S.drag.moved) S.undo.pop();
+  S.drag = null; updateButtons(); drawOver();
+};
+$('#over').onpointerleave = () => { S.hover = null; drawOver(); };
+function applyTool([x, y]) {
+  if (!inMap([x, y])) return;
+  if (S.tool === 'paint') paintStamp(x, y);
+  else if (S.tool === 'collision') {
+    const i = y * S.cur.layout.width + x, v = S.cur.blocks[i];
+    setBlock(x, y, (v & 0x3FF) | (+$('#colval').value << 10) | (+$('#elev').value << 12));
+    drawOver();
+  }
+}
+function setTool(t) {
+  S.tool = t;
+  document.querySelectorAll('[data-tool]').forEach(b => b.classList.toggle('active', b.dataset.tool === t));
+  $('#colopts').hidden = !(t === 'collision' || t === 'paint');
+  drawOver();
+}
+document.querySelectorAll('[data-tool]').forEach(b => b.onclick = () => { adding = null; setTool(b.dataset.tool); });
+for (let i = 0; i < 16; i++) $('#elev').insertAdjacentHTML('beforeend', `<option value="${i}" ${i === 3 ? 'selected' : ''}>${i}</option>`);
+['#zoom', '#showgrid', '#showev', '#showcol'].forEach(s => $(s).onchange = () => { if (S.cur) { drawBase(); drawOver(); } });
+
+// ------------------------------------------------------------------ undo / redo
+function restore(state) { S.cur.blocks = state.blocks.slice(); S.cur.data = JSON.parse(state.data); drawBase(); drawOver(); renderEvents(); }
+$('#undo').onclick = () => { const s = S.undo.pop(); if (!s) return; S.redo.push({ blocks: S.cur.blocks.slice(), data: JSON.stringify(S.cur.data) }); restore(s); S.dirtyBlocks = S.dirtyData = true; updateButtons(); };
+$('#redo').onclick = () => { const s = S.redo.pop(); if (!s) return; S.undo.push({ blocks: S.cur.blocks.slice(), data: JSON.stringify(S.cur.data) }); restore(s); S.dirtyBlocks = S.dirtyData = true; updateButtons(); };
+document.addEventListener('keydown', (e) => {
+  if (e.target.matches('input, textarea, select')) return;
+  if ((e.ctrlKey || e.metaKey) && e.key === 'z') { e.preventDefault(); $('#undo').click(); }
+  else if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.shiftKey && e.key === 'Z'))) { e.preventDefault(); $('#redo').click(); }
+  else if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); $('#save').click(); }
+  else if (e.key === 'Delete' && S.sel) deleteEvent();
+  else if (!e.ctrlKey && !e.metaKey) {
+    const t = { p: 'paint', f: 'fill', i: 'pick', c: 'collision', e: 'events' }[e.key];
+    if (t) setTool(t);
+  }
+});
+function updateButtons() {
+  $('#undo').disabled = !S.undo.length; $('#redo').disabled = !S.redo.length;
+  $('#save').disabled = !dirty();
+  $('#save').classList.toggle('dirty', dirty());
+  $('#savescript').disabled = !S.dirtyScript;
+}
+window.addEventListener('beforeunload', (e) => { if (dirty()) { e.preventDefault(); e.returnValue = ''; } });
+
+// ------------------------------------------------------------------ events panel
+const DEFAULTS = {
+  object_events: { graphics_id: 'OBJ_EVENT_GFX_BOY_1', x: 0, y: 0, elevation: 3, movement_type: 'MOVEMENT_TYPE_FACE_DOWN', movement_range_x: 0, movement_range_y: 0, trainer_type: 'TRAINER_TYPE_NONE', trainer_sight_or_berry_tree_id: '0', script: '0x0', flag: '0' },
+  warp_events: { x: 0, y: 0, elevation: 0, dest_map: 'MAP_NONE', dest_warp_id: '0' },
+  coord_events: { type: 'trigger', x: 0, y: 0, elevation: 3, var: 'VAR_TEMP_1', var_value: '0', script: '0x0' },
+  bg_events: { type: 'sign', x: 0, y: 0, elevation: 0, player_facing_dir: 'BG_EVENT_PLAYER_FACING_ANY', script: '0x0' },
+};
+async function constants(prefix) {
+  if (!S.constants[prefix]) S.constants[prefix] = await api('/api/constants?prefix=' + encodeURIComponent(prefix));
+  return S.constants[prefix];
+}
+async function ensureDatalist(prefix) {
+  const id = 'dl-' + prefix.replace(/_$/, '');
+  if (!document.getElementById(id)) {
+    const dl = document.createElement('datalist'); dl.id = id; document.body.appendChild(dl);
+    dl.innerHTML = (await constants(prefix)).map(c => `<option value="${esc(c)}">`).join('');
+  }
+  return id;
+}
+function renderEvents() {
+  const host = $('#evlist'); host.innerHTML = '';
+  if (!S.cur) return;
+  for (const kind of ['object_events', 'warp_events', 'coord_events', 'bg_events']) {
+    const list = S.cur.data[kind] || [];
+    host.insertAdjacentHTML('beforeend', `<h3>${KIND_LABEL[kind]}s (${list.length})</h3>`);
+    list.forEach((e, i) => {
+      const d = document.createElement('div');
+      d.className = S.sel && S.sel.kind === kind && S.sel.i === i ? 'sel' : '';
+      const what = e.graphics_id ? e.graphics_id.replace('OBJ_EVENT_GFX_', '') : e.dest_map || e.script || e.type || '';
+      d.textContent = `${i}: (${e.x},${e.y}) ${what}${e.script && e.graphics_id ? ' · ' + e.script : ''}`;
+      d.onclick = () => { S.sel = { kind, i }; renderEvents(); drawOver(); scrollToCell(e.x, e.y); };
+      host.appendChild(d);
+    });
+  }
+  renderEventForm();
+}
+function scrollToCell(x, y) {
+  const vp = $('#viewport'), z = Z();
+  vp.scrollTo({ left: x * 16 * z - vp.clientWidth / 2, top: y * 16 * z - vp.clientHeight / 2, behavior: 'smooth' });
+}
+async function renderEventForm() {
+  const host = $('#evform');
+  if (!S.sel || !S.cur.data[S.sel.kind] || !S.cur.data[S.sel.kind][S.sel.i]) { host.innerHTML = '<p class="muted">Select an event on the map (Events tool) or in the list, or add one with the buttons above the map.</p>'; return; }
+  const { kind, i } = S.sel, ev = S.cur.data[kind][i];
+  let h = `<h3>${KIND_LABEL[kind]} ${i}</h3>`;
+  for (const [k, v] of Object.entries(ev)) {
+    const pre = FIELD_PREFIX[k];
+    const list = k === 'script' ? 'dl-labels' : pre ? 'dl-' + pre.replace(/_$/, '') : '';
+    const type = typeof v === 'number' ? 'number' : 'text';
+    h += `<div class="field"><label title="${esc(k)}">${esc(k)}</label><input data-k="${esc(k)}" data-num="${type === 'number'}" type="${type}" value="${esc(v)}" ${list ? `list="${list}"` : ''}></div>`;
+  }
+  h += '<div class="row">';
+  if ('script' in ev) h += `<button id="ev-newscript">New script…</button><button id="ev-openscript">Open script</button>`;
+  if (kind === 'warp_events') h += `<button id="ev-link">Make two-way</button><button id="ev-goto">Go to destination</button>`;
+  h += `<button id="ev-dup">Duplicate</button><button id="ev-del">Delete</button></div>`;
+  host.innerHTML = h;
+  host.querySelectorAll('input[data-k]').forEach(inp => {
+    const k = inp.dataset.k, pre = FIELD_PREFIX[k];
+    if (pre) ensureDatalist(pre);
+    if (k === 'script') inp.onfocus = () => fillLabels(inp.value);
+    inp.onchange = () => {
+      snapshot();
+      ev[k] = inp.dataset.num === 'true' ? +inp.value : inp.value;
+      S.dirtyData = true; drawOver(); updateButtons();
+      if (k === 'x' || k === 'y' || k === 'graphics_id') renderEvents();
+    };
+    if (k === 'script') inp.oninput = () => fillLabels(inp.value);
+  });
+  const on = (id, f) => { const el = document.getElementById(id); if (el) el.onclick = f; };
+  on('ev-del', deleteEvent);
+  on('ev-dup', () => { snapshot(); const c = JSON.parse(JSON.stringify(ev)); c.x = Math.min(c.x + 1, S.cur.layout.width - 1); delete c.local_id; S.cur.data[kind].push(c); S.sel = { kind, i: S.cur.data[kind].length - 1 }; S.dirtyData = true; renderEvents(); drawOver(); updateButtons(); });
+  on('ev-openscript', () => openLabel(ev.script));
+  on('ev-newscript', async () => {
+    const text = prompt('What should this ' + KIND_LABEL[kind] + ' say?', 'Hello there!');
+    if (text === null) return;
+    if (dirty() && !(await saveAll(true))) return;
+    const r = await api('/api/map/new_script?name=' + encodeURIComponent(S.cur.name), { kind: { object_events: 'npc', bg_events: 'sign', coord_events: 'trigger' }[kind] || 'npc', text });
+    ev.script = r.label; S.dirtyData = true; await saveAll(true);
+    toast('Created ' + r.label + ' in the map scripts'); await loadScript(); openLabel(r.label);
+  });
+  on('ev-link', async () => {
+    const dest = S.maps.find(m => m.id === ev.dest_map);
+    if (!dest) return toast('Set dest_map to an existing map first', 'warn');
+    if (dirty() && !(await saveAll(true))) return;
+    try {
+      await api('/api/map/link_warp', { map: S.cur.name, warp: i, dest_map: dest.name, dest_warp: +ev.dest_warp_id || 0 });
+      toast(`Linked warp ${i} ↔ ${dest.name} warp ${ev.dest_warp_id}`); await openMap(S.cur.name, true);
+    } catch (e) { toast(e.message, 'err', 6000); }
+  });
+  on('ev-goto', () => { const dest = S.maps.find(m => m.id === ev.dest_map); if (dest) openMap(dest.name); });
+}
+async function fillLabels(q) {
+  const r = await api('/api/labels?q=' + encodeURIComponent(q || S.cur.name));
+  $('#dl-labels').innerHTML = r.map(x => `<option value="${esc(x.label)}">${esc(x.file)}</option>`).join('');
+}
+function deleteEvent() {
+  if (!S.sel) return;
+  snapshot(); S.cur.data[S.sel.kind].splice(S.sel.i, 1); S.sel = null; S.dirtyData = true;
+  renderEvents(); drawOver(); updateButtons();
+}
+
+// ------------------------------------------------------------------ header panel
+async function renderHeader() {
+  const d = S.cur.data, host = $('#hdrform');
+  let h = '<h3>Header</h3>';
+  for (const [k, v] of Object.entries(d)) {
+    if (Array.isArray(v) || (typeof v === 'object' && v !== null)) continue;
+    if (typeof v === 'boolean') { h += `<div class="field"><label>${esc(k)}</label><input type="checkbox" data-h="${esc(k)}" ${v ? 'checked' : ''}></div>`; continue; }
+    const pre = FIELD_PREFIX[k];
+    h += `<div class="field"><label>${esc(k)}</label><input data-h="${esc(k)}" data-num="${typeof v === 'number'}" value="${esc(v)}" ${pre ? `list="dl-${pre.replace(/_$/, '')}"` : ''} ${k === 'id' || k === 'name' ? 'readonly' : ''}></div>`;
+  }
+  h += '<h3>Connections</h3>';
+  (d.connections || []).forEach((c, i) => {
+    h += `<div class="row"><select data-c="${i}" data-ck="direction">${['up', 'down', 'left', 'right', 'dive', 'emerge'].map(x => `<option ${x === c.direction ? 'selected' : ''}>${x}</option>`).join('')}</select>
+      <input data-c="${i}" data-ck="map" value="${esc(c.map)}" list="dl-MAP" style="flex:1">
+      <input data-c="${i}" data-ck="offset" type="number" value="${esc(c.offset)}" style="width:64px">
+      <button data-cdel="${i}">✕</button></div>`;
+  });
+  h += `<div class="row"><button id="addconn">Add connection</button></div>`;
+  h += `<h3>Layout</h3><div class="muted">${esc(S.cur.layout.id)} (${S.cur.layout.layout_version})</div>
+    <div class="row">width <input id="rw" type="number" value="${S.cur.layout.width}" style="width:70px"> height <input id="rh" type="number" value="${S.cur.layout.height}" style="width:70px"><button id="resize">Resize</button></div>`;
+  host.innerHTML = h;
+  for (const pre of ['MUS_', 'WEATHER_', 'MAP_TYPE_', 'MAPSEC_', 'MAP_BATTLE_SCENE_', 'LAYOUT_', 'MAP_', 'REGION_']) ensureDatalist(pre);
+  host.querySelectorAll('[data-h]').forEach(inp => inp.onchange = () => {
+    const k = inp.dataset.h;
+    d[k] = inp.type === 'checkbox' ? inp.checked : inp.dataset.num === 'true' ? +inp.value : inp.value;
+    S.dirtyData = true; updateButtons();
+  });
+  host.querySelectorAll('[data-c]').forEach(inp => inp.onchange = () => {
+    const c = d.connections[+inp.dataset.c], k = inp.dataset.ck;
+    c[k] = k === 'offset' ? +inp.value : inp.value; S.dirtyData = true; updateButtons();
+  });
+  host.querySelectorAll('[data-cdel]').forEach(b => b.onclick = () => { d.connections.splice(+b.dataset.cdel, 1); S.dirtyData = true; renderHeader(); updateButtons(); });
+  $('#addconn').onclick = () => { (d.connections = d.connections || []).push({ map: 'MAP_NONE', offset: 0, direction: 'up' }); S.dirtyData = true; renderHeader(); updateButtons(); };
+  $('#resize').onclick = async () => {
+    if (dirty() && !(await saveAll(true))) return;
+    try {
+      const r = await api('/api/map/resize?name=' + encodeURIComponent(S.cur.name), { width: +$('#rw').value, height: +$('#rh').value });
+      r.notes.forEach(n => toast(n, 'warn', 6000)); await openMap(S.cur.name);
+    } catch (e) { toast(e.message, 'err'); }
+  };
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => showTab(b.dataset.tab));
+function showTab(t) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('on', x.id === 'tab-' + t));
+}
+
+// ------------------------------------------------------------------ scripts
+async function loadScript() {
+  const r = await api('/api/map/script?name=' + encodeURIComponent(S.cur.name));
+  $('#script').value = r.text; $('#scriptfile').textContent = r.file; S.dirtyScript = false;
+  refreshLabelSelect(); updateButtons();
+}
+function refreshLabelSelect() {
+  const labels = [...$('#script').value.matchAll(/^([A-Za-z_]\w*)::?/gm)].map(m => m[1]);
+  $('#labelsel').innerHTML = '<option value="">Jump to label…</option>' + labels.map(l => `<option>${esc(l)}</option>`).join('');
+}
+function openLabel(label) {
+  showTab('scripts');
+  const ta = $('#script'), idx = ta.value.search(new RegExp('^' + label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '::?', 'm'));
+  if (idx < 0) return toast(`${label} is not in this map's scripts (it may be shared, e.g. in data/scripts/)`, 'warn', 5000);
+  ta.focus(); ta.setSelectionRange(idx, idx + label.length);
+  const before = ta.value.slice(0, idx).split('\n').length;
+  ta.scrollTop = Math.max(0, (before - 3) * 17.4);
+}
+$('#labelsel').onchange = (e) => { if (e.target.value) openLabel(e.target.value); };
+$('#script').oninput = () => { S.dirtyScript = true; updateButtons(); };
+$('#script').onkeydown = (e) => {
+  if (e.key === 'Tab') { e.preventDefault(); const ta = e.target, s = ta.selectionStart; ta.setRangeText('\t', s, ta.selectionEnd, 'end'); S.dirtyScript = true; updateButtons(); }
+};
+$('#savescript').onclick = () => saveAll();
+
+// ------------------------------------------------------------------ save / check / new / revert
+async function saveAll(quiet = false) {
+  try {
+    const n = S.cur.name;
+    if (S.dirtyBlocks) { await api('/api/map/blocks?name=' + encodeURIComponent(n), { blocks: Array.from(S.cur.blocks) }); S.dirtyBlocks = false; }
+    if (S.dirtyData) {
+      const r = await api('/api/map/save?name=' + encodeURIComponent(n), S.cur.data); S.dirtyData = false;
+      if (!quiet) r.warnings.slice(0, 5).forEach(w => toast(w, 'warn', 6000));
+    }
+    if (S.dirtyScript) { await api('/api/map/script?name=' + encodeURIComponent(n), { text: $('#script').value }); S.dirtyScript = false; refreshLabelSelect(); }
+    if (!quiet) toast('Saved ' + n);
+    updateButtons(); return true;
+  } catch (e) { toast(e.message, 'err', 8000); return false; }
+}
+$('#save').onclick = () => saveAll();
+function modal(html) { $('#modal-body').innerHTML = html; $('#modal').classList.add('open'); }
+$('#modal-close').onclick = () => $('#modal').classList.remove('open');
+$('#check').onclick = async () => {
+  if (dirty() && !confirm('Check only covers saved files. Save first?')) return;
+  if (dirty()) await saveAll(true);
+  const r = await api('/api/check', {});
+  let h = `<h3>${r.ok ? 'No problems found' : 'Problems found'}</h3><p class="muted">${r.checked} edited file(s) checked.</p>`;
+  h += r.errors.map(e => `<div class="msg err">${esc(e)}</div>`).join('') + r.warnings.map(e => `<div class="msg warn">${esc(e)}</div>`).join('');
+  modal(h);
+};
+$('#revert').onclick = async () => {
+  if (!S.cur || !confirm(`Restore ${S.cur.name} (map.json, scripts, blocks) to the last git commit?`)) return;
+  await api('/api/map/revert?name=' + encodeURIComponent(S.cur.name), {});
+  S.dirtyBlocks = S.dirtyData = S.dirtyScript = false; toast('Reverted ' + S.cur.name); openMap(S.cur.name);
+};
+$('#newmap').onclick = () => {
+  const src = S.cur ? S.cur.name : '';
+  modal(`<h3>New map</h3>
+    <p class="muted">A new map starts as a copy of an existing one: copy a house interior to add a new house, a route to add a route, etc. Its scripts and local ids are renamed so nothing clashes.</p>
+    <div class="field"><label>copy of</label><input id="nm-src" value="${esc(src)}" list="dl-mapnames"></div>
+    <div class="field"><label>new name</label><input id="nm-name" placeholder="e.g. PetalburgCity_House3"></div>
+    <div class="field"><label>map id (optional)</label><input id="nm-id" placeholder="derived from the name"></div>
+    <div class="field"><label>map group</label><select id="nm-group">${S.groups.map(g => `<option ${S.cur && S.cur.group === g ? 'selected' : ''}>${esc(g)}</option>`).join('')}</select></div>
+    <div class="field"><label>own layout</label><label><input type="checkbox" id="nm-copylayout" checked> copy the blocks (uncheck to share the original's layout)</label></div>
+    <div class="row"><button class="primary" id="nm-go">Create</button></div><div id="nm-out"></div>
+    <datalist id="dl-mapnames">${S.maps.map(m => `<option value="${esc(m.name)}">`).join('')}</datalist>`);
+  $('#nm-go').onclick = async () => {
+    try {
+      const r = await api('/api/map/duplicate', { source: $('#nm-src').value, new_name: $('#nm-name').value.trim(), group: $('#nm-group').value, copy_layout: $('#nm-copylayout').checked, map_id: $('#nm-id').value.trim() });
+      await loadMaps();
+      $('#nm-out').innerHTML = '<div class="msg ok">Created ' + esc(r.name) + '.</div>' + r.notes.map(n => `<div class="msg warn">${esc(n)}</div>`).join('') +
+        `<p>Next: open the map you want the entrance in, add a <b>Warp</b> on the door, set its dest_map to <code>${esc(r.id)}</code> and click <b>Make two-way</b>.</p>`;
+      openMap(r.name);
+    } catch (e) { $('#nm-out').innerHTML = `<div class="msg err">${esc(e.message)}</div>`; }
+  };
+};
+
+loadMaps().then(() => {
+  const want = new URLSearchParams(location.search).get('map');
+  if (want) openMap(want);
+}).catch(e => toast(e.message, 'err', 10000));
+</script>
+</body>
+</html>

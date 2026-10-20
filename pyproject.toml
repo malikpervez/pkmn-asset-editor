@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pkmn-asset-editor"
+version = "0.1.0"
+description = "Extract, organise, edit and re-insert every graphic in Gen 3 Pokémon GBA ROMs"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.22", "Pillow>=9.1"]
+
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
+[project.scripts]
+pae = "pkmn_asset_editor.cli:main"
+
+[tool.setuptools]
+packages = ["pkmn_asset_editor"]
+
+[tool.setuptools.package-data]
+pkmn_asset_editor = ["web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

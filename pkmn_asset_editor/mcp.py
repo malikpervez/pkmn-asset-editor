@@ -1,0 +1,350 @@
+"""Minimal MCP (Model Context Protocol) server over stdio.
+
+Lets an AI assistant browse, look at, edit and rebuild the project with tools.
+Register it with e.g. ``claude mcp add pae -- pae mcp --project /path/to/project``.
+"""
+
+from __future__ import annotations
+
+import base64
+import io
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+from PIL import Image
+
+from . import __version__
+from .decomp import DecompError
+from .previews import contact_sheet
+from .project import ProjectError
+
+ERRORS = (ProjectError, DecompError, ValueError, KeyError, OSError)
+
+PROTOCOL = "2025-06-18"
+
+
+def _schema(props: dict, required: list[str] | None = None) -> dict:
+    return {"type": "object", "properties": props, "required": required or [], "additionalProperties": False}
+
+
+S = {"type": "string"}
+I = {"type": "integer"}
+B = {"type": "boolean"}
+
+TOOLS = [
+    ("list_assets", "List assets in the project. Filter by category (pokemon, trainers, items, battle_anims, "
+     "battle_backgrounds, overworld, tilesets, unknown), kind (sprite, palette, tileset, bg) or a text query.",
+     _schema({"category": S, "kind": S, "query": S, "limit": I})),
+    ("describe_asset", "Full details and editing constraints (size, colours, frames, shared palettes) for one asset.",
+     _schema({"id": S}, ["id"])),
+    ("view_asset", "Return an image of the asset as it will look in the ROM. Optional palette id to preview "
+     "another palette (e.g. the shiny one) and an integer zoom.", _schema({"id": S, "palette": S, "scale": I}, ["id"])),
+    ("view_contact_sheet", "Render many assets whose id starts with a prefix onto one labelled image.",
+     _schema({"prefix": S, "limit": I, "scale": I}, ["prefix"])),
+    ("get_pixels", "Read colour indices as text rows of hex digits (one char per pixel for sprites; two per pixel "
+     "for tilesets/backgrounds where value = bank*16+colour). Optional region x,y,w,h.",
+     _schema({"id": S, "x": I, "y": I, "w": I, "h": I}, ["id"])),
+    ("paint_pixels", "Write colour indices. 'rows' are hex strings (same format as get_pixels) placed at x,y; "
+     "'.' leaves a pixel unchanged. 'rects' fills rectangles: [{x,y,w,h,index}].",
+     _schema({"id": S, "x": I, "y": I, "rows": {"type": "array", "items": S},
+              "rects": {"type": "array", "items": {"type": "object"}}}, ["id"])),
+    ("import_image", "Replace an asset with an image file (path) or base64 PNG. Colours are mapped to the "
+     "palette; set new_palette to build a new palette from the art, resize to scale it to fit.",
+     _schema({"id": S, "path": S, "png_base64": S, "resize": B, "new_palette": B}, ["id"])),
+    ("set_palette", "Overwrite a palette. colors: list of '#rrggbb' strings or [r,g,b] (must match the palette size).",
+     _schema({"id": S, "colors": {"type": "array"}}, ["id", "colors"])),
+    ("revert_asset", "Restore an asset to the original ROM contents.", _schema({"id": S}, ["id"])),
+    # ---- maps, events and scripts (source trees)
+    ("list_maps", "List maps (name, id, group, layout). Optional text query.", _schema({"query": S})),
+    ("view_map", "Image of a map with its events drawn (NPC sprites; W=warp, T=trigger, S=sign + index). "
+     "One block = 16px.", _schema({"name": S, "scale": I, "events": B}, ["name"])),
+    ("get_map", "A map's map.json (header, connections, object/warp/coord/bg events) plus layout size and tilesets.",
+     _schema({"name": S}, ["name"])),
+    ("view_metatiles", "Image of every metatile this map can use, 8 per row, rows labelled with the hex id of "
+     "their first metatile. Use the ids with set_blocks.", _schema({"name": S, "scale": I}, ["name"])),
+    ("get_blocks", "Read blocks as text rows. Each block is 'mmmCE': metatile id (3 hex digits), collision "
+     "(0 passable, 1 blocked), elevation (hex). Optional region.", _schema({"name": S, "x": I, "y": I, "w": I, "h": I},
+                                                                            ["name"])),
+    ("set_blocks", "Write blocks. rows: strings of space-separated cells, 'mmm' (metatile only) or 'mmmCE' "
+     "(metatile+collision+elevation); '.' leaves a block unchanged. Placed with the top-left at x,y.",
+     _schema({"name": S, "x": I, "y": I, "rows": {"type": "array", "items": S}}, ["name", "rows"])),
+    ("copy_blocks", "Copy a rectangle of blocks (e.g. a house) from one map to another (or the same) map.",
+     _schema({"source": S, "x": I, "y": I, "w": I, "h": I, "dest": S, "dx": I, "dy": I},
+             ["source", "x", "y", "w", "h", "dest", "dx", "dy"])),
+    ("edit_map", "Change a map: set header fields (music, weather, map_type, …), and add/update/delete events. "
+     "events: [{op:'add'|'update'|'delete', kind:'object_events'|'warp_events'|'coord_events'|'bg_events', "
+     "index (update/delete), fields:{...}}]. Returns validation warnings.",
+     _schema({"name": S, "header": {"type": "object"}, "events": {"type": "array", "items": {"type": "object"}}},
+             ["name"])),
+    ("get_script", "The map's scripts file (scripts.inc or scripts.pory) as text.", _schema({"name": S}, ["name"])),
+    ("write_script", "Replace the map's scripts file. Keep existing labels that events or other maps use.",
+     _schema({"name": S, "text": S}, ["name", "text"])),
+    ("new_script", "Append a ready-made script (npc / sign / trigger) that shows a message; returns its label "
+     "to put in an event's 'script' field.", _schema({"name": S, "kind": S, "text": S}, ["name"])),
+    ("duplicate_map", "Create a new map as a copy of an existing one (e.g. copy a house interior to add a new "
+     "house). Scripts and local ids are renamed; copy_layout (default true) gives it its own blocks.",
+     _schema({"source": S, "new_name": S, "group": S, "copy_layout": B, "map_id": S}, ["source", "new_name"])),
+    ("link_warps", "Connect warp `warp` of `map` with warp `dest_warp` of `dest_map` in both directions.",
+     _schema({"map": S, "warp": I, "dest_map": S, "dest_warp": I}, ["map", "warp", "dest_map", "dest_warp"])),
+    ("resize_map", "Change a map layout's width/height (new area filled with the border block).",
+     _schema({"name": S, "width": I, "height": I}, ["name", "width", "height"])),
+    ("find_constants", "Look up constant names by prefix, e.g. OBJ_EVENT_GFX_, MOVEMENT_TYPE_, FLAG_, VAR_, MUS_, "
+     "ITEM_, MAP_, plus an optional substring filter.", _schema({"prefix": S, "query": S}, ["prefix"])),
+    ("status", "List assets that were edited.", _schema({})),
+    ("validate", "Check every edit (sizes, colours, conflicts, tile limits) without writing a ROM.", _schema({})),
+    ("build_rom", "ROM project: write the edited ROM and UPS/IPS patches. Source tree: check the edits, then run "
+     "`make` and return its output.", _schema({"output": S})),
+]
+
+
+MAP_TOOLS = {"list_maps", "view_map", "get_map", "view_metatiles", "get_blocks", "set_blocks", "copy_blocks", "edit_map",
+             "get_script", "write_script", "new_script", "duplicate_map", "link_warps", "resize_map",
+             "find_constants"}
+
+
+class Server:
+    def __init__(self, proj):
+        self.proj = proj
+
+    # ------------------------------------------------------------------ tools
+    def _png(self, im: Image.Image) -> dict:
+        buf = io.BytesIO()
+        im.save(buf, "PNG")
+        return {"type": "image", "data": base64.b64encode(buf.getvalue()).decode(), "mimeType": "image/png"}
+
+    def call(self, name: str, args: dict) -> list[dict]:
+        proj = self.proj
+        txt = lambda obj: [{"type": "text", "text": obj if isinstance(obj, str) else json.dumps(obj, indent=1)}]
+        if name == "list_assets":
+            rows = []
+            q = (args.get("query") or "").lower()
+            for a in sorted(proj.assets.values(), key=lambda a: a.id):
+                if args.get("category") and a.category != args["category"]:
+                    continue
+                if args.get("kind") and a.kind != args["kind"]:
+                    continue
+                if q and q not in (a.id + " " + a.label + " " + " ".join(a.aliases)).lower():
+                    continue
+                rows.append({"id": a.id, "kind": a.kind, "label": a.label, "aliases": len(a.aliases)})
+            limit = args.get("limit") or 200
+            return txt({"total": len(rows), "assets": rows[:limit]})
+        if name == "describe_asset":
+            return txt(proj.describe(proj.get(args["id"])))
+        if name == "view_asset":
+            a = proj.get(args["id"])
+            pal = proj.get(args["palette"]).id if args.get("palette") else None
+            im = proj.render_image(a, palette_override=pal)
+            s = max(1, min(int(args.get("scale") or (4 if im.width <= 64 else 2)), 8))
+            im = im.resize((im.width * s, im.height * s), Image.NEAREST)
+            return [self._png(im), *txt(f"{a.id}: {im.width // s}x{im.height // s} px (shown at {s}x)")]
+        if name == "view_contact_sheet":
+            pre = args["prefix"].rstrip("/")
+            sel = [a for a in sorted(proj.assets.values(), key=lambda a: a.id)
+                   if (a.id.startswith(pre) or a.category == pre) and a.kind != "palette"][: args.get("limit") or 60]
+            return [self._png(contact_sheet(proj, sel, scale=args.get("scale") or 1, max_width=1200)),
+                    *txt([a.id for a in sel])]
+        if name == "get_pixels":
+            a = proj.get(args["id"])
+            if a.kind == "palette":
+                raise ProjectError("palettes have no pixels; use describe_asset")
+            indices, _plte, _t = proj.view(a)
+            hgt, wid = indices.shape
+            x, y = args.get("x", 0), args.get("y", 0)
+            w, h = args.get("w") or wid - x, args.get("h") or hgt - y
+            region = indices[y:y + h, x:x + w]
+            two = a.kind in ("tileset", "bg") or int(indices.max(initial=0)) > 15
+            rows = ["".join(("%02x" if two else "%x") % v for v in row) for row in region]
+            return txt({"id": a.id, "x": x, "y": y, "w": region.shape[1], "h": region.shape[0],
+                        "chars_per_pixel": 2 if two else 1, "rows": rows})
+        if name == "paint_pixels":
+            a = proj.get(args["id"])
+            indices, _plte, _t = proj.view(a)
+            idx = indices.copy()
+            two = a.kind in ("tileset", "bg") or int(indices.max(initial=0)) > 15
+            step = 2 if two else 1
+            x0, y0 = args.get("x", 0), args.get("y", 0)
+            for dy, row in enumerate(args.get("rows") or []):
+                for dx in range(0, len(row), step):
+                    ch = row[dx:dx + step]
+                    if "." in ch:
+                        continue
+                    px, py = x0 + dx // step, y0 + dy
+                    if 0 <= px < idx.shape[1] and 0 <= py < idx.shape[0]:
+                        idx[py, px] = int(ch, 16)
+            for r in args.get("rects") or []:
+                idx[r["y"]:r["y"] + r["h"], r["x"]:r["x"] + r["w"]] = int(r["index"])
+            if a.kind == "sprite" and a.layout.get("bpp", 4) == 4 and int(idx.max(initial=0)) > 15:
+                raise ProjectError("sprite colour indices must be 0-15")
+            notes = proj.write_view(a, idx)
+            return txt({"updated": a.file, "notes": notes})
+        if name == "import_image":
+            a = proj.get(args["id"])
+            src = args.get("path")
+            tmp = None
+            if not src:
+                if not args.get("png_base64"):
+                    raise ProjectError("give either path or png_base64")
+                tmp = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
+                tmp.write(base64.b64decode(args["png_base64"]))
+                tmp.close()
+                src = tmp.name
+            try:
+                notes = proj.import_image(a, src, new_palette=bool(args.get("new_palette")),
+                                          resize=bool(args.get("resize")))
+            finally:
+                if tmp:
+                    Path(tmp.name).unlink(missing_ok=True)
+            return txt({"ok": True, "file": a.file, "notes": notes})
+        if name == "set_palette":
+            cols = []
+            for c in args["colors"]:
+                if isinstance(c, str):
+                    c = c.lstrip("#")
+                    cols.append(tuple(int(c[i:i + 2], 16) for i in (0, 2, 4)))
+                else:
+                    cols.append(tuple(int(v) for v in c[:3]))
+            return txt({"ok": True, "recoloured": proj.set_palette(proj.get(args["id"]).id, cols)})
+        if name in MAP_TOOLS:
+            m = getattr(proj, "maps", None)
+            if m is None:
+                raise ProjectError("map tools need a pokeemerald-style source tree")
+            return self.map_call(m, name, args, txt)
+        if name == "revert_asset":
+            proj.revert(proj.get(args["id"]))
+            return txt("reverted")
+        if name == "status":
+            return txt(proj.status())
+        if name == "validate":
+            return txt(proj.build(dry_run=True).to_dict())
+        if name == "build_rom":
+            return txt(proj.build(args.get("output")).to_dict())
+        raise ProjectError(f"unknown tool {name}")
+
+    def map_call(self, m, name: str, args: dict, txt) -> list[dict]:
+        if name == "list_maps":
+            q = (args.get("query") or "").lower()
+            return txt([x for x in m.list_maps() if not q or q in (x["name"] + x["id"]).lower()])
+        if name == "view_map":
+            scale = max(1, min(int(args.get("scale") or 1), 4))
+            im = m.render(args["name"], events=args.get("events", True), scale=scale)
+            lay = m.layout_of(args["name"])
+            return [self._png(im), *txt(f"{m.resolve(args['name'])}: {lay['width']}x{lay['height']} blocks, "
+                                        f"{16 * scale}px per block")]
+        if name == "get_map":
+            lay = m.layout_of(args["name"])
+            return txt({"map": m.get_map(args["name"]),
+                        "layout": {k: lay.get(k) for k in ("id", "width", "height", "primary_tileset",
+                                                           "secondary_tileset", "layout_version")},
+                        "scripts_file": str(m.script_path(args["name"]).relative_to(m.root))})
+        if name == "view_metatiles":
+            return [self._png(m.metatile_sheet(args["name"], int(args.get("scale") or 2))),
+                    *txt("metatile id = row label + column (0-7)")]
+        if name == "get_blocks":
+            return txt(m.blocks_text(args["name"], args.get("x", 0), args.get("y", 0), args.get("w"), args.get("h")))
+        if name == "set_blocks":
+            n = m.apply_blocks(args["name"], args.get("x", 0), args.get("y", 0), args["rows"])
+            return txt(f"updated {n} block(s)")
+        if name == "copy_blocks":
+            notes = m.copy_blocks(args["source"], args["x"], args["y"], args["w"], args["h"], args["dest"],
+                                  args["dx"], args["dy"])
+            return txt({"ok": True, "notes": notes})
+        if name == "edit_map":
+            data = m.get_map(args["name"])
+            for k, v in (args.get("header") or {}).items():
+                if k in ("id", "name") or isinstance(data.get(k), list):
+                    raise ProjectError(f"header field {k} cannot be changed here")
+                data[k] = v
+            from .maps import DEFAULT_EVENTS
+            for op in args.get("events") or []:
+                kind = op.get("kind")
+                if kind not in DEFAULT_EVENTS:
+                    raise ProjectError(f"unknown event kind {kind}")
+                lst = data.setdefault(kind, [])
+                if op.get("op") == "add":
+                    lst.append({**DEFAULT_EVENTS[kind], **(op.get("fields") or {})})
+                elif op.get("op") in ("update", "delete"):
+                    i = int(op.get("index", -1))
+                    if not 0 <= i < len(lst):
+                        raise ProjectError(f"{kind} has no index {i}")
+                    if op["op"] == "update":
+                        lst[i].update(op.get("fields") or {})
+                    else:
+                        lst.pop(i)
+                else:
+                    raise ProjectError("op must be add, update or delete")
+            return txt({"ok": True, "warnings": m.save_map(args["name"], data),
+                        "counts": {k: len(data.get(k, [])) for k in DEFAULT_EVENTS}})
+        if name == "get_script":
+            return txt(m.read_script(args["name"]))
+        if name == "write_script":
+            m.write_script(args["name"], args["text"])
+            return txt("saved")
+        if name == "new_script":
+            return txt({"label": m.new_script(args["name"], args.get("kind", "npc"), args.get("text", "Hello!"))})
+        if name == "duplicate_map":
+            notes = m.duplicate_map(args["source"], args["new_name"], args.get("group"), args.get("copy_layout", True),
+                                    args.get("map_id"))
+            return txt({"ok": True, "map": args["new_name"], "id": m.get_map(args["new_name"])["id"], "notes": notes})
+        if name == "link_warps":
+            m.link_warps(args["map"], int(args["warp"]), args["dest_map"], int(args["dest_warp"]))
+            return txt("linked")
+        if name == "resize_map":
+            return txt({"ok": True, "notes": m.resize(args["name"], int(args["width"]), int(args["height"]))})
+        if name == "find_constants":
+            q = (args.get("query") or "").upper()
+            hits = [c for c in m.constants(args["prefix"]) if q in c]
+            return txt({"total": len(hits), "constants": hits[:300]})
+        raise ProjectError(f"unknown tool {name}")
+
+    # ------------------------------------------------------------------ protocol
+    def handle(self, msg: dict) -> dict | None:
+        mid = msg.get("id")
+        method = msg.get("method")
+        if mid is None:
+            return None  # notification
+        try:
+            if method == "initialize":
+                ver = (msg.get("params") or {}).get("protocolVersion") or PROTOCOL
+                result = {"protocolVersion": ver, "capabilities": {"tools": {}},
+                          "serverInfo": {"name": "pkmn-asset-editor", "version": __version__},
+                          "instructions": "Tools for editing the graphics of a Gen 3 Pokémon game (a pokeemerald-"
+                                          "style source tree or an extracted ROM project). Start with "
+                                          "list_assets/describe_asset, look with view_asset, edit with "
+                                          "paint_pixels/import_image/set_palette, then validate and build_rom. "
+                                          "Respect describe_asset's constraints (size, colours, in-game palette)."}
+            elif method == "ping":
+                result = {}
+            elif method == "tools/list":
+                result = {"tools": [{"name": n, "description": d, "inputSchema": s} for n, d, s in TOOLS]}
+            elif method == "tools/call":
+                params = msg.get("params") or {}
+                try:
+                    content = self.call(params.get("name"), params.get("arguments") or {})
+                    result = {"content": content, "isError": False}
+                except ERRORS as e:
+                    result = {"content": [{"type": "text", "text": f"error: {e}"}], "isError": True}
+            else:
+                return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": f"unknown method {method}"}}
+        except Exception as e:  # noqa: BLE001
+            return {"jsonrpc": "2.0", "id": mid, "error": {"code": -32603, "message": str(e)}}
+        return {"jsonrpc": "2.0", "id": mid, "result": result}
+
+
+def run(proj, stdin=None, stdout=None) -> None:
+    stdin = stdin or sys.stdin
+    stdout = stdout or sys.stdout
+    srv = Server(proj)
+    for line in stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        resp = srv.handle(msg)
+        if resp is not None:
+            stdout.write(json.dumps(resp) + "\n")
+            stdout.flush()
