@@ -12,9 +12,16 @@ experienced ROM hackers and for AI assistants.
 
 | | |
 |---|---|
+| 🎯 [Missions](#new-to-rom-hacking) | small real tasks in your own game, one after another, ticked off by themselves |
 | 🗺️ [Maps & events](#maps-people-and-doors) | paint maps, add houses, people, doors, signs and step triggers |
-| ▶️ [Test in game](#test-in-game-from-anywhere-in-the-story) | build and play right away, from any chapter of the story, with the items and team you choose |
-| 🔴 [Pokémon & Trainers](#pokémon--trainers) | trainer teams, wild Pokémon, stats, types, evolutions and moves, plus a one-click battle test |
+| 🧩 [Event builder](#build-what-happens-from-blocks) | make what people do from blocks (say, ask, give, battle, move…), and record walking paths |
+| 🌍 [World & town map](#the-whole-world-and-the-town-map) | all maps joined together, new routes next to old ones, the town map, place names and fly spots |
+| ▶️ [Test in game](#test-in-game-from-anywhere-in-the-story) | build and play right away, live at 60 fps with sound, from any chapter, with the items and team you choose |
+| 🧪 [Replay tests](#replay-tests) | play something once, replay it after every change; a GitHub Action for every push |
+| 🔴 [Pokémon & Trainers](#pokémon--trainers) | trainers, wild Pokémon, species, items, moves, TMs, shops, a level chart, and a one-click battle test |
+| ✨ [New Pokémon](#a-brand-new-pokémon) | a brand-new species, copied from one you pick, with its own pictures |
+| 🔎 [Find & replace](#find--replace-in-all-text) | rename a town or a person in every line of dialogue at once |
+| 📦 [Release](#share-your-game) | a release build, a small BPS patch and a README to share your game |
 | 💬 [Dialogue preview](#dialogue-that-fits) | see every text in the game's own font, with warnings for text that won't fit |
 | 🌊 [Tileset animations](#water-and-flowers-that-move) | water, flowers and waterfalls: speed, frames and new animations |
 | 📖 [Story flow](#story-flow) | which event turns on which flag, and what waits for it |
@@ -85,6 +92,16 @@ dialogue fit…) and explains every word you'll see, like *block*, *palette*,
 
 ![Help & guides](docs/images/help.png)
 
+**🎯 Missions** (at the top of every page) take you through your first eleven
+changes, one at a time: change what someone says, play it, rename a town,
+change a trainer's team and the wild Pokémon, add a person, redraw a Pokémon,
+save a checkpoint, make a save point, save a replay test and share your game.
+Each mission says what to press and links to the right page, and ticks itself
+off when the tool sees it done, by comparing your game folder with how it was
+when the missions started. `pae missions` shows the same list.
+
+![The Missions panel next to the map editor, after the first mission was done](docs/images/missions.png)
+
 * Buttons and fields use plain words (**Walls**, **+ Door**, **looks like**,
   **what happens**). Hover over anything to see what it does.
 * **Expert mode** shows every setting with the names the game's files use.
@@ -134,6 +151,42 @@ the changes up like any other edit.
   unknown graphics, duplicate local ids, events outside the map, block data
   that doesn't match the layout, and blocks the tilesets don't have.
 
+### Build what happens from blocks
+
+**🧩 Build what happens** (on a selected person, sign or step trigger) makes
+the script from blocks instead of code: 💬 say, ❓ ask yes or no (with a branch
+for each answer), 🎁 give an item, 🔴 give a Pokémon, ⚔️ battle this trainer or a
+wild Pokémon, 🚩 flags and 🔢 variables, 🔀 *if a flag is on…*, 🚶 move
+someone, 👻 hide/👀 show a person, ❤️ heal, 🔔 sounds, 🎵 music, ⏳ wait,
+🌑 fade, 🚪 go to another map, and ⌨️ a script line for experts. The right side
+shows each text box as it will look in game, and the text is wrapped to fit.
+
+![The block builder: a greeting, a yes/no question that gives a Pichu, and a walk](docs/images/event-builder.png)
+
+* The script and its texts and movements get readable labels
+  (`PetalburgCity_EventScript_Boy1`, `…_Text_Boy1_2`) and are written to the
+  map's `scripts.inc`. The blocks are kept in a `@ pae-blocks` comment above
+  it, so the builder can open the script again later; scripts it didn't make
+  are read into blocks as far as possible.
+* **🎬 Record steps** in the test window: walk the path with the arrow keys,
+  then use it in a 🚶 *Move someone* block.
+
+### The whole world and the town map
+
+The **🌍 World** page shows every outdoor map joined by its connections (the
+edges you walk across), coloured by story chapter. Click a map to open it, or
+**add a new map next to it**: a copy of a map you pick, connected on both
+sides. It warns about connections that only go one way and maps that overlap.
+
+![Hoenn, every town and route joined together and coloured by story chapter](docs/images/world.png)
+
+**Town map & flying** shows the town map from the game's own picture. Click a
+square to see its place, paint squares to move a place, rename places (the
+name on the town map and on the sign when you arrive), add new places, and
+make a town a **fly spot** (where you land, and the flag that unlocks it).
+
+![The town map with Petalburg City selected and where you land when you fly there](docs/images/town-map.png)
+
 ### Test in game, from anywhere in the story
 
 **▶ Test in game** builds your game and plays it in the page, starting at the
@@ -155,6 +208,11 @@ Then play with the keyboard or on-screen buttons, enter a list of inputs
 **battle now** against any trainer or wild Pokémon. After an edit,
 **Build & play** again. Small changes build in seconds.
 
+**⚡ Live** (on by default) runs the game at full speed, 60 frames a second,
+streamed to the page over a WebSocket, with **🔊 Sound**, **⏩ Fast** (4×, or
+hold <kbd>Space</kbd>) and **⏸ Pause**. Starting battles, scripts and
+checkpoints happen between two frames.
+
 ![Playing Mauville City at chapter 9 with a Marshtomp and a Zigzagoon](docs/images/test-window-game.png)
 
 How it works: `make` runs, then the ROM boots in a headless libmgba driver
@@ -168,6 +226,8 @@ renumbered or new flags in a fork work. Checkpoints are written by the game's
 own save routine and stored in `.pae/checkpoints/` as plain `.sav` files that
 any emulator can load.
 
+![Live play in the test window](docs/images/live-play.png)
+
 **Story chapters.** Emerald's 20 chapters are built in. The items come from
 your maps: item balls (`finditem`), `hidden_item` signs and `giveitem` in
 scripts, each with the `setflag` after it. Story items that are handed over
@@ -175,6 +235,43 @@ later (the Devon Goods, Steven's Letter) are left out once they're gone. Your
 own maps are put in a chapter in **Map settings → Story chapter**, by
 [Suggest chapters](#story-flow), or with `pae story`, and are saved in
 `.pae/story.json`.
+
+### Replay tests
+
+Play something once (walk through a town, beat a gym leader, watch a
+cutscene) and press **🔴 Save as a test…**. Everything since **▶** is saved in
+`pae_tests/` in your game folder: where it started (map, checkpoint, chapter,
+team), every button press and frame, every battle and script, and what the
+game showed at the end. After a change, **🧪 Tests → Build & run all tests**
+plays exactly the same inputs on the new build and tells you what is different:
+the final screen, the map and position, whether a battle is going on, and the
+trainers (beaten or not), flags and variables the test watches. If the change
+was on purpose, **It's fine, keep the new result**.
+
+![A replay test that caught a change: Roxanne's Nosepass went up to level 60, so the test's Mewtwo no longer wins](docs/images/replay-tests.png)
+
+The emulator is deterministic, and every play-test starts with the same random
+numbers (the game's RNG state is set on start), so people who wander around
+walk the same way after a rebuild. Up to 1% of the screen may change by
+default.
+
+```bash
+pae test record "beat roxanne" RustboroCity --clear-team --team "SPECIES_MEWTWO lv50 MOVE_PSYCHIC" \
+    --state FLAG_BADGE08_GET --battle TRAINER_ROXANNE_1 --inputs "A*4, wait 20, A*4, wait 20, …" \
+    --watch-trainer TRAINER_ROXANNE_1
+pae test run                 # build, replay all, exit 1 when something changed
+pae test accept "beat roxanne"
+pae ci init                  # .github/workflows/pae.yml
+```
+
+**`pae ci init`** adds a GitHub Actions workflow to your game. On every push
+and pull request GitHub installs the build tools and libmgba, builds the game,
+runs `pae check --all`, replays the tests, puts a table in the run's summary
+and keeps the screens (expected | now | changed pixels) as a download.
+
+> Tip: in pokeemerald-expansion, Pokémon above the badge level cap don't obey
+> (`B_OBEDIENCE_MECHANICS`). A test with a strong team needs badges too
+> (`--state FLAG_BADGE08_GET`).
 
 ### Pokémon & Trainers
 
@@ -207,9 +304,50 @@ constants and the Pokémon's icons next to them.
 
 ![Mudkip's stats, abilities, evolution and moves](docs/images/pokemon.png)
 
+* **Pokédex and names**: name, category, height, weight and the Pokédex
+  text, plus which TMs, HMs and tutor moves it learns and its egg moves.
+* **Items**: name, price, description and bag pocket, and the shops that sell it.
+* **Moves**: power, accuracy, PP, priority, type, category and description, and
+  who learns it.
+* **TMs**: which move each TM and HM teaches. Changing one renames the TM item
+  everywhere (`ITEM_TM_OVERHEAT`…), and a move can't be a TM and an HM at once.
+* **Shops**: what each Poké Mart sells.
+
+![Editing the Super Potion: price, description and the shops that sell it](docs/images/data-items.png)
+
+* **Difficulty**: the levels of every trainer and the wild Pokémon chapter by
+  chapter on one chart, with the gym leaders marked, and a list of trainers and
+  wild Pokémon that look too strong for their chapter.
+
+![Levels through the story, with the bosses and the spots that look too hard](docs/images/difficulty.png)
+
 **Check for problems** warns about unknown species, moves and items,
-levels out of range, too many Pokémon or moves, and slot counts that
-don't match the encounter type.
+levels out of range, too many Pokémon or moves, slot counts that
+don't match the encounter type, names that are too long and shops or TMs
+with unknown items or moves.
+
+### A brand-new Pokémon
+
+**✨ New Pokémon** (on the Pokémon tab) adds a new species the way expansion's
+`how_to_new_pokemon.md` tutorial describes, by copying one you pick: its
+`SPECIES_` and `NATIONAL_DEX_` constants, a Pokédex entry at the end with the
+name/height/weight orders updated, its species entry (in
+`species_info/custom_families.h`), its own graphics folder and `INCGFX` lines,
+follower sprite, learnsets, egg moves and TM/tutor moves. Give it a name,
+types, stats, a Pokédex text, an evolution and your pictures. Its cry is the
+template's.
+
+![Making Sparkit, a new Electric/Fairy Pokémon copied from Pichu](docs/images/new-pokemon.png)
+
+### Find & replace in all text
+
+**🔎 Find text** (at the top of the editor pages) searches all dialogue, place names and
+trainer names, including words split over two lines ("PETALBURG\nCITY").
+**Replace** keeps the case (`petalburg` → `Sunny` turns `PETALBURG` into
+`SUNNY`) and re-wraps only the text boxes that no longer fit. You see every
+change first and can untick any.
+
+![Renaming Petalburg to Sunnyvale: every line it changes, before and after](docs/images/find-replace.png)
 
 ### Dialogue that fits
 
@@ -265,6 +403,18 @@ value.
 **Suggest chapters** places maps that aren't in a chapter yet (your new towns
 and houses) by following their doors and map connections to a place that is,
 skipping hub maps such as Pokémon Centers that connect to everywhere.
+
+### Share your game
+
+The **📦 Release** page makes what you share: `make release` (no debug menus or
+Quickstart), a **BPS patch** against the original game (a few MB for a whole
+expansion game, because data that only moved is copied, not stored), an
+optional UPS patch, and a README with how to play and what's new (your save
+points since the last release). The original game's checksum is checked, so
+the README says exactly which file players need. Everything goes into
+`.pae/releases/` and a zip.
+
+![The release page: your game's name, the original game, what's new, and the checks](docs/images/release.png)
 
 ### Save points
 
@@ -378,6 +528,26 @@ pae play PetalburgCity --state "FLAG_BADGE01_GET, VAR_PETALBURG_GYM_STATE=2, ITE
 pae checkpoint import before-gym ~/emerald.sav       # use a save from your emulator / flash cart
 pae play --from before-gym                           # continue it where it was saved
 
+# items, moves, TMs, shops, levels, new Pokémon
+pae item set ITEM_SUPER_POTION --price 600
+pae move set MOVE_TACKLE --power 50 --accuracy 95
+pae tm set tm 50 MOVE_FLAMETHROWER          # renames ITEM_TM_<MOVE> everywhere
+pae mart set OldaleTown_Mart_Pokemart_Basic ITEM_POTION ITEM_POKE_BALL ITEM_ANTIDOTE
+pae difficulty                              # levels per chapter and the spots that look wrong
+pae new-pokemon Sparkit --from SPECIES_PICHU --types TYPE_ELECTRIC,TYPE_FAIRY --stats 35,45,30,60,40,85 \
+    --evolves-from pikachu:30 --front sparkit.png
+
+# world, text, replay tests, releases
+pae world render -o hoenn.png                    # all maps joined by their connections
+pae world attach Route101 down Route102 Route101_South
+pae world fly MAPSEC_SUNNY_TOWN SunnyTown 10 8 --flag FLAG_VISITED_SUNNY_TOWN
+pae text find "Petalburg"
+pae text replace "Petalburg" "Sunnyvale" --dry-run
+pae test record "walk petalburg" PetalburgCity --inputs "RIGHT*48, UP*32"
+pae test run                                     # see "Replay tests" above
+pae release --name "Emerald Sunny" --version 1.0 --base ~/emerald.gba
+pae missions                                     # the guided missions
+
 # story, animations, save points
 pae story list                      # the chapters and their maps
 pae story items 9 --extras          # what you'd have by the end of chapter 9
@@ -489,7 +659,7 @@ The tool enforces these rules and converts input for you wherever it can:
 The project is designed so an AI assistant can work on your game directly, and
 you can review everything it did under **What I changed** and **🕘 History**.
 
-* **MCP server**: `pae mcp --project <dir>` gives an AI 63 tools, many of which
+* **MCP server**: `pae mcp --project <dir>` gives an AI 88 tools, many of which
   return pictures, so it can see what it is doing:
   * graphics: `list_assets`, `describe_asset`, `view_asset`,
     `view_contact_sheet`, `get_pixels`/`paint_pixels`, `import_image`,
@@ -502,7 +672,14 @@ you can review everything it did under **What I changed** and **🕘 History**.
   * scripts and dialogue: `get_script`, `write_script` (reports text that won't
     fit), `new_script`, `preview_text`
   * game data: `list_trainers`, `get_trainer`, `set_trainer`, `get_wild`,
-    `set_wild`, `get_species`, `set_species`
+    `set_wild`, `get_species`, `set_species`, `list_items`/`get_item`/`set_item`,
+    `list_moves`/`get_move`/`set_move`, `get_tms`/`set_tms`, `get_teachable`,
+    `list_marts`/`set_mart`, `difficulty_report`, `create_pokemon`
+  * world: `view_world`, `region_map`, `attach_map`, `set_fly_spot`
+  * events from blocks: `build_script`, `get_blocks_script`
+  * text: `find_text`, `replace_text`
+  * replay tests: `save_replay_test`, `run_replay_tests` (returns the
+    difference pictures), `accept_replay_test`
   * play-testing: `playtest_start` (map, chapter, extras, team),
     `playtest_press`, `playtest_battle`, `playtest_team`, `playtest_set_state`,
     `playtest_run_script`, `playtest_save_checkpoint`, `list_checkpoints`
@@ -512,7 +689,7 @@ you can review everything it did under **What I changed** and **🕘 History**.
     `edit_tileset_anim`, `set_anim_frame`/`add_anim_frame`/`remove_anim_frame`,
     `create_tileset_anim`
   * `status`, `validate`, `build_rom`, `list_save_points`, `make_save_point`
-    (only when you ask for one)
+    and `make_release` (only when you ask for one)
 
   ```bash
   claude mcp add pae -- pae mcp --project ~/my-expansion-game       # Claude Code, source tree
@@ -561,15 +738,26 @@ sheet of the results, then run `pae check`."*
 | `pae species show ID / set ID [--hp --atk --def --spa --spd --spe --catch-rate --exp --types --abilities --learn LV:MOVE]` | Pokémon data |
 | `pae play [MAP] [--x --y --from CKPT --chapter N --extras --team … --clear-team --battle TRAINER --wild SPECIES:LV --state … --script LABEL --save-as NAME --inputs … -o PNG --gif GIF]` | build, then play-test headlessly |
 | `pae checkpoint list / import NAME FILE / delete NAME` | test saves |
+| `pae test list / record NAME [MAP] [pae play options] [--watch-trainer --watch-flag --watch-var --threshold] / run [NAME…] [--no-build --summary FILE] / accept NAME… / delete NAME` | replay tests in `pae_tests/` |
+| `pae ci init [--force]` | write a GitHub Actions workflow (build, `pae check --all`, replay tests) |
+| `pae item / move list / show / set` | items and moves |
+| `pae tm list / set tm\|hm NUMBER MOVE` · `pae mart list / set LABEL ITEM…` | TMs, HMs, tutors and shops |
+| `pae difficulty` | trainer and wild levels per story chapter |
+| `pae new-pokemon NAME --from SPECIES [--types --stats --category --description --evolves-from --front --back --icon]` | add a new species |
+| `pae world render / region / attach / fly / add-place` | the world layout, the town map and fly spots |
+| `pae text find / replace` | find and replace in all dialogue, place and trainer names |
+| `pae release [--name --version --author --description --base ROM --notes --ups]` | release build, BPS/UPS patch, README and zip |
+| `pae missions [--reset]` | the guided missions for beginners |
 | `pae story list / items N / move MAP N / add NAME / suggest [--apply] / flag NAME` | story chapters and flow |
 | `pae anim list / show / preview / speed / order / frame / add-frame / remove-frame / new` | tileset animations |
 | `pae savepoint [MESSAGE]` / `pae history [list / show SHA / back SHA]` | save points |
 | `pae guide` | print AI-agent instructions for the project |
 | `pae scan ROM` / `pae extract ROM -o DIR` | ROM mode: find tables / create a project |
-| `pae apply-patch ROM PATCH -o OUT` | apply UPS/IPS |
+| `pae apply-patch ROM PATCH -o OUT` | apply a BPS, UPS or IPS patch |
 
-`pae` writes only the files you edit and its own `.pae/` folder (checkpoints,
-story chapters, caches), which is excluded via `.git/info/exclude` so your
+`pae` writes only the files you edit, `pae_tests/` when you save a replay
+test, and its own `.pae/` folder (checkpoints, story chapters, missions,
+releases, caches), which is excluded via `.git/info/exclude` so your
 `.gitignore` is not touched. It makes git commits only when you make a save
 point.
 
