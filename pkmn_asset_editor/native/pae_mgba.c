@@ -9,6 +9,9 @@
  *   save PATH | load PATH   savestate to/from a file
  *   reset               power-cycle (keeps the save data)
  *   call ADDR [R0..R3]  run a game function (thumb address) to completion -> "ok R0"
+ *   audio RATE          start collecting sound at RATE samples per second (stereo, 16-bit)
+ *   live N KEYS PATH    like frames, then write the picture and the sound since the last live to PATH:
+ *                       u32 sample count, 240x160 RGBA, then the samples (left/right interleaved)
  *   quit
  * Numbers may be decimal or 0x-prefixed hex.
  *
@@ -16,6 +19,7 @@
  *        by the game itself when it saves (flushed a few frames after each write).
  * Build: cc -O2 -o pae_mgba pae_mgba.c -lmgba   (Debian/Ubuntu: apt install libmgba-dev)
  */
+#include <mgba/core/blip_buf.h>
 #include <mgba/core/core.h>
 #include <mgba/core/config.h>
 #include <mgba/core/log.h>
@@ -42,12 +46,47 @@ static void quietLog(struct mLogger* logger, int category, enum mLogLevel level,
 
 static struct mLogger quietLogger = { .log = quietLog };
 static color_t* video;
+static int audioOn;
+static short audio[2 * 8192];
+
+static void writeVideo(FILE* f);
 
 static int writeShot(const char* path) {
 	FILE* f = fopen(path, "wb");
 	if (!f) {
 		return 0;
 	}
+	writeVideo(f);
+	fclose(f);
+	return 1;
+}
+
+/* The picture and the sound collected since the last call, for live play. */
+static int writeLive(struct mCore* core, const char* path) {
+	FILE* f = fopen(path, "wb");
+	if (!f) {
+		return 0;
+	}
+	uint32_t n = 0;
+	if (audioOn) {
+		struct blip_t* left = core->getAudioChannel(core, 0);
+		struct blip_t* right = core->getAudioChannel(core, 1);
+		int avail = blip_samples_avail(left);
+		if (avail > 8192) {
+			avail = 8192;
+		}
+		blip_read_samples(left, audio, avail, 1);
+		blip_read_samples(right, audio + 1, avail, 1);
+		n = (uint32_t) avail;
+	}
+	fwrite(&n, 4, 1, f);
+	writeVideo(f);
+	fwrite(audio, 4, n, f);
+	fclose(f);
+	return 1;
+}
+
+static void writeVideo(FILE* f) {
 	unsigned char* row = malloc(width * 4);
 	for (unsigned y = 0; y < height; ++y) {
 		for (unsigned x = 0; x < width; ++x) {
@@ -65,8 +104,6 @@ static int writeShot(const char* path) {
 		fwrite(row, 1, width * 4, f);
 	}
 	free(row);
-	fclose(f);
-	return 1;
 }
 
 /* Call a function inside the running game, the way a debugger would: save the CPU state, point PC at
@@ -200,6 +237,29 @@ int main(int argc, char** argv) {
 			} else {
 				puts("err function did not return");
 			}
+		} else if (!strcmp(cmd, "audio")) {
+			if (sscanf(line, "%*s %li", (long*) &a) != 1 || a < 8000) {
+				puts("err usage: audio RATE");
+				continue;
+			}
+			core->setAudioBufferSize(core, 4096);
+			for (int ch = 0; ch < 2; ++ch) {
+				struct blip_t* b = core->getAudioChannel(core, ch);
+				blip_set_rates(b, core->frequency(core), (double) a);
+				blip_clear(b);
+			}
+			audioOn = 1;
+			puts("ok");
+		} else if (!strcmp(cmd, "live")) {
+			if (sscanf(line, "%*s %li %li %3999[^\n]", (long*) &a, (long*) &b, arg) != 3) {
+				puts("err usage: live N KEYS PATH");
+				continue;
+			}
+			core->setKeys(core, (uint32_t) b);
+			for (unsigned long i = 0; i < a; ++i) {
+				core->runFrame(core);
+			}
+			puts(writeLive(core, arg) ? "ok" : "err cannot write");
 		} else if (!strcmp(cmd, "reset")) {
 			core->reset(core);
 			puts("ok");

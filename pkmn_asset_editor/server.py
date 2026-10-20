@@ -26,7 +26,16 @@ class _State:
     def __init__(self, proj):
         self.proj = proj
         self.lock = threading.RLock()
+        self.live = None
         self._sha: dict[str, tuple[float, int, str]] = {}
+
+    def live_runner(self):
+        """The thread that runs the play-test in real time for live viewers (started on first use)."""
+        if self.live is None or not self.live.is_alive():
+            from .live import LiveRunner
+            self.live = LiveRunner(self.proj.play)
+            self.live.start()
+        return self.live
 
     def modified(self, asset) -> bool:
         if self.proj.kind == "decomp":
@@ -83,6 +92,11 @@ def make_handler(state: _State):
         # -------------------------------------------------------------- GET
         def do_GET(self):
             path, q = self._q()
+            if path == "/api/play/live" and self.headers.get("Upgrade", "").lower() == "websocket":
+                if proj.kind != "decomp":
+                    return self._error("play-testing needs a source tree")
+                from .live import serve_viewer
+                return serve_viewer(self, state.live_runner())  # long-lived: not under the request lock
             try:
                 with state.lock:
                     self._get(path, q)
@@ -132,7 +146,7 @@ def make_handler(state: _State):
                 ctype = "text/plain; charset=utf-8" if f.suffix == ".txt" else "application/octet-stream"
                 hdr = {} if f.suffix == ".txt" else {"Content-Disposition": f'attachment; filename="{f.name}"'}
                 return self._send(f.read_bytes(), ctype, headers=hdr)
-            if path in ("/history.js", "/findtext.js", "/blocks.js"):
+            if path in ("/history.js", "/findtext.js", "/blocks.js", "/live.js"):
                 return self._send((WEB / path[1:]).read_bytes(), "text/javascript; charset=utf-8")
             if path == "/api/text/search":
                 if proj.kind != "decomp":
@@ -576,6 +590,12 @@ def make_handler(state: _State):
             return self._error("not found", HTTPStatus.NOT_FOUND)
 
         def _play_post(self, path, q):
+            if proj.kind != "decomp":
+                raise ProjectError("play-testing needs a source tree")
+            with proj.play.lock:  # between two frames of live play
+                return self._play_post_locked(path, q)
+
+        def _play_post_locked(self, path, q):
             import base64
             from .playtest import PlaytestError
             if proj.kind != "decomp":

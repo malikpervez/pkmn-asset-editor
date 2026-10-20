@@ -21,6 +21,7 @@ import re
 import shutil
 import struct
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -340,6 +341,7 @@ class PlaySession:
         self.where: dict = {}
         self.scratch = self.cache_dir / "session.sav"
         self._constants: Constants | None = None
+        self.lock = threading.RLock()  # live play runs frames from another thread
 
     # -- checkpoints (cartridge saves kept by name)
     def checkpoints(self) -> list[dict]:
