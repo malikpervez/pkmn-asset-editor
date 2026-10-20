@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 from . import __version__
-from .decomp import DecompError, open_project
+from .decomp import DecompError, _exclude_state_dir, open_project
 from .project import Project, ProjectError
 
 ERRORS = (ProjectError, DecompError)
@@ -154,32 +154,57 @@ def main(argv: list[str] | None = None) -> int:
                                                                "file the game uses for it"))
     p.add_argument("images", nargs="+")
 
-    p = with_project(sub.add_parser("map", help="source tree: maps, events and scripts (see `pae map -h`)"))
+    p = sub.add_parser("map", help="source tree: maps, events, scripts and tilesets (see `pae map -h`)")
     msub = p.add_subparsers(dest="map_cmd", required=True)
-    q = msub.add_parser("list", help="list maps")
+    q = with_project(msub.add_parser("list", help="list maps"))
     q.add_argument("query", nargs="?", default="")
-    q = msub.add_parser("render", help="render a map (with events) to a PNG")
+    q = with_project(msub.add_parser("render", help="render a map (with events) to a PNG"))
     q.add_argument("name")
     q.add_argument("-o", "--out", required=True)
     q.add_argument("--scale", type=int, default=1)
     q.add_argument("--no-events", action="store_true")
     q.add_argument("--grid", action="store_true")
-    q = msub.add_parser("metatiles", help="render the metatiles a map can use (with ids)")
+    q = with_project(msub.add_parser("metatiles", help="render the metatiles a map can use (with ids)"))
     q.add_argument("name")
     q.add_argument("-o", "--out", required=True)
-    q = msub.add_parser("events", help="print a map's events")
+    q = with_project(msub.add_parser("events", help="print a map's events"))
     q.add_argument("name")
-    q = msub.add_parser("new", help="create a new map as a copy of an existing one (e.g. a new house)")
+    q = with_project(msub.add_parser("new", help="create a new map as a copy of an existing one (e.g. a new house)"))
     q.add_argument("source")
     q.add_argument("new_name")
     q.add_argument("--group")
     q.add_argument("--share-layout", action="store_true", help="reuse the source's blocks instead of copying them")
     q.add_argument("--id", help="map id constant (default derived from the name)")
-    q = msub.add_parser("link", help="connect two warps in both directions")
+    q = with_project(msub.add_parser("tiles", help="tileset info for a map (metatile/tile counts and limits)"))
+    q.add_argument("name")
+    q = with_project(msub.add_parser("import-art", help="turn artwork into new metatiles (and optionally place it on the map)"))
+    q.add_argument("name")
+    q.add_argument("image")
+    q.add_argument("--x", type=int, help="place the result with its top-left block here")
+    q.add_argument("--y", type=int)
+    q.add_argument("--base", help="metatile id whose ground goes under transparent pixels (default with "
+                                  "--x/--y: the block already there)")
+    q.add_argument("--bank", type=int, help="palette bank to use (default: best match)")
+    q.add_argument("--new-palette", action="store_true", help="write the art's colours into --bank")
+    q.add_argument("--solid", action="store_true", help="make the placed blocks impassable")
+    q = with_project(msub.add_parser("link", help="connect two warps in both directions"))
     q.add_argument("map")
     q.add_argument("warp", type=int)
     q.add_argument("dest_map")
     q.add_argument("dest_warp", type=int)
+
+    p = with_project(sub.add_parser("play", help="source tree: build, then play-test a map headlessly and save "
+                                                  "screenshots (needs libmgba)"))
+    p.add_argument("map", help="map name, e.g. PetalburgCity")
+    p.add_argument("--x", type=int)
+    p.add_argument("--y", type=int)
+    p.add_argument("--inputs", default="", help="e.g. 'UP, wait 10, A, wait 60' (KEY*N holds N frames)")
+    p.add_argument("-o", "--out", default="playtest.png", help="final screenshot (.png)")
+    p.add_argument("--gif", help="also record the inputs as an animated GIF")
+    p.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
+    p.add_argument("--scale", type=int, default=2)
+
+    with_project(sub.add_parser("doctor", help="check that building and play-testing will work"))
 
     with_project(sub.add_parser("guide", help="print editing instructions for AI agents (AGENTS.md style)"))
 
@@ -389,6 +414,32 @@ def _run(args) -> int:
         for f in args.images:
             print(f"updated {proj.palette_from_png(proj.get(f))}")
         return 0
+    if args.cmd == "doctor":
+        return _doctor(proj)
+    if args.cmd == "play":
+        if not decomp:
+            raise ProjectError("`pae play` needs a source tree (it plays the ROM that `make` builds)")
+        from .playtest import PlaytestError, save_gif
+        if not args.no_build:
+            rep = proj.build_rom()
+            if rep.returncode != 0:
+                print("\n".join(rep.output.rstrip().splitlines()[-25:]))
+                print(f"make failed (exit {rep.returncode})")
+                return 1
+            print(f"built in {rep.seconds:.0f}s")
+        try:
+            name = proj.maps.resolve(args.map) if proj.maps else args.map
+            first = proj.play.start(name, args.x, args.y)
+            final, frames = proj.play.press(args.inputs, record_every=4 if args.gif else 0) if args.inputs else (first, [])
+        except PlaytestError as e:
+            raise ProjectError(str(e))
+        final.resize((final.width * args.scale, final.height * args.scale)).save(args.out)
+        print(f"wrote {args.out} ({proj.play.where})")
+        if args.gif:
+            save_gif([first] + frames, args.gif, args.scale)
+            print(f"wrote {args.gif} ({len(frames) + 1} frames)")
+        proj.play.close()
+        return 0
     if args.cmd == "map":
         m = getattr(proj, "maps", None)
         if m is None:
@@ -414,6 +465,32 @@ def _run(args) -> int:
             for n in m.duplicate_map(args.source, args.new_name, args.group, not args.share_layout, args.id):
                 print(f"note: {n}")
             print(f"created {args.new_name} ({m.get_map(args.new_name)['id']})")
+        elif args.map_cmd == "tiles":
+            print(json.dumps(m.tileset_editor.info(args.name), indent=2))
+        elif args.map_cmd == "import-art":
+            base = int(args.base, 0) if args.base else None
+            lay = m.layout_of(args.name)
+            if base is None and args.x is not None and args.y is not None:
+                base = int(m.read_blocks(lay)[args.y, args.x]) & 0x3FF
+            r = m.tileset_editor.import_image(args.name, args.image, base, args.bank, args.new_palette)
+            for n in r["notes"]:
+                print(f"note: {n}")
+            rows = [r["ids"][y * r["w"]:(y + 1) * r["w"]] for y in range(r["h"])]
+            print(f"stamp {r['w']}x{r['h']} metatiles (palette {r['bank']}):")
+            for row in rows:
+                print("  " + " ".join(f"{i:03x}" for i in row))
+            if args.x is not None and args.y is not None:
+                b = m.read_blocks(lay).copy()
+                for j, row in enumerate(rows):
+                    for i, mid in enumerate(row):
+                        yy, xx = args.y + j, args.x + i
+                        if 0 <= yy < b.shape[0] and 0 <= xx < b.shape[1]:
+                            v = (int(b[yy, xx]) & ~0x3FF) | mid
+                            if args.solid:
+                                v = (v & ~0x0C00) | (1 << 10)
+                            b[yy, xx] = v
+                m.write_blocks(args.name, b)
+                print(f"placed at ({args.x}, {args.y}) on {args.name}")
         elif args.map_cmd == "link":
             m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
             print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")
@@ -459,13 +536,42 @@ if __name__ == "__main__":
     sys.exit(main())
 
 
-def _exclude_state_dir(root: Path) -> None:
-    """Keep the tool's .pae/ folder out of git without touching the repository's .gitignore."""
-    excl = root / ".git" / "info" / "exclude"
+
+def _doctor(proj) -> int:
+    """Report what building and play-testing need, and what is missing."""
+    import shutil
+
+    rows = []
+
+    def check(name, ok, fix=""):
+        rows.append((name, ok, fix))
+
+    if proj.kind != "decomp":
+        print("ROM projects need nothing else: `pae build` writes the ROM directly.")
+        return 0
+    for tool, fix in (("make", "install make"), ("arm-none-eabi-gcc", "scripts/setup-toolchain.sh (or devkitARM)"),
+                      ("cc", "install a C compiler (build-essential / Xcode tools)")):
+        check(f"{tool} on PATH", shutil.which(tool) is not None, fix)
+    has_png = any(Path(p).exists() for p in ("/usr/include/png.h", "/usr/local/include/png.h",
+                                             "/opt/homebrew/include/png.h"))
+    check("libpng headers (for the repo's tools)", has_png, "install libpng-dev")
+    from .playtest import PlaytestError, driver_path, find_rom
     try:
-        if excl.parent.exists():
-            text = excl.read_text() if excl.exists() else ""
-            if ".pae/" not in text:
-                excl.write_text(text + ("\n" if text and not text.endswith("\n") else "") + ".pae/\n")
-    except OSError:
-        pass
+        driver_path(proj.root / ".pae" / "cache")
+        check("libmgba (headless emulator for pae play)", True)
+    except PlaytestError:
+        check("libmgba (headless emulator for pae play)", False, "install libmgba-dev / brew install mgba")
+    import re
+    cfg = proj.root / "include" / "config" / "quickstart.h"
+    qs = cfg.exists() and bool(re.search(r"#define\s+ENABLE_QUICKSTART\s+TRUE", cfg.read_text()))
+    check("Quickstart enabled (pae play starts games with it)", qs,
+          "set ENABLE_QUICKSTART TRUE in include/config/quickstart.h (non-release builds)")
+    try:
+        rom = find_rom(proj.root)
+        check(f"built ROM: {rom.name} (+ .elf)", True)
+    except PlaytestError:
+        check("built ROM (.gba + .elf)", False, "run `pae build`")
+    width = max(len(r[0]) for r in rows)
+    for name, ok, fix in rows:
+        print(f"{'ok ' if ok else 'MISSING'}  {name:<{width}}" + ("" if ok else f"   -> {fix}"))
+    return 0 if all(ok for _, ok, _ in rows) else 1

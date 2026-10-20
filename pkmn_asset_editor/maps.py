@@ -90,6 +90,13 @@ class MapEditor:
         self._labels: dict[str, str] | None = None
         self.reload()
 
+    @property
+    def tileset_editor(self):
+        if not hasattr(self, "_tse"):
+            from .metatiles import TilesetEditor
+            self._tse = TilesetEditor(self)
+        return self._tse
+
     # ------------------------------------------------------------------ index
     def reload(self) -> None:
         root = self.root
@@ -308,8 +315,25 @@ class MapEditor:
 
     def render(self, name: str, events: bool = True, grid: bool = False, scale: int = 1) -> Image.Image:
         layout = self.layout_of(name)
+        return self._compose(layout, self.read_blocks(layout), self.get_map(name) if events else None, grid, scale)
+
+    def render_head(self, name: str, events: bool = True, scale: int = 1) -> Image.Image | None:
+        """The map as it is in the last commit (None for a map that is new)."""
+        raw = self.dp.original_bytes(f"data/maps/{name}/map.json")
+        lays = self.dp.original_bytes("data/layouts/layouts.json")
+        if raw is None or lays is None:
+            return None
+        data = json.loads(raw)
+        layout = next((l for l in json.loads(lays)["layouts"] if l.get("id") == data.get("layout")), None)
+        if layout is None:
+            return None
+        blk = self.dp.original_bytes(layout["blockdata_filepath"]) or b""
+        w, h = layout["width"], layout["height"]
+        blocks = np.frombuffer(blk[: w * h * 2].ljust(w * h * 2, b"\0"), dtype="<u2").astype(np.int32).reshape(h, w)
+        return self._compose(layout, blocks, data if events else None, False, scale)
+
+    def _compose(self, layout: dict, blocks: np.ndarray, data: dict | None, grid: bool, scale: int) -> Image.Image:
         atlas = self.layout_atlas(layout)
-        blocks = self.read_blocks(layout)
         tiles = atlas.tiles()
         ids = blocks & 0x3FF
         ok = ids < len(tiles)
@@ -320,8 +344,8 @@ class MapEditor:
             bad = np.repeat(np.repeat(~ok, 16, 0), 16, 1)
             img[bad] = (255, 0, 255, 255)
         im = Image.fromarray(img, "RGBA")
-        if events:
-            self._draw_events(im, self.get_map(name))
+        if data is not None:
+            self._draw_events(im, data)
         if grid:
             from PIL import ImageDraw
             d = ImageDraw.Draw(im)
@@ -683,6 +707,20 @@ class MapEditor:
             if c.get("map") not in self.map_by_id:
                 out.append(("error", f"connection to unknown map {c.get('map')}"))
         return out
+
+    def maps_touching(self, files) -> list[str]:
+        """Names of maps whose map.json, scripts or blocks are among ``files``."""
+        out = set()
+        for f in files:
+            parts = Path(f).parts
+            if len(parts) >= 4 and parts[:2] == ("data", "maps"):
+                out.add(parts[2])
+            if len(parts) >= 3 and parts[:2] == ("data", "layouts"):
+                for n, m in self.maps.items():
+                    lay = self.layouts.get(m["layout"])
+                    if lay and f in (lay.get("blockdata_filepath"), lay.get("border_filepath")):
+                        out.add(n)
+        return sorted(n for n in out if n in self.maps)
 
     def check_changed(self, changed: dict[str, str]) -> list[tuple[str, str, str]]:
         """Validation for edited map files: (level, file, message)."""

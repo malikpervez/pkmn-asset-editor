@@ -266,4 +266,26 @@ Rules:
   for story state; reuse an existing unused flag, or add one there.
 * Keep warps paired: a door warp's `dest_map`/`dest_warp_id` must point at a
   warp that leads back.
+
+## New buildings and tiles
+
+```
+pae map import-art PetalburgCity house.png --x 24 --y 6 --solid  # picture -> new metatiles, placed
+pae map tiles PetalburgCity                                       # tile/metatile counts and limits
+```
+New art goes into the map's secondary tileset (limits: 512 tiles / 512
+metatiles in Emerald layouts). Paint collision (impassable) on walls and put
+a warp on the door. Metatile behaviors (`MB_*`) such as `MB_DOOR` and
+layer types (normal = top layer drawn over the player) are set with
+`set_metatile` or in the map editor.
+
+## See it in the game
+
+```
+pae doctor                                         # toolchain + emulator + Quickstart
+pae play PetalburgCity --x 17 --y 11 --inputs "UP, wait 10, A, wait 60" -o shot.png --gif run.gif
+```
+`pae play` builds, starts a fresh save (Quickstart) and warps to the map.
+Inputs: `KEY`, `KEY*frames` (16 frames = 1 step), `A+B 4`, `wait 60`.
+Always look at the result before telling the user an edit works.
 """

@@ -143,7 +143,8 @@ def build(root: Path) -> Path:
                 bank = (6 + m % 3) if kind == "secondary" else m % 3
                 meta.append(t | (bank << 12))
         (d / "metatiles.bin").write_bytes(b"".join(v.to_bytes(2, "little") for v in meta))
-        ts_lines.append(f'const u32 gTilesetTiles_{sym}[] = INCGFX_U32("data/tilesets/{kind}/{name}/tiles.png", ".4bpp.smol");')
+        args = ', "-num_tiles 60 -Wnum_tiles"' if kind == "secondary" else ""
+        ts_lines.append(f'const u32 gTilesetTiles_{sym}[] = INCGFX_U32("data/tilesets/{kind}/{name}/tiles.png", ".4bpp.smol"{args});')
         ts_lines.append(f"const u16 gTilesetPalettes_{sym}[][16] =\n{{")
         ts_lines += [f'    INCGFX_U16("data/tilesets/{kind}/{name}/palettes/{b:02d}.pal", ".gbapal"),' for b in range(16)]
         ts_lines.append("};")
@@ -213,6 +214,9 @@ def build(root: Path) -> Path:
     (root / "data/scripts").mkdir(parents=True)
     (root / "data/scripts/common.inc").write_text("Common_Movement_FacePlayer::\n\tstep_end\n")
     (root / "include/constants").mkdir(parents=True, exist_ok=True)
+    (root / "include/constants/metatile_behaviors.h").write_text(
+        "enum {\n    MB_NORMAL,\n    MB_SECRET_BASE_WALL,\n    MB_TALL_GRASS, // grass\n    MB_WATER = 0x10,\n"
+        "    MB_DOOR,\n    NUM_METATILE_BEHAVIORS\n};\n")
     (root / "include/constants/flags.h").write_text("#define FLAG_HIDE_HERO 0x20\n#define FLAG_TEST 0x21\n")
     (root / "src/data/object_events/object_event_graphics_info_pointers.h").write_text(
         "    [OBJ_EVENT_GFX_HERO] = &gObjectEventGraphicsInfo_HeroNormal,\n")

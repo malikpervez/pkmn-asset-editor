@@ -639,6 +639,29 @@ class DecompProject:
                 self._maps = None
         return self._maps
 
+    @property
+    def play(self):
+        """Headless play-test session for the built ROM (see playtest.py)."""
+        if not hasattr(self, "_play"):
+            from .playtest import PlaySession
+            _exclude_state_dir(self.root)
+            self._play = PlaySession(self.root, log=self.log)
+        return self._play
+
+    def build_rom(self) -> "CheckReport":
+        """Run make only (no asset check) – used before play-testing."""
+        rep = CheckReport()
+        cmd = self.config["build"]["command"]
+        rep.command = cmd
+        t0 = time.time()
+        try:
+            r = subprocess.run(shlex.split(cmd), cwd=self.root, capture_output=True, text=True, timeout=3600)
+            rep.returncode, rep.output = r.returncode, r.stdout + r.stderr
+        except FileNotFoundError as e:
+            rep.returncode, rep.output = 127, f"{e}\nIs the build toolchain installed? See INSTALL.md."
+        rep.seconds = time.time() - t0
+        return rep
+
     def revert_file(self, rel: str) -> None:
         """Restore one file (any file under the tracked folders), or delete it if it is new."""
         state = self.changed_files().get(rel)
@@ -730,7 +753,7 @@ class DecompProject:
 
     def _changed_files(self) -> dict[str, str]:
         r = self._run_git("status", "--porcelain", "-uall", "--", "graphics", "data/tilesets", "data/maps",
-                          "data/layouts")
+                          "data/layouts", "src/data/tilesets")
         out = {}
         if r is not None and r.returncode == 0:
             for line in r.stdout.decode(errors="replace").splitlines():
@@ -758,7 +781,6 @@ class DecompProject:
         dst = self.state_dir / "originals" / rel
         src = self.root / rel
         if not dst.exists() and src.exists():
-            from .cli import _exclude_state_dir
             _exclude_state_dir(self.root)
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(src.read_bytes())
@@ -903,6 +925,103 @@ class DecompProject:
         if transparent:
             im.info["transparency"] = 0
         return im.convert("RGBA")
+
+    def render_head(self, asset: Asset) -> Image.Image | None:
+        """The asset as it looks in the last commit (None if it is new)."""
+        if asset.kind in ("tileset", "bg"):
+            files = self._files_of(asset)
+            if any(self.original_bytes(f) is None for f in files):
+                return None
+            # render from a throw-away copy of just the files the view reads
+            import tempfile
+            with tempfile.TemporaryDirectory() as tmp:
+                saved = self.root
+                try:
+                    for f in files + [l["palette"] for l in asset.palettes] + [asset.meta.get("metatiles_file", "")]:
+                        if not f:
+                            continue
+                        data = self.original_bytes(f)
+                        if data is None and (saved / f).exists():
+                            data = (saved / f).read_bytes()
+                        if data is not None:
+                            (Path(tmp) / f).parent.mkdir(parents=True, exist_ok=True)
+                            (Path(tmp) / f).write_bytes(data)
+                    self.root = Path(tmp)
+                    return self.render_image(asset)
+                except (OSError, DecompError, ValueError):
+                    return None
+                finally:
+                    self.root = saved
+        raw = self.original_bytes(asset.file)
+        if raw is None:
+            return None
+        if asset.kind == "palette":
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".pal") as t:
+                t.write(raw)
+                t.flush()
+                cols = read_jasc(t.name)
+            n = max(1, len(cols))
+            w = min(16, n)
+            arr = np.array(pad_palette(cols, -(-n // 16) * 16 if n > 16 else w), dtype=np.uint8).reshape(-1, w, 3)
+            return Image.fromarray(arr, "RGB").resize((w * 16, arr.shape[0] * 16), Image.NEAREST).convert("RGBA")
+        img = load_png(io.BytesIO(raw))
+        pal = None
+        if asset.palettes and asset.palettes[0]["palette"].endswith(".pal"):
+            praw = self.original_bytes(asset.palettes[0]["palette"])
+            if praw is not None:
+                lines = [ln.split() for ln in praw.decode(errors="replace").splitlines()[3:] if ln.strip()]
+                pal = [tuple(int(v) for v in ln[:3]) for ln in lines if len(ln) >= 3]
+        pal = pal or img.palette or list(GRAYSCALE16)
+        idx = img.indices if img.indices is not None else remap_to_palette(img.rgba, pad_palette(pal, 16)[:16])[0]
+        im = Image.frombytes("P", (idx.shape[1], idx.shape[0]), np.ascontiguousarray(idx, np.uint8).tobytes())
+        im.putpalette([v for c in pad_palette(pal, 256) for v in c[:3]])
+        if asset.category in SPRITE_CATEGORIES and asset.layout.get("bpp", 4) == 4:
+            im.info["transparency"] = 0
+        return im.convert("RGBA")
+
+    def changes(self) -> list[dict]:
+        """Edited files grouped the way people think about them (graphics, maps, other)."""
+        changed = self.changed_files()
+        out = []
+        seen = set()
+        maps = self.maps
+        if maps is not None:
+            for name in maps.maps_touching(changed):
+                files = [f for f in changed if f.startswith(f"data/maps/{name}/")]
+                lay = maps.layouts.get(maps.maps[name]["layout"]) or {}
+                files += [f for f in changed if f in (lay.get("blockdata_filepath"), lay.get("border_filepath"))]
+                seen.update(files)
+                out.append({"type": "map", "map": name, "files": sorted(files),
+                            "new": all(changed[f] == "new" for f in files)})
+        tilesets: dict[str, list[str]] = {}
+        for f in changed:
+            m_ = re.match(r"(data/tilesets/(?:primary|secondary)/.+?)/(tiles\.png|metatiles\.bin|metatile_attributes\.bin|palettes/\d+\.pal)$", f)
+            if m_ and m_.group(1) + "@tileset" in self.assets:
+                tilesets.setdefault(m_.group(1), []).append(f)
+        for d, files in sorted(tilesets.items()):
+            seen.update(files)
+            out.append({"type": "image", "id": d + "@tileset", "file": d, "state": "modified",
+                        "files": sorted(files), "views": [d + "@tileset"]})
+        for f, state in sorted(changed.items()):
+            if f in seen:
+                continue
+            a = self.assets.get(f)
+            views = [v.id for v in self.assets.values() if v.kind in ("tileset", "bg") and f in self._files_of(v)]
+            if a is not None:
+                out.append({"type": "palette" if a.kind == "palette" else "image", "id": a.id, "file": f,
+                            "state": state, "views": views})
+            else:
+                out.append({"type": "file", "file": f, "state": state})
+        return out
+
+    def diff_text(self, rel: str) -> str:
+        r = self._run_git("diff", "--no-color", "HEAD", "--", rel)
+        if r is not None and r.returncode == 0 and r.stdout:
+            return r.stdout.decode(errors="replace")
+        if (self.root / rel).exists() and self.changed_files().get(rel) == "new":
+            return "(new file)\n" + (self.root / rel).read_text(errors="replace")[:20000]
+        return ""
 
     # ------------------------------------------------------------------ writing
     def _write_png(self, rel: str, idx: np.ndarray, plte: list[RGB], like: LoadedImage | None) -> None:
@@ -1129,6 +1248,10 @@ class DecompProject:
                 rep.issues.append(Issue(level, f, msg))
                 rep.checked += 0
             rep.checked += sum(1 for f in changed if f.startswith(("data/maps/", "data/layouts/")))
+        if any(f.startswith("data/tilesets/") and f.endswith(".bin") or f.endswith("/tiles.png") for f in changed) \
+                and self.maps is not None:
+            for level, f, msg in self.maps.tileset_editor.check():
+                rep.issues.append(Issue(level, f, msg))
         return rep
 
     def _check_png(self, f: str, a: Asset | None, rep: CheckReport) -> None:
@@ -1172,7 +1295,8 @@ class DecompProject:
                 rep.issues.append(Issue("warning", f, f"has {(w // 8) * (h // 8)} tiles but the source expects {nt}"))
         orig = self._original_png(f) if f in self.changed_files() else None
         if orig is not None:
-            if (orig.width, orig.height) != (w, h):
+            grown_tileset = f.startswith("data/tilesets/") and f.endswith("/tiles.png") and orig.width == w
+            if (orig.width, orig.height) != (w, h) and not grown_tileset:
                 level = "error" if a is not None and a.category in ("pokemon", "trainers", "items") else "warning"
                 rep.issues.append(Issue(level, f, f"size changed from {orig.width}x{orig.height} to {w}x{h}"))
             if raw_pal is not None and orig.palette is not None and any(r.fmt.startswith(".gbapal") for r in refs):
@@ -1266,6 +1390,18 @@ class DecompProject:
 def _repeated(im: Image.Image, frame: tuple[int, int]) -> bool:
     a = np.array(im)
     return a.shape[0] > frame[1] and np.array_equal(a[:frame[1]], a[frame[1]:2 * frame[1]])
+
+
+def _exclude_state_dir(root: Path) -> None:
+    """Keep the tool's .pae/ folder out of git without touching the repository's .gitignore."""
+    excl = root / ".git" / "info" / "exclude"
+    try:
+        if excl.parent.exists():
+            text = excl.read_text() if excl.exists() else ""
+            if ".pae/" not in text:
+                excl.write_text(text + ("\n" if text and not text.endswith("\n") else "") + ".pae/\n")
+    except OSError:
+        pass
 
 
 def open_project(path, log=None):

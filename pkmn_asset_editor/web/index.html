@@ -71,7 +71,7 @@
   .msg.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); }
   #modal { position: fixed; inset: 0; background: rgba(0,0,0,.45); display: none; align-items: center; justify-content: center; z-index: 20; padding: 16px; }
   #modal.open { display: flex; }
-  #modal .box { background: var(--panel); border-radius: 12px; padding: 16px; width: min(640px, 100%); max-height: 85vh; overflow: auto; }
+  #modal .box { background: var(--panel); border-radius: 12px; padding: 16px; width: min(980px, 100%); max-height: 88vh; overflow: auto; }
   @media (max-width: 700px) {
     .layout { grid-template-columns: 1fr; }
     nav { display: flex; overflow-x: auto; gap: 4px; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; }
@@ -423,9 +423,32 @@ function refreshGrid() {
 function modal(html) { $('#modal-body').innerHTML = html; $('#modal').classList.add('open'); }
 $('#modal-close').onclick = () => $('#modal').classList.remove('open');
 $('#btn-status').onclick = async () => {
-  const st = await api('/api/status');
-  modal(`<h3>Changes</h3>` + (st.length ? '<table>' + st.map(s => `<tr><td>${esc(s.state)}</td><td><a href="#" data-open="${esc(s.id)}">${esc(s.id)}</a>${s.error ? ' – ' + esc(s.error) : ''}</td></tr>`).join('') + '</table>' : '<p class="muted">No edits yet.</p>'));
+  const items = await api('/api/changes');
+  const t = Date.now();
+  const img = (src, label) => `<figure style="margin:0"><figcaption class="muted" style="font-size:11px">${label}</figcaption>
+      <img src="${src}" style="image-rendering:pixelated;max-width:100%;max-height:280px;background:var(--bg);border-radius:6px" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'muted',textContent:'(none)'}))"></figure>`;
+  let h = `<h3>Changes (${items.length})</h3>`;
+  if (!items.length) h += '<p class="muted">No edits yet.</p>';
+  for (const it of items) {
+    if (it.type === 'map') {
+      h += `<div class="msg"><b>Map ${esc(it.map)}</b>${it.new ? ' <span class="muted">(new)</span>' : ''} · <a href="/maps?map=${encodeURIComponent(it.map)}">open in map editor</a>
+        <div class="row" style="align-items:flex-start">${img(`/api/before?map=${encodeURIComponent(it.map)}&t=${t}`, 'before')}${img(`/api/map/render?name=${encodeURIComponent(it.map)}&t=${t}`, 'after')}</div>
+        ${it.files.map(f => `<details><summary class="muted">${esc(f)}</summary><pre data-diff="${esc(f)}">loading…</pre></details>`).join('')}</div>`;
+    } else if (it.type === 'image' || it.type === 'palette') {
+      const shown = it.views && it.views.length ? it.views[0] : it.id;
+      h += `<div class="msg"><b>${esc(it.file)}</b> <span class="muted">${esc(it.state)}</span> · <a href="#" data-open="${esc(it.id)}">open</a>
+        <div class="row" style="align-items:flex-start">${img(`/api/before?id=${encodeURIComponent(shown)}&t=${t}`, 'before')}${img(`/api/image?id=${encodeURIComponent(shown)}&t=${t}`, 'after')}</div></div>`;
+    } else {
+      h += `<div class="msg"><b>${esc(it.file)}</b> <span class="muted">${esc(it.state || '')}</span>
+        <details><summary class="muted">diff</summary><pre data-diff="${esc(it.file)}">loading…</pre></details></div>`;
+    }
+  }
+  modal(h);
   document.querySelectorAll('[data-open]').forEach(a => a.onclick = (e) => { e.preventDefault(); $('#modal').classList.remove('open'); openAsset(a.dataset.open); });
+  document.querySelectorAll('details').forEach(d => d.addEventListener('toggle', async () => {
+    const pre = d.querySelector('pre[data-diff]');
+    if (d.open && pre && pre.textContent === 'loading…') pre.textContent = await (await fetch('/api/diff?file=' + encodeURIComponent(pre.dataset.diff))).text() || '(binary or no diff)';
+  }));
 };
 async function build(dry) {
   modal('<p>Working…</p>');
