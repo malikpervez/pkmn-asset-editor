@@ -128,6 +128,7 @@ def add(maps, map_name: str, x: int, y: int, panel: tuple[int, int, int, int], s
     rec = [r for r in rec if (r["tileset"], r["metatile"]) != key and _still_a_door(maps, r)]
     rec.append({"map": name, "tileset": key[0], "metatile": mid, "panel": list(panel), "sound": sound,
                 "banks": banks, "frames": [[t.tolist() for t in f] for f in fr]})
+    rec.sort(key=lambda r: (r["tileset"], r["metatile"]))  # the same file whatever order doors were added in
     maps.dp._backup(RECORD)
     rec_path.write_text(json.dumps(rec) + "\n")
     _write_header(maps, rec)
