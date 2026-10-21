@@ -512,6 +512,7 @@ pae text preview PetalburgCity PetalburgCity_Text_WhereIsWally -o text.png
 # trainers, wild Pokémon, species
 pae trainer list roxanne
 pae trainer set TRAINER_ROXANNE_1 --mon "Geodude lv12 @Oran Berry : Tackle, Rock Tomb" --mon "Aron lv13"
+pae trainer new TRAINER_WALLY_2 --like TRAINER_WALLY_1 --mon "Ralts lv16" --field Mugshot=   # Key= removes a field
 pae wild show Route101
 pae wild set Route101 land Wurmple:2-2 Poochyena:2-2 Ralts:2-2 … --rate 20     # one per slot (12 for land)
 pae species show mudkip
@@ -561,7 +562,12 @@ pae history / pae history show SHA / pae history back SHA
 ```
 
 `--state` takes `FLAG_X` (set), `!FLAG_X` (clear), `VAR_X=5`, `ITEM_X*3`
-(give), `SPECIES_X lv20 ITEM_Y MOVE_Z…` (add a Pokémon) and `CLEAR_TEAM`.
+(give), `SPECIES_X lv20 ITEM_Y MOVE_Z…` (add a Pokémon), `CLEAR_TEAM` and
+`CALL Function` (run a game function, e.g. one that sets up a region's save
+data); flags and variables with a prefix (`JOHTO_FLAG_X`, `JOHTO_VAR_X=2`)
+work the same. `pae trainer new` gives the new trainer the next number after
+the highest one of its file, raises the trainer count and adds the same line
+to a header that numbers trainers from a base (an alias for a second region).
 `--inputs` takes `KEY`, `KEY*frames` (16 frames = one step), `A+B 4` and
 `wait 60`. A full team sends the rest to the PC. A checkpoint keeps working
 after you rebuild, as long as the save layout does not change (the same rule
@@ -738,7 +744,7 @@ sheet of the results, then run `pae check`."*
 | `pae species show ID / set ID [--hp --atk --def --spa --spd --spe --catch-rate --exp --types --abilities --learn LV:MOVE]` | Pokémon data |
 | `pae play [MAP] [--x --y --from CKPT --chapter N --extras --team … --clear-team --battle TRAINER --wild SPECIES:LV --state … --script LABEL --save-as NAME --inputs … -o PNG --gif GIF]` | build, then play-test headlessly |
 | `pae checkpoint list / import NAME FILE / delete NAME` | test saves |
-| `pae test list / record NAME [MAP] [pae play options] [--watch-trainer --watch-flag --watch-var --threshold] / run [NAME…] [--no-build --summary FILE] / accept NAME… / delete NAME` | replay tests in `pae_tests/` |
+| `pae test list / record NAME [MAP] [pae play options] [--watch-trainer --watch-flag --watch-var --watch-team --threshold] / run [NAME…] [--no-build --summary FILE] / accept NAME… / delete NAME` | replay tests in `pae_tests/` |
 | `pae ci init [--force]` | write a GitHub Actions workflow (build, `pae check --all`, replay tests) |
 | `pae item / move list / show / set` | items and moves |
 | `pae tm list / set tm\|hm NUMBER MOVE` · `pae mart list / set LABEL ITEM…` | TMs, HMs, tutors and shops |
@@ -805,7 +811,9 @@ by the shape of its entries:
   constants from the fork's own headers (`johto_ids.h`) without letting a dead
   target's headers change other values; `pae map list` shows each map's
   region (`pae map list johto`); and layouts kept only as placeholders
-  (`"removed": true`) are skipped.
+  (`"removed": true`) are skipped. Map checks report a `local_id` that
+  another map (or a removed map's kept ids) also defines with another number:
+  all of them end up in one header, and scripts may get the other number.
 * `install.sh` and Docker were tested on Ubuntu 24.04. The Windows script and
   macOS (Homebrew) have not been tested yet.
 * Play-testing needs a non-release build and libmgba. With `ENABLE_QUICKSTART`

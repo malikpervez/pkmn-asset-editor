@@ -475,7 +475,7 @@ class PlaySession:
         g = self._require()
         parsed = parse_state(ops)
         self._record({"op": "state", "state": list(ops) if not isinstance(ops, str) else [ops]})
-        names = [name for kind, name, _ in parsed if name]
+        names = [name for kind, name, _ in parsed if name and kind != "call"]
         names += [x for kind, _, arg in parsed if kind == "mon" for x in [arg["item"], *arg["moves"]] if x]
         values = self.constants.values(list(dict.fromkeys(names)), game_version(g.rom))
         done = []
@@ -483,6 +483,11 @@ class PlaySession:
             if kind == "clear_team":
                 self.clear_team()
                 done.append("emptied the team")
+                continue
+            if kind == "call":
+                if name not in g.sym:
+                    raise PlaytestError(f"{name} is not in the built game (.elf)")
+                done.append(f"called {name}: {g.call(name)}")
                 continue
             if kind == "mon":
                 done.append(self.give_mon(values[name], arg["level"], values.get(arg["item"]) if arg["item"] else 0,
@@ -619,7 +624,7 @@ class PlaySession:
         return not g.in_overworld() and g.sym.get("BattleMainCB2") == g.callback2
 
     def team(self) -> list[dict]:
-        """The current team: species / level / held item / moves, as numbers (see team_names for names)."""
+        """The current team: species / level / held item / moves, as numbers (see team_summary for names)."""
         g = self._require()
         base, size = self._party()
         n = g.call("CalculatePlayerPartyCount") & 0xFF
@@ -633,6 +638,24 @@ class PlaySession:
                         "item": get(self._mon_field("MON_DATA_HELD_ITEM")),
                         "moves": [get(self._mon_field(f"MON_DATA_MOVE{k}")) for k in range(1, 5)]})
         return out
+
+    def team_summary(self) -> list[str]:
+        """The current team as 'SPECIES_X lv5' lines (what replay tests compare)."""
+        team = self.team()
+        names = self._species_names()
+        return [f"{names.get(m['species'], m['species'])} lv{m['level']}" for m in team]
+
+    def _species_names(self) -> dict[int, str]:
+        if getattr(self, "_species_by_value", None) is None:
+            text = "\n".join(f.read_text(errors="replace")
+                             for f in sorted((self.root / "include" / "constants").glob("species*.h")))
+            names = list(dict.fromkeys(re.findall(r"^\s*#\s*define\s+(SPECIES_\w+)\s+\S", text, re.M)))
+            values = self.constants.values(names, game_version(self._require().rom)) if names else {}
+            self._species_by_value = {}
+            for n in names:  # the first name for a number wins (later ones are aliases)
+                if n in values:
+                    self._species_by_value.setdefault(values[n], n)
+        return self._species_by_value
 
     # -- reading story progress (for replay tests)
     def flags(self, names: list[str]) -> dict[str, bool]:
@@ -831,7 +854,10 @@ def game_version(rom: Path) -> str:
 def parse_state(ops) -> list[tuple[str, str, object]]:
     """Story state lines -> [(kind, name, arg)].
 
-    * ``FLAG_BADGE01_GET`` (set), ``!FLAG_HIDE_X`` (clear), ``VAR_STORY=3``, ``ITEM_POTION*5`` (give)
+    * ``FLAG_BADGE01_GET`` (set), ``!FLAG_HIDE_X`` (clear), ``VAR_STORY=3``, ``ITEM_POTION*5`` (give); flags and
+      vars with a prefix (``JOHTO_FLAG_X``, ``JOHTO_VAR_X=2``) work the same
+    * ``CALL Function`` runs a function of the game with no arguments (e.g. one that sets up a region's save data
+      before its flags can be set); lines run in order
     * ``SPECIES_MUDKIP lv20 ITEM_ORAN_BERRY MOVE_TACKLE MOVE_WATER_GUN`` (add to the team: level, held item and up
       to 4 moves are optional), ``CLEAR_TEAM`` (empty the team first)
     """
@@ -844,15 +870,19 @@ def parse_state(ops) -> list[tuple[str, str, object]]:
         if s.upper() in ("CLEAR_TEAM", "!TEAM", "CLEAR_PARTY"):
             out.append(("clear_team", "", 0))
             continue
+        m = re.fullmatch(r"CALL\s+([A-Za-z_]\w*)(?:\(\))?", s, re.I)
+        if m:
+            out.append(("call", m.group(1), 0))
+            continue
         if re.match(r"SPECIES_\w+", s, re.I):
             out.append(("mon", *_parse_mon(s)))
             continue
-        m = re.fullmatch(r"(!?)\s*(FLAG_\w+)(?:\s*=\s*(\d+|true|false))?", s, re.I)
+        m = re.fullmatch(r"(!?)\s*((?:[A-Z0-9]+_)*FLAG_\w+)(?:\s*=\s*(\d+|true|false))?", s, re.I)
         if m:
             on = not m.group(1) and (m.group(3) or "1").lower() not in ("0", "false")
             out.append(("flag", m.group(2).upper(), int(on)))
             continue
-        m = re.fullmatch(r"(VAR_\w+)\s*=\s*(-?\w+)", s, re.I)
+        m = re.fullmatch(r"((?:[A-Z0-9]+_)*VAR_\w+)\s*=\s*(-?\w+)", s, re.I)
         if m:
             out.append(("var", m.group(1).upper(), int(m.group(2), 0) & 0xFFFF))
             continue
@@ -861,7 +891,8 @@ def parse_state(ops) -> list[tuple[str, str, object]]:
             out.append(("item", m.group(1).upper(), int(m.group(2) or 1)))
             continue
         raise PlaytestError(f"can't read '{s}'. Write one of: FLAG_X (turn a flag on), !FLAG_X (turn it off), "
-                            "VAR_X=5, ITEM_X*3 (give items), SPECIES_X lv20 (add a Pokémon), CLEAR_TEAM")
+                            "VAR_X=5, ITEM_X*3 (give items), SPECIES_X lv20 (add a Pokémon), CLEAR_TEAM, "
+                            "CALL Function")
     return out
 
 
