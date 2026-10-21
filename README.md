@@ -258,7 +258,9 @@ checkpoints happen between two frames.
 ![Playing Mauville City at chapter 9 with a Marshtomp and a Zigzagoon](docs/images/test-window-game.png)
 
 How it works: `make` runs, then the ROM boots in a headless libmgba driver
-(`native/pae_mgba.c`, compiled on first use). A new game starts with
+(`native/pae_mgba.c`, compiled on first use). The game's clock reads 12:00 (UTC) when it boots, on every
+computer, so games with a day/night tint look the same in every replay; `PAE_CLOCK=20:30` picks another time of
+day and `PAE_CLOCK=wall` uses the real one. A new game starts with
 expansion's Quickstart, and `pae` **warps to the map** through `CB2_LoadMap`,
 the same path a door takes (symbol addresses come from the build's `.elf`), so
 people, map scripts and story triggers run as they do in a real game. Story

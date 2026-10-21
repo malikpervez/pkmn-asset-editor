@@ -146,6 +146,17 @@ static int callFunction(struct mCore* core, uint32_t addr, const uint32_t* args,
 	return ok;
 }
 
+// The game's clock (games with a day/night tint read it): PAE_RTC is the Unix time it starts from at power-on, so a
+// replay sees the same time of day on every computer; the emulated clock then runs with the game. Unset: the real
+// time. Applied again after loading a state, which would otherwise bring back the clock it was saved with.
+static void applyClock(struct mCore* core) {
+	const char* rtcStart = getenv("PAE_RTC");
+	if (rtcStart && *rtcStart) {
+		core->rtc.override = RTC_FAKE_EPOCH;
+		core->rtc.value = strtoll(rtcStart, NULL, 10) * 1000LL;
+	}
+}
+
 int main(int argc, char** argv) {
 	if (argc < 2) {
 		fprintf(stderr, "usage: %s ROM\n", argv[0]);
@@ -172,6 +183,7 @@ int main(int argc, char** argv) {
 			return 1;
 		}
 	}
+	applyClock(core);
 	core->reset(core);
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	printf("ready %u %u\n", width, height);
@@ -219,6 +231,9 @@ int main(int argc, char** argv) {
 			int okState = saving ? mCoreSaveStateNamed(core, vf, SAVESTATE_SAVEDATA | SAVESTATE_RTC)
 			                     : mCoreLoadStateNamed(core, vf, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
 			vf->close(vf);
+			if (!saving) {
+				applyClock(core);
+			}
 			puts(okState ? "ok" : "err state failed");
 		} else if (!strcmp(cmd, "call")) {
 			uint32_t args[4] = { 0 };

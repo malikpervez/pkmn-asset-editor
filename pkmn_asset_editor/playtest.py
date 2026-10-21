@@ -89,11 +89,30 @@ def driver_path(cache_dir: Path) -> Path:
     return exe
 
 
+CLOCK_DAY = 1767225600  # 2026-01-01 00:00 UTC: the day the game's clock starts on
+
+
+def clock_env(clock: str | None = None) -> dict:
+    """The emulator's environment for the game's clock. ``clock`` (default ``$PAE_CLOCK``, else 12:00): a time of day
+    "HH:MM" in UTC, the same on every computer so day/night tints replay the same, or "wall" for the real time."""
+    env = dict(os.environ)
+    clock = clock or os.environ.get("PAE_CLOCK") or "12:00"
+    env.pop("PAE_RTC", None)
+    if clock == "wall":
+        return env
+    m = re.fullmatch(r"(\d{1,2}):(\d{2})", clock.strip())
+    if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+        raise PlaytestError(f"the clock is a time of day like 12:00 or 20:30, or 'wall' (not {clock!r})")
+    env["PAE_RTC"] = str(CLOCK_DAY + int(m.group(1)) * 3600 + int(m.group(2)) * 60)
+    env["TZ"] = "UTC"
+    return env
+
+
 class Emulator:
-    def __init__(self, exe: Path, rom: Path, save: Path | None = None):
+    def __init__(self, exe: Path, rom: Path, save: Path | None = None, clock: str | None = None):
         args = [str(exe), str(rom)] + ([str(save)] if save else [])
         self.proc = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, text=True, bufsize=1)
+                                     stderr=subprocess.PIPE, text=True, bufsize=1, env=clock_env(clock))
         line = self.proc.stdout.readline()
         if not line.startswith("ready"):
             raise PlaytestError("emulator failed to start: " + (line + self.proc.stderr.read())[-800:])
