@@ -83,7 +83,7 @@ def _scratch(root, tmp_path):
                 {"name": "path#15", "tileset": "primary", "image": "ground.png", "x": 16},
                 {"name": "path#14", "tileset": "primary", "image": "ground.png", "x": 32},
                 {"name": "house", "image": "house.png", "w": 2, "h": 2, "ground": "grass", "solid": True,
-                 "open": ["0,1"], "behaviors": {"0,1": 1}}]}
+                 "open": ["0,1"], "behaviors": {"0,1": "MB_DOOR"}}]}
     (art / "spec.json").write_text(json.dumps(spec))
     out = tb.build(m, art / "spec.json")
     return proj, m, art, out
@@ -102,7 +102,7 @@ def test_build_and_paint(root, tmp_path):
     assert not used & {3, 4}
     h = te.get_metatile("Town", 512)
     assert h["entries"][:4] == g["entries"][:4] and h["layer_type"] == 1  # grass under the house art
-    assert te.get_metatile("Town", 514)["behavior"] == 1
+    assert te.get_metatile("Town", 514)["behavior"] == 0x11  # MB_DOOR
     grid = "....\n====\n====\n..HH\n..HH\n" + "....\n" * 3
     legend = {".": "grass", "=": {"auto": "path"}, "H": "house"}
     b = tb.paint(m, "Town", grid, legend, names)
@@ -155,6 +155,12 @@ def test_seams_and_doors(root, tmp_path):
     assert (last[:, 4:] == last[0, 4]).all()
     assert "PAE_DOORS" in (root / "src/field_door.c").read_text()
     assert "{ 514, &gTileset_NewTown, DOOR_SOUND_NORMAL, 1," in (root / "src/data/pae_doors.h").read_text()
+    # a tileset rebuild moved a door's block: its old record (now a grass block) goes at the next add
+    stale = dict(rec[0], metatile=names["metatiles"]["grass"]["ids"][0], tileset="gTileset_NewGeneral")
+    (root / "src/data/pae_doors.json").write_text(json.dumps(rec + [stale]))
+    assert doors._still_a_door(m, rec[0]) and not doors._still_a_door(m, stale)
+    doors.add(m, "Town", 2, 1, (4, 4, 12, 16))
+    assert [r["metatile"] for r in json.loads((root / "src/data/pae_doors.json").read_text())] == [514]
 
 
 def test_pattern_paint(root, tmp_path):
