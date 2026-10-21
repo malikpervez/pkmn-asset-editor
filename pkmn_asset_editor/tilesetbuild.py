@@ -41,7 +41,8 @@ BUILD_SPEC = """\
   ]
 }
 Edge variants for `pae map paint`: name metatiles "path#0" ... "path#15" (the number says which neighbours are path
-too: 1 north, 2 east, 4 south, 8 west) and use {"auto": "path"} in the legend; {"pick": ["grass", "grass2"]}
+too: 1 north, 2 east, 4 south, 8 west) and use {"auto": "path"} in the legend ("path#15~1", "path#15~2"... are
+variants of a piece, spread by position); {"pick": ["grass", "grass2"]}
 spreads variants; {"tile": "forest"} repeats a stamp as a pattern (block x, y shows its piece x mod w, y mod h)."""
 
 
@@ -353,7 +354,7 @@ def build(maps, spec_path) -> dict:
 
 def _write_animation(maps, a: dict, sides: dict, version: str, pals: dict) -> dict:
     """Write an animation's frame PNGs; add its code to tileset_anims.c the first time, else keep the code in step
-    (where the tiles are and how many)."""
+    (where the tiles are, how many, the frames and the speed)."""
     import tempfile
 
     from .gfx import Layout, tiles_to_image
@@ -384,9 +385,14 @@ def _write_animation(maps, a: dict, sides: dict, version: str, pals: dict) -> di
                 files.append(str(f))
             res = ta.create((prim, sec, version), a["name"], a["first"], n, period=a["speed"], frame_files=files)
         return {"name": base, "first_tile": a["first"], "tiles": n, "frames": nframes, "notes": res["notes"]}
-    if len(existing.frames) != nframes:
-        raise DecompError(f"animation {base} has {len(existing.frames)} frames in {ta.path.name}, the spec "
-                          f"{nframes}; change the frame count with `pae anim add-frame/remove-frame`")
+    while len(existing.frames) < nframes:  # the spec has more frames now: add them, then draw them below
+        ta.add_frame(base, copy_of=0)
+        existing = ta.get(base)
+    while len(existing.frames) > nframes:
+        ta.remove_frame(base, len(existing.frames) - 1)
+        existing = ta.get(base)
+    if existing.period != a["speed"]:
+        existing = ta.set_speed(base, a["speed"])
     for k, sym in enumerate(existing.frames):
         rel = existing.pngs.get(sym)
         maps.dp._backup(rel)
@@ -423,8 +429,11 @@ def paint(maps, map_name: str, grid: str, legend: dict, names: dict, which: str 
                     if not (0 <= xx < width and 0 <= yy < h) or rows[yy][xx] == ch:
                         mask |= bit
                 # a variant nobody drew falls back to the plain one (all neighbours the same)
-                item["name"] = next((n for n in (f"{item['auto']}#{mask}", f"{item['auto']}#15", item["auto"])
-                                     if n in meta), item["auto"])
+                name = next((n for n in (f"{item['auto']}#{mask}", f"{item['auto']}#15", item["auto"])
+                             if n in meta), item["auto"])
+                # variants "name~1", "name~2"... are spread by position, like "pick"
+                variants = [name] + [f"{name}~{k}" for k in range(1, 64) if f"{name}~{k}" in meta]
+                item["name"] = variants[(x * 7919 + y * 104729 + (x * y) % 13) % len(variants)]
             elif "pick" in item:  # a variant chosen by position (the same every time)
                 item["name"] = item["pick"][(x * 7919 + y * 104729 + (x * y) % 13) % len(item["pick"])]
             elif "tile" in item:  # a stamp repeated as a pattern: each block shows the piece at its position

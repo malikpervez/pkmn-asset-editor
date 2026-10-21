@@ -168,6 +168,13 @@ def test_pattern_paint(root, tmp_path):
             assert b[y, x] & 0x3FF == ids[(y % 2) * 2 + x % 2]
     assert b[1, 0] & 0x3FF == ids[2] and (b[1, 0] >> 10) & 3 == 0  # the door piece stays open
 
+    # variants of an edge piece ("grass~1"): spread over the area by position, the same each time
+    names["metatiles"]["grass~1"] = dict(names["metatiles"]["grass"], ids=names["metatiles"]["path#15"]["ids"])
+    b2 = tb.paint(m, "Town", "....\n" * 8, {".": {"auto": "grass"}}, names)
+    found = {int(v) & 0x3FF for v in b2.ravel()}
+    assert found == {names["metatiles"]["grass"]["ids"][0], names["metatiles"]["path#15"]["ids"][0]}
+    assert (tb.paint(m, "Town", "....\n" * 8, {".": {"auto": "grass"}}, names) == b2).all()
+
 
 ANIMS_C = """\
 #include "global.h"
@@ -235,6 +242,16 @@ def test_animated_tiles(root, tmp_path):
     first2 = out2["animations"][0]["first_tile"]
     assert first2 != first
     assert f"TILE_OFFSET_4BPP({first2})), {n} * TILE_SIZE_4BPP" in (root / "src/tileset_anims.c").read_text()
+    # another frame and another speed: the code follows
+    _water(art / "water3.png", 12)
+    spec["animations"][0].update(frames=["water1.png", "water2.png", "water3.png"], speed=4)
+    (art / "spec.json").write_text(json.dumps(spec))
+    out3 = tb.build(DecompProject(root).maps, art / "spec.json")
+    assert out3["animations"][0]["frames"] == 4
+    text = (root / "src/tileset_anims.c").read_text()
+    assert "gTilesetAnims_NewGeneral_Pond_Frame3" in text.split("gTilesetAnims_NewGeneral_Pond[] = {")[1]
+    assert "timer % 4 ==" in text
+    assert (root / "data/tilesets/primary/new_general/anim/pond/3.png").exists()
 
 
 def test_seam_borrows_what_the_map_never_shows(root, tmp_path, monkeypatch):
