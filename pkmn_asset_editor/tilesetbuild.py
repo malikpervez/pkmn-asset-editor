@@ -42,7 +42,8 @@ BUILD_SPEC = """\
 }
 Edge variants for `pae map paint`: name metatiles "path#0" ... "path#15" (the number says which neighbours are path
 too: 1 north, 2 east, 4 south, 8 west) and use {"auto": "path"} in the legend ("path#15~1", "path#15~2"... are
-variants of a piece, spread by position); {"pick": ["grass", "grass2"]}
+variants of a piece, spread by position; a piece may be a stamp, e.g. 2x2 trees "forest#0".."forest#15", and then
+its neighbours are the cells of its size); {"pick": ["grass", "grass2"]}
 spreads variants; {"tile": "forest"} repeats a stamp as a pattern (block x, y shows its piece x mod w, y mod h)."""
 
 
@@ -422,12 +423,21 @@ def paint(maps, map_name: str, grid: str, legend: dict, names: dict, which: str 
             if item is None:
                 raise DecompError(f"({x},{y}): '{ch}' is not in the legend")
             item = {"name": item} if isinstance(item, str) else dict(item)
+            pattern = "tile" in item
             if "auto" in item:  # edge variant from the neighbours with the same character (map edges count as same)
+                # pieces that are stamps (e.g. 2x2 trees) take their variant from the neighbouring cells of their size
+                first = meta.get(f"{item['auto']}#15") or meta.get(item["auto"]) or {"w": 1, "h": 1}
+                cw, chh = first["w"], first["h"]
+                x0, y0 = x - x % cw, y - y % chh
+
+                def same(cx: int, cy: int) -> bool:
+                    return all(not (0 <= yy < h and 0 <= xx < width) or rows[yy][xx] == ch
+                               for yy in range(cy, cy + chh) for xx in range(cx, cx + cw))
                 mask = 0
                 for bit, (dx, dy) in ((1, (0, -1)), (2, (1, 0)), (4, (0, 1)), (8, (-1, 0))):
-                    xx, yy = x + dx, y + dy
-                    if not (0 <= xx < width and 0 <= yy < h) or rows[yy][xx] == ch:
+                    if same(x0 + dx * cw, y0 + dy * chh):
                         mask |= bit
+                pattern = pattern or cw > 1 or chh > 1
                 # a variant nobody drew falls back to the plain one (all neighbours the same)
                 name = next((n for n in (f"{item['auto']}#{mask}", f"{item['auto']}#15", item["auto"])
                              if n in meta), item["auto"])
@@ -444,7 +454,7 @@ def paint(maps, map_name: str, grid: str, legend: dict, names: dict, which: str 
             solid = item.get("solid", m.get("solid", False))
             elev = item.get("elevation", m.get("elevation"))
             elev = 3 if elev is None else int(elev)
-            if "tile" in item:
+            if pattern:
                 k = (y % m["h"]) * m["w"] + x % m["w"]
                 blocked = bool(solid) and k not in m.get("open", [])
                 out[y, x] = m["ids"][k] | (int(blocked) << 10) | (elev << 12)

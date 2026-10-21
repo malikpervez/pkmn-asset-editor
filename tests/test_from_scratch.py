@@ -175,6 +175,16 @@ def test_pattern_paint(root, tmp_path):
     assert found == {names["metatiles"]["grass"]["ids"][0], names["metatiles"]["path#15"]["ids"][0]}
     assert (tb.paint(m, "Town", "....\n" * 8, {".": {"auto": "grass"}}, names) == b2).all()
 
+    # edge pieces that are stamps (2x2 trees): the variant comes from the neighbouring 2x2 cells
+    g0, p15, p14 = (names["metatiles"][n]["ids"][0] for n in ("grass", "path#15", "path#14"))
+    names["metatiles"]["tree#15"] = {"ids": names["metatiles"]["house"]["ids"], "w": 2, "h": 2, "solid": True}
+    names["metatiles"]["tree#11"] = {"ids": [g0, p15, p14, g0], "w": 2, "h": 2, "solid": True}  # open below
+    b3 = tb.paint(m, "Town", "TTTT\n" * 4 + "....\n" * 4, {"T": {"auto": "tree"}, ".": "grass"}, names)
+    house = names["metatiles"]["house"]["ids"]
+    assert [int(b3[y, x]) & 0x3FF for y, x in ((0, 0), (1, 1), (0, 3))] == [house[0], house[3], house[1]]
+    assert [int(b3[y, x]) & 0x3FF for y, x in ((2, 0), (2, 1), (3, 0), (3, 3))] == [g0, p15, p14, g0]
+    assert (b3[:4] >> 10 & 3 == 1).all()
+
 
 ANIMS_C = """\
 #include "global.h"
