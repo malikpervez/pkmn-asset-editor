@@ -73,7 +73,8 @@ class _Gen:
     def text(self, text: str) -> str:
         lbl = self._label("text")
         text = (text or "").replace('"', "'")
-        lines = [text.replace("\n", "\\n").rstrip("$") + "$"] if "\\" in text else self.wrap(text)
+        # written with its own line breaks (\n, \l): kept as it is; otherwise wrapped to fit (\p = a new box)
+        lines = [text.replace("\n", "\\n").rstrip("$") + "$"] if re.search(r"\\[nl]", text) else self.wrap(text)
         self.data.append(f"{lbl}:\n" + "".join(f'\t.string "{x}"\n' for x in lines))
         return lbl
 

@@ -214,13 +214,14 @@ class TextBox:
 
     def wrap(self, text: str, width: int = BOX_WIDTH - 8) -> list[str]:
         """Plain text -> game text lines (each ending in \\n, \\l, \\p or $) that fit the box.
-        A blank line in the input starts a new box."""
+        A blank line (or \\p) in the input starts a new box."""
         widths, cm = self.widths(), self.charmap()
 
-        def w(s):
+        def w(s):  # {PLAYER} and the like are measured as the name they print
+            s = re.sub(r"\{(\w+)\}", lambda m: PLACEHOLDERS.get(m.group(1), m.group(0)), s)
             return sum(widths[cm.get(c, 0)] for c in s)
         out: list[str] = []
-        paras = [p.split() for p in re.split(r"\n\s*\n", text.strip()) if p.split()]
+        paras = [p.split() for p in re.split(r"\n\s*\n|\\p", text.strip()) if p.split()]
         for pi, words in enumerate(paras):
             lines, cur = [], ""
             for word in words:

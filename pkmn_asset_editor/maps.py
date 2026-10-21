@@ -88,6 +88,7 @@ class MapEditor:
         self._sprite_cache: dict[str, Image.Image | None] = {}
         self._constants: dict[str, list[str]] | None = None
         self._labels: dict[str, str] | None = None
+        self._lid_index: dict[str, list[tuple[str, int]]] | None = None
         self.reload()
 
     @property
@@ -467,6 +468,7 @@ class MapEditor:
         self.dp._backup(str(path.relative_to(self.root)))
         _dump(path, data)
         self.dp._changed = None
+        self._lid_index = None
         if data.get("layout") != self.maps[name]["layout"]:
             self.maps[name]["layout"] = data.get("layout")
         return [p for lvl, p in problems if lvl == "warning"]
@@ -749,10 +751,45 @@ class MapEditor:
         dup = {x for x in lids if lids.count(x) > 1}
         if dup:
             out.append(("error", f"duplicate local_id {', '.join(sorted(dup))}"))
+        # map_event_ids.h defines every map's ids in one file: the same name with another number elsewhere means
+        # scripts may get the other map's number
+        for i, e in enumerate(data.get("object_events", [])):
+            lid = e.get("local_id")
+            others = self.local_id_index().get(lid, []) if lid else []
+            clash = sorted({m for m, n in others if n != i + 1 and m != name})
+            if clash:
+                out.append(("error", f"local_id {lid} is also a different object of {', '.join(clash[:3])}"
+                                     f"{' and others' if len(clash) > 3 else ''}; the game may use that number "
+                                     "instead: give it a name of its own"))
         for c in data.get("connections") or []:
             if c.get("map") not in self.map_by_id:
                 out.append(("error", f"connection to unknown map {c.get('map')}"))
         return out
+
+    def local_id_index(self) -> dict[str, list[tuple[str, int]]]:
+        """local_id name -> [(map, number)] over all maps, and maps removed from the game whose ids are kept
+        (data/maps/removed_maps.json, ``event_ids``)."""
+        if self._lid_index is not None:
+            return self._lid_index
+        idx: dict[str, list[tuple[str, int]]] = {}
+        for n in self.maps:
+            try:
+                evs = self.get_map(n).get("object_events", [])
+            except DecompError:
+                continue
+            for i, e in enumerate(evs):
+                if e.get("local_id"):
+                    idx.setdefault(e["local_id"], []).append((n, i + 1))
+        removed = self.root / "data" / "maps" / "removed_maps.json"
+        if removed.exists():
+            try:
+                for n, m in json.loads(removed.read_text()).items():
+                    for lid, num in (m.get("event_ids") or {}).items():
+                        idx.setdefault(lid, []).append((f"{n} (removed)", int(num)))
+            except (ValueError, AttributeError):
+                pass
+        self._lid_index = idx
+        return idx
 
     def maps_touching(self, files) -> list[str]:
         """Names of maps whose map.json, scripts or blocks are among ``files``."""

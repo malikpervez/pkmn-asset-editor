@@ -109,7 +109,7 @@ class ReplayTests:
 
     # ------------------------------------------------------------------ record
     def record(self, session: PlaySession, name: str, note: str = "", flags=(), vars=(), trainers=(),
-               threshold: float = DEFAULT_THRESHOLD, overwrite: bool = False) -> dict:
+               threshold: float = DEFAULT_THRESHOLD, overwrite: bool = False, team: bool = False) -> dict:
         """Save what was played in ``session`` since it started as test ``name``; what the game shows now is
         what every replay must show."""
         if session.game is None or session.started is None:
@@ -132,6 +132,8 @@ class ReplayTests:
                 "steps": [dict(s) for s in session.steps],
                 "watch": {"flags": list(flags), "vars": list(vars), "trainers": list(trainers)},
                 "threshold": threshold}
+        if team:
+            test["watch"]["team"] = True
         test["expect"] = self._observe(session, test["watch"])
         session.screenshot().save(self._path(name, ".png"))
         self._save(name, test)
@@ -146,6 +148,8 @@ class ReplayTests:
             out["vars"] = session.vars(watch["vars"])
         if watch.get("trainers"):
             out["trainers"] = session.trainers_beaten(watch["trainers"])
+        if watch.get("team"):
+            out["team"] = session.team_summary()
         return out
 
     # ------------------------------------------------------------------ replay
@@ -204,6 +208,8 @@ class ReplayTests:
         for kind, label in (("flags", "flag"), ("vars", "variable"), ("trainers", "beaten")):
             for k, v in (exp.get(kind) or {}).items():
                 check(f"{label} {k}", v, (now.get(kind) or {}).get(k))
+        if "team" in exp:
+            check("team", exp["team"], now.get("team"))
         self.results_dir.mkdir(parents=True, exist_ok=True)
         got.save(self.results_dir / f"{name}.got.png")
         ref = self._path(name, ".png")
@@ -254,13 +260,20 @@ class ReplayTests:
         (self.results_dir / f"{name}.json").unlink(missing_ok=True)
         return {"name": name, **test}
 
-    def set_watch(self, name: str, flags=None, vars=None, trainers=None, threshold: float | None = None) -> dict:
+    def set_watch(self, name: str, flags=None, vars=None, trainers=None, threshold: float | None = None,
+                  team: bool | None = None) -> dict:
         """Change what a test watches; the expected values are read by replaying it."""
         test = self.load(name)
         w = test.setdefault("watch", {})
         for k, v in (("flags", flags), ("vars", vars), ("trainers", trainers)):
             if v is not None:
                 w[k] = [x.strip() for x in v if x.strip()]
+        if team is not None:
+            if team:
+                w["team"] = True
+            else:
+                w.pop("team", None)
+                test.get("expect", {}).pop("team", None)
         if threshold is not None:
             test["threshold"] = float(threshold)
         self._save(name, test)

@@ -123,13 +123,15 @@ def _run_tests(proj, args, decomp) -> int:
             if args.inputs:
                 proj.play.press(args.inputs)
             t = tests.record(proj.play, args.name, args.note, args.watch_flag, args.watch_var, args.watch_trainer,
-                             args.threshold, overwrite=args.force)
+                             args.threshold, overwrite=args.force, team=args.watch_team)
             e = t["expect"]
             print(f"saved test {args.name}: ends on {e['map']} ({e['x']}, {e['y']})"
                   + (", in a battle" if e["in_battle"] else ""))
             for kind in ("flags", "vars", "trainers"):
                 for k, v in (e.get(kind) or {}).items():
                     print(f"  {k} = {v}")
+            if "team" in e:
+                print("  team: " + (", ".join(e["team"]) or "(empty)"))
             proj.play.close()
             return 0
         if args.test_cmd == "accept":
@@ -376,6 +378,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--watch-flag", action="append", default=[], help="a flag whose value must stay the same")
     q.add_argument("--watch-var", action="append", default=[], help="a variable whose value must stay the same")
     q.add_argument("--watch-trainer", action="append", default=[], help="a trainer whose beaten/not beaten must stay")
+    q.add_argument("--watch-team", action="store_true", help="the team (species and levels) must stay the same")
     q.add_argument("--threshold", type=float, default=0.01, help="share of screen pixels allowed to change")
     q.add_argument("--force", action="store_true", help="replace a test with the same name")
     q.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
@@ -424,6 +427,12 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("query", nargs="?", default="")
     q = with_project(tsub.add_parser("show", help="show a trainer and their team"))
     q.add_argument("id")
+    q = with_project(tsub.add_parser("new", help="add a trainer: a copy of another one, with its own number"))
+    q.add_argument("id", help="the new trainer's id, e.g. TRAINER_GOLD_LAB_HNS")
+    q.add_argument("--like", required=True, help="the trainer to copy (file, class, picture, music, team)")
+    q.add_argument("--mon", action="append", default=[],
+                   help="'Totodile lv5 : Scratch, Leer' (repeat for each Pokémon; replaces the copied team)")
+    q.add_argument("--field", action="append", default=[], help="Key=Value, e.g. 'Name=GOLD' (Key= removes it)")
     q = with_project(tsub.add_parser("set", help="replace a trainer's team and/or fields"))
     q.add_argument("id")
     q.add_argument("--mon", action="append", default=[],
@@ -1153,16 +1162,20 @@ def _run(args) -> int:
                     print(f"{t['id']:<40} {t['name']:<12} {t['class']:<18} " + ", ".join(
                         f"{n} {lv}" if lv else n for n, lv in zip(t["party"], t["levels"])))
                 return 0
-            if args.trainer_cmd == "set":
+            if args.trainer_cmd in ("set", "new"):
+                if args.trainer_cmd == "new":
+                    args.id = gd.new_trainer(args.id, args.like)["id"]
                 body = {}
                 if args.mon:
                     body["mons"] = [_parse_mon_arg(m) for m in args.mon]
                 if args.field:
                     cur = gd.get_trainer(args.id)["fields"]
-                    new = dict(f.split("=", 1) for f in args.field)
-                    body["fields"] = [{"key": f["key"], "value": new.pop(f["key"], f["value"])} for f in cur] + \
-                        [{"key": k, "value": v} for k, v in new.items()]
-                gd.set_trainer(args.id, body)
+                    new = dict(f.split("=", 1) for f in args.field)  # Key= (no value) removes the field
+                    body["fields"] = [{"key": f["key"], "value": new.pop(f["key"], f["value"])} for f in cur
+                                      if new.get(f["key"], f["value"]) != ""] + \
+                        [{"key": k, "value": v} for k, v in new.items() if v != ""]
+                if body:
+                    gd.set_trainer(args.id, body)
             t = gd.get_trainer(args.id)
             for f in t["fields"]:
                 print(f"{f['key']}: {f['value']}")

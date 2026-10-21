@@ -410,6 +410,86 @@ class GameData:
         self.dp._changed = None
         return self.get_trainer(t["id"])
 
+    def new_trainer(self, tid: str, like: str, data: dict | None = None) -> dict:
+        """Add trainer ``tid`` as a copy of ``like`` (same file, class, picture, music, team), then apply ``data``
+        like :meth:`set_trainer`. It gets the next number after the highest one of that file's trainers: its
+        #define goes after that one's, a count define equal to the old count goes up by one, and an alias header that
+        numbers the last trainer from a base (``#define TRAINER_JOHTO_X (JOHTO_TRAINER_ID_BASE + 652)``) gets
+        the same line for the new one."""
+        tid = tid.strip().upper()
+        if not tid.startswith("TRAINER_"):
+            tid = "TRAINER_" + tid
+        if not re.fullmatch(r"TRAINER_[A-Z0-9_]+", tid):
+            raise DecompError(f"{tid}: a trainer id is TRAINER_ followed by capital letters, digits and _")
+        src = self._find_trainer(like)
+        if any(t["id"] == tid for rel in self._party_files() for t in self._parse_party(rel)):
+            raise DecompError(f"there is already a trainer {tid}")
+        ids = {t["id"] for t in self._parse_party(src["file"])}
+        consts = self.root / "include" / "constants"
+        headers = sorted(consts.glob("*.h"))
+        define = None  # the header numbering this file's trainers, and its highest-numbered trainer's line
+        for h in headers:
+            text = h.read_text(errors="replace")
+            if not re.search(rf"^[ \t]*#[ \t]*define[ \t]+{src['id']}[ \t]+\d+", text, re.M):
+                continue
+            rows = [m for m in re.finditer(r"^([ \t]*#[ \t]*define[ \t]+)(TRAINER_\w+)([ \t]+)(\d+)[ \t]*$", text, re.M)
+                    if m.group(2) in ids]
+            if rows:
+                define = (h, max(rows, key=lambda m: int(m.group(4))))
+                break
+        if define is None:
+            raise DecompError(f"can't find '#define {src['id']} <number>' in include/constants")
+        h, m = define
+        last, n = m.group(2), int(m.group(4))
+        edits: dict[Path, str] = {}
+
+        def bump_counts(text: str, old: int) -> str:
+            def up(cm):  # a count equal to the old count goes up; a maximum never does
+                if cm.group(2).startswith("MAX_") or int(cm.group(3)) != old:
+                    return cm.group(0)
+                return f"{cm.group(1)}{old + 1}"
+            out = re.sub(r"^([ \t]*#[ \t]*define[ \t]+(\w*COUNT\w*)[ \t]+)(\d+)\b", up, text, flags=re.M)
+            for mm in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+(MAX_\w*)[ \t]+(\d+)\b", out, re.M):
+                if int(mm.group(2)) < old + 1 and re.search(r"TRAINER", mm.group(1)):
+                    raise DecompError(f"{h.name}: {mm.group(1)} is {mm.group(2)}; there is no room for another "
+                                      "trainer")
+            return out
+
+        text = h.read_text(errors="replace")
+        line_end = text.index("\n", m.end()) + 1 if "\n" in text[m.end():] else len(text)
+        pad = " " * max(1, len(last) + len(m.group(3)) - len(tid))  # keep the numbers in one column
+        text = text[:line_end] + f"{m.group(1)}{tid}{pad}{n + 1}\n" + text[line_end:]
+        edits[h] = bump_counts(text, n + 1)  # trainers 0..n: the count was n + 1
+        for cm in re.finditer(r"^[ \t]*#[ \t]*define[ \t]+(\w*TRAINERS?_COUNT\w*)[ \t]+(\d+)\b", edits[h], re.M):
+            if not cm.group(1).startswith("MAX_") and int(cm.group(2)) < n + 2:
+                raise DecompError(f"{h.name}: {cm.group(1)} is {cm.group(2)}, but the highest trainer is {last} = "
+                                  f"{n}; fix the count first")
+        short_last, short_new = last[len("TRAINER_"):], tid[len("TRAINER_"):]
+        for a in headers:
+            if a == h:
+                continue
+            at = a.read_text(errors="replace")
+            am = re.search(rf"^([ \t]*#[ \t]*define[ \t]+)(\w*?){short_last}([ \t]+\([ \t]*\w+[ \t]*\+[ \t]*){n}"
+                           rf"([ \t]*\))[ \t]*$", at, re.M)
+            if not am:
+                continue
+            end = at.index("\n", am.end()) + 1 if "\n" in at[am.end():] else len(at)
+            at = at[:end] + f"{am.group(1)}{am.group(2)}{short_new}{am.group(3)}{n + 1}{am.group(4)}\n" + at[end:]
+            edits[a] = bump_counts(at, n + 1)
+        # the new trainer goes at the end of the party file
+        raw = (self.root / src["file"]).read_text(errors="replace")
+        body = self._trainer_text(tid, src["header"], src["mons"])
+        self.dp._backup(src["file"])
+        for f in edits:
+            self.dp._backup(str(f.relative_to(self.root)))
+        (self.root / src["file"]).write_text(raw.rstrip("\n") + "\n\n" + body + "\n")
+        for f, t in edits.items():
+            f.write_text(t)
+        self.dp._changed = None
+        if data:
+            self.set_trainer(tid, data)
+        return self.get_trainer(tid)
+
     def _clean_mon(self, m: dict) -> dict:
         def c(prefix, v):
             return const_of(prefix, v) if v else ""
