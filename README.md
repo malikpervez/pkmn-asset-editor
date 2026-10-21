@@ -210,15 +210,26 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
 * **The spec** lists your metatiles: a block (or a several-block *stamp*, like a house) of an image, its
   behaviour, whether it's solid, which blocks stay walkable (a door), a ground metatile under transparent pixels,
   rows drawn over the player, and the palettes it may use (for each row, too). Identical tiles (also flipped
-  ones) are stored once; you choose the palettes, so the colours stay exactly yours.
+  ones) are stored once; you choose the palettes, so the colours stay exactly yours. The ground shows what it
+  shows: a barrel on a dock stands on the dock's boards, lily pads on a pond's water.
 * **The grid** has one character per block; the legend says what each one is. A stamp's character fills its
   whole rectangle. `{"auto": "path"}` picks edge variants (`path#0`…`path#15`, by which neighbours are path too),
   `{"pick": [...]}` spreads variants like grass and `{"tile": "forest"}` repeats a stamp as a pattern over any
   area (a forest of pines). An edge piece can have variants too (`water#15~1`, `water#15~2`), spread by position,
-  so open water doesn't repeat every block.
+  so open water doesn't repeat every block. `{"auto": "pond", "joins": "~", "with": "lily"}` counts as pond for
+  its neighbours (no shore toward it) and draws `pond#15+lily` there: lily pads, reeds.
 * **Animated tiles** (water, flowers): give the spec an `animations` entry with the image its metatiles are drawn
   from and the other frames, laid out like it. Their tiles go in one run and the animation's code is written into
   `src/tileset_anims.c`, and kept in step on every rebuild: where the run is, how many tiles, frames and the speed.
+* **Tall grass**: the game draws a sprite over the player's feet in tall grass, FRLG's own. Give the spec
+  `"field_effects": {"tall_grass": {"image": "grass_fx.png", "bank": 0}}` (five 16x16 frames, as the game's) and
+  maps on that tileset use yours, so it blends into the grass you drew (generated into
+  `src/data/pae_field_effects.h`, asked for once in `FldEff_TallGrass`). Several kinds of grass in one tileset can
+  each have their own (`"metatiles": {"flowery_grass": "flowery_fx.png"}`): the block under the player picks it.
+  `{"pick": ["grass_a", "grass_b"], "order": "checker"}` in the legend staggers two kinds in a field.
+* **One kit for many maps**: maps that share a primary tileset (built the same in every map's spec, then each
+  map's own secondary) can use each other's tiles at the joins; their seams copy only the secondary tiles and use
+  the map's own palettes where the colours agree.
 * **Events and cutscenes**: `pae map place` moves a warp, object, trigger or sign; `pae map path` walks between
   blocks around anything solid (shortest, then fewest turns) and writes the movement under a label in the map's
   script. For someone who follows, route them through the leader's start and add `--stop-short 1`.
@@ -227,6 +238,8 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
   `pae seam build` copies the neighbour's tiles and palettes into free slots, both ways, so each map sees the
   other right. Free slots come first from what the viewer's tilesets never use, then palette slots and secondary
   tiles the viewer's map never shows are borrowed (the game reloads those whenever you cross into another map).
+  A map that already has a hand-made seam (for another neighbour) gets pae's beside it, in metatiles, tiles and
+  palette slots the hand-made one doesn't take, when the game looks at every seam entry of a map.
 * **Maps with their own geometry** (`firered_geometry` in `map.json`, in that hack): pae shows and edits what the
   game builds, and `pae map geometry` changes it there.
 

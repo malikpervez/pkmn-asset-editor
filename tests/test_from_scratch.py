@@ -331,3 +331,155 @@ def test_place_path_and_connect(root):
     assert main(["map", "connect", "Town", "up", "Town_House1", "--align", "4,2", "-p", str(root)]) == 0
     conns = DecompProject(root).maps.get_map("Town")["connections"]
     assert [c["offset"] for c in conns if c["map"] == "MAP_TOWN_HOUSE1"] == [2]
+
+
+def test_tall_grass_effect(root, tmp_path):
+    _, m, art, _ = _scratch(root, tmp_path)
+    (root / "src/field_effect_helpers.c").write_text(
+        '#include "global.h"\n#include "constants/songs.h"\n\nu32 FldEff_TallGrass(void)\n{\n'
+        '    template = gFieldEffectObjectTemplatePointers[FLDEFFOBJ_TALL_GRASS];\n}\n')
+    fx = np.zeros((16, 80, 4), np.uint8)
+    fx[8:, :16] = (*PAL[2], 255)  # frame 0: grass over the feet, in colour 2
+    fx[3, 20] = (*PAL[5], 255)
+    Image.fromarray(fx, "RGBA").save(art / "grass_fx.png")
+    spec = json.loads((art / "spec.json").read_text())
+    spec["field_effects"] = {"tall_grass": {"image": "grass_fx.png", "bank": 0}}
+    (art / "spec.json").write_text(json.dumps(spec))
+    tb.build(m, art / "spec.json")
+    tb.build(m, art / "spec.json")  # again: one record, hooked once
+    rec = json.loads((root / "src/data/pae_field_effects.json").read_text())
+    assert [r["tileset"] for r in rec] == ["gTileset_NewGeneral"]
+    f0 = np.array(rec[0]["frames"][0])
+    assert (f0[8:] == 2).all() and (f0[:8] == 0).all() and rec[0]["frames"][1][3][4] == 5
+    header = (root / "src/data/pae_field_effects.h").read_text()
+    assert "sPaeTallGrassPic_0[640]" in header
+    assert "{ &gTileset_NewGeneral, PAE_TALL_GRASS_ANY, sPaeTallGrassFrames_0, &sPaeTallGrassPalette_0 }" in header
+    assert "0x1040" in header and "PaeTallGrassTemplate" in header
+    c = (root / "src/field_effect_helpers.c").read_text()
+    assert c.count('#include "data/pae_field_effects.h"') == 1
+    assert "template = PaeTallGrassTemplate(gFieldEffectObjectTemplatePointers[FLDEFFOBJ_TALL_GRASS], x, y);" in c
+    # a grass block with a sprite of its own: found before the tileset's
+    fx2 = fx.copy()
+    fx2[8:, :16] = (*PAL[3], 255)
+    Image.fromarray(fx2, "RGBA").save(art / "grass_fx2.png")
+    spec["field_effects"]["tall_grass"]["metatiles"] = {"path#15": "grass_fx2.png"}
+    (art / "spec.json").write_text(json.dumps(spec))
+    tb.build(m, art / "spec.json")
+    rec = json.loads((root / "src/data/pae_field_effects.json").read_text())
+    assert list(rec[0]["by_metatile"]) == ["1"] and rec[0]["by_metatile"]["1"][0][15][0] == 3
+    header = (root / "src/data/pae_field_effects.h").read_text()
+    assert header.index("{ &gTileset_NewGeneral, 1, sPaeTallGrassFrames_0_1") < header.index("PAE_TALL_GRASS_ANY, sPaeT")
+    assert "MapGridGetMetatileIdAt(x, y)" in header
+    # an older hook (no place) is brought up to date
+    (root / "src/field_effect_helpers.c").write_text(c.replace(", x, y);", ");"))
+    tb.build(m, art / "spec.json")
+    assert "FLDEFFOBJ_TALL_GRASS], x, y);" in (root / "src/field_effect_helpers.c").read_text()
+    del spec["field_effects"]["tall_grass"]["metatiles"]
+    assert c.index('"constants/songs.h"') < c.index("pae_field_effects.h")
+    spec["field_effects"]["tall_grass"]["image"] = "house.png"
+    (art / "spec.json").write_text(json.dumps(spec))
+    with pytest.raises(DecompError, match="80x16"):
+        tb.build(m, art / "spec.json")
+
+
+def test_paint_pick_checker(root, tmp_path):
+    _, m, art, _ = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown")
+    b = tb.paint(m, "Town", "....\n" * 8, {".": {"pick": ["grass", "path#15"], "order": "checker"}}, names)
+    g, p = names["metatiles"]["grass"]["ids"][0], names["metatiles"]["path#15"]["ids"][0]
+    assert [[int(v) & 0x3FF for v in r] for r in b[:2]] == [[g, p, g, p], [p, g, p, g]]
+
+
+def test_paint_joins_with(root, tmp_path):
+    _, m, art, _ = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown")
+    names["metatiles"]["path#15+lily"] = dict(names["metatiles"]["path#15"], ids=[512])
+    legend = {".": "grass", "=": {"auto": "path"}, "v": {"auto": "path", "joins": "=", "with": "lily"}}
+    b = tb.paint(m, "Town", "....\n====\n=v==\n====\n" + "....\n" * 4, legend, names)
+    assert b[2, 1] & 0x3FF == 512  # surrounded by path: its "+lily" piece
+    assert b[2, 0] & 0x3FF == 1 and b[2, 2] & 0x3FF == 1  # its neighbours see it as path: no edge toward it
+    assert b[1, 1] & 0x3FF == 2  # path#14: grass to the north, the lily cell below counts as path
+
+
+def test_seams_share_the_kit(root, tmp_path):
+    """Two maps with the same primary tileset: the strip uses the primary's tiles and the map's own palettes."""
+    proj, m, art, _ = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    tb.new_tileset(proj, "gTileset_NewTown2", secondary=True)
+    m = DecompProject(root).maps
+    spec = json.loads((art / "spec.json").read_text())
+    spec["secondary"] = "gTileset_NewTown2"
+    (art / "spec.json").write_text(json.dumps(spec))
+    names2 = tb.build(m, art / "spec.json")
+    for name, sec, nm in (("Town", "gTileset_NewTown", names), ("Town_House1", "gTileset_NewTown2", names2)):
+        m.set_geometry(name, primary_tileset="gTileset_NewGeneral", secondary_tileset=sec, layout_version="hns")
+        tb.paint(m, name, "..HH\n..HH\n" + "....\n" * 6, {".": "grass", "H": "house"}, nm)
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["connections"] = [{"map": "MAP_TOWN_HOUSE1", "direction": "up", "offset": 0}]
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    (root / "src/kanto_connection_seam.c").write_text(
+        '#include "global.h"\n#include "kanto_connection_seam.h"\n\n'
+        'static const struct KantoSeam sKantoSeams[] = {\n};\n')
+    m = DecompProject(root).maps
+    p = seams.plan(m, "Town", ["Town_House1"])
+    assert p["palettes"] == {}  # the neighbour's palettes are the map's own
+    grass_tiles = {e & 0x3FF for mt in p["metatiles"] if mt["mid"] == 0 for e in mt["tiles"]}
+    assert grass_tiles and max(grass_tiles) < 512  # primary tiles used as they are
+    house = [mt for mt in p["metatiles"] if mt["mid"] >= 512]
+    assert house and any((e & 0x3FF) >= 512 for mt in house for e in mt["tiles"])  # its secondary tiles copied
+
+
+def test_seams_beside_a_hand_made_one(root, tmp_path):
+    proj, m, art, _ = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown",
+                   layout_version="hns")
+    tb.paint(m, "Town", "..HH\n..HH\n" + "....\n" * 6, {".": "grass", "H": "house"}, names)
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["connections"] = [{"map": "MAP_TOWN_HOUSE1", "direction": "up", "offset": 0}]
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    house = json.loads((root / "data/maps/Town_House1/map.json").read_text())
+    house["connections"] = [{"map": "MAP_TOWN", "direction": "down", "offset": 0}]
+    (root / "data/maps/Town_House1/map.json").write_text(json.dumps(house))
+    hand = ('#include "global.h"\n#include "kanto_connection_seam.h"\n\n'
+            "static const struct KantoSeamGlyphRun sHand_GlyphRuns[] = {\n    { sHand_GlyphRun0, 1023, 32 },\n};\n"
+            "static const struct KantoSeamPalette ALIGNED(4) sHand_Palettes[] = {\n    { { 0x0000 }, 192 },\n};\n"
+            "static const struct KantoSeam sKantoSeams[] = {\n"
+            "    { &Town_Layout, sHand_Metatiles, sHand_GlyphRuns, sHand_Palettes, NULL, 1000, 23, 1, 1, 0, 0 },\n"
+            "};\n")
+    (root / "src/kanto_connection_seam.c").write_text(hand)
+    m = DecompProject(root).maps
+    with pytest.raises(DecompError, match="KantoSeam_FindNext"):
+        seams.build(m, "Town")
+    (root / "src/kanto_connection_seam.c").write_text(hand + "// KantoSeam_FindNext\n")
+    m = DecompProject(root).maps
+    assert seams.hand_made(m, "Town_Layout") == {"first": 1000, "count": 23, "tiles": {1023}, "banks": {12}}
+    r = {x["target"]: x for x in seams.build(m, "Town")}
+    header = (root / "src/data/pae_seams.h").read_text()
+    p = seams.plan(m, "Town", ["Town_House1"], seams.hand_made(m, "Town_Layout"))
+    assert p["first"] + len(p["metatiles"]) == 1000  # right below the hand-made range
+    assert 1023 not in p["glyphs"] and 12 not in p["palettes"]
+    assert r["Town"]["sources"] == ["Town_House1"] and f", {p['first']}, " in header
+    c = (root / "src/kanto_connection_seam.c").read_text()
+    assert c.index("&Town_Layout, sHand") < c.index("    PAE_SEAMS\n};")  # pae's entries after the hand-made one
+
+
+def test_ground_that_covers(root, tmp_path):
+    """A metatile on a ground whose art covers it (a barrel on a dock) shows that art under its own."""
+    _, m, art, _ = _scratch(root, tmp_path)
+    boards = np.full((16, 16), 3, np.uint8)
+    barrel = np.zeros((16, 16), np.uint8)
+    barrel[4:12, 4:12] = 5
+    _art(art / "dock.png", [boards, barrel])
+    spec = json.loads((art / "spec.json").read_text())
+    spec["metatiles"] += [{"name": "dock", "tileset": "primary", "image": "dock.png", "x": 0, "ground": "grass"},
+                          {"name": "barrel", "tileset": "primary", "image": "dock.png", "x": 16, "ground": "dock"}]
+    (art / "spec.json").write_text(json.dumps(spec))
+    names = tb.build(m, art / "spec.json")
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown")
+    te = m.tileset_editor
+    dock = te.get_metatile("Town", names["metatiles"]["dock"]["ids"][0])["entries"]
+    barrel_e = te.get_metatile("Town", names["metatiles"]["barrel"]["ids"][0])["entries"]
+    assert barrel_e[:4] == dock[4:]  # the boards, not the grass under them

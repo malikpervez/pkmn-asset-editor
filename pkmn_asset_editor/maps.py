@@ -530,10 +530,14 @@ class MapEditor:
         back = self.OPPOSITE[direction]
         out = []
         for data, other, d, off in ((da, db, direction, offset), (db, da, back, -offset)):
-            conns = [c for c in (data.get("connections") or [])
-                     if not (c.get("map") == other["id"] and c.get("direction") == d)]
+            conns = list(data.get("connections") or [])
             c = {"map": other["id"], "offset": int(off), "direction": d}
-            conns.append(c)
+            at = [i for i, x in enumerate(conns) if x.get("map") == other["id"] and x.get("direction") == d]
+            if at:  # replace it where it is (the map file stays as it was when nothing changed)
+                conns[at[0]] = c
+                conns = [x for i, x in enumerate(conns) if i not in at[1:]]
+            else:
+                conns.append(c)
             data["connections"] = conns
             out.append(c)
         self.save_map(a, da)

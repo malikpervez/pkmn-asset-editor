@@ -10,7 +10,9 @@ strip's blocks are translated to.
 ``src/data/pae_seams.json``) and regenerates ``src/data/pae_seams.h`` from that record, which
 ``kanto_connection_seam.c`` includes (added once).
 
-Free slots: first those the map's tilesets never use. When those run out, palette slots and secondary tiles the map
+A neighbour's palette with the same colours as one the map shows uses the map's own, and when both maps have the
+same primary tileset its tiles are used as they are (only the secondary tiles are copied): maps built from one
+kit need few slots. Free slots: first those the map's tilesets never use. When those run out, palette slots and secondary tiles the map
 never shows are borrowed: the game reloads every palette and the secondary tiles whenever you cross into another map
 (primary tiles are not reloaded when the primary tileset stays, so those are only taken when the tileset doesn't
 use them). "Shown" is the map's blocks, its border and what its scripts put with ``setmetatile``.
@@ -139,17 +141,29 @@ def _spare(maps, name: str, info: dict) -> tuple[list[int], list[int]]:
     return spare_tiles, [b for b in range(13) if b not in banks]
 
 
-def plan(maps, target: str, sources: list[str]) -> dict:
-    """Adapters ``target`` needs to draw the strips of ``sources``."""
+def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> dict:
+    """Adapters ``target`` needs to draw the strips of ``sources``; ``beside``: what a hand-made seam of the map
+    already takes (see ``hand_made``)."""
     used_tiles, used_banks, info = _used(maps, target)
+    if beside:
+        used_tiles = used_tiles | beside["tiles"]
+        used_banks = used_banks | beside["banks"]
     free_tiles = [t for t in range(1023, 0, -1) if t not in used_tiles]
     free_banks = [b for b in range(13) if b not in used_banks]
     spare_tiles, spare_banks = _spare(maps, target, info)
+    if beside:
+        spare_tiles = [t for t in spare_tiles if t not in beside["tiles"]]
+        spare_banks = [b for b in spare_banks if b not in beside["banks"]]
     strict_tiles, strict_banks = set(free_tiles), set(free_banks)
     free_tiles += [t for t in spare_tiles if t not in strict_tiles]
     free_banks += [b for b in spare_banks if b not in strict_banks]
     metas, glyphs = [], {}  # glyph pixels bytes -> slot
     bank_colors: dict[int, list] = {}  # slot -> colours loaded there
+    # the map's own palettes (the banks it shows): a neighbour's palette with the same colours just uses them
+    _, tte, tprim, _, _ = _context(maps, target)
+    tpal = tte.palettes(target)
+    own = {b: list(tpal[b]) for b in sorted(used_banks - set(spare_banks) - (beside["banks"] if beside else set()))
+           if b < len(tpal)}
     for src in sources:
         mids = sorted(strip(maps, target, src))
         if not mids:
@@ -161,6 +175,7 @@ def plan(maps, target: str, sources: list[str]) -> dict:
             arr, _ = ste.read_tiles(side)
             stiles[side.tile_base] = (arr, ste._tile_count(side))
         snpm, snpt, _ = maps.consts(sver)
+        same_primary = sprim.symbol == tprim.symbol and sver == info["version"]
 
         def pixels(t: int) -> np.ndarray:
             base = 0 if t < snpt else snpt
@@ -179,7 +194,7 @@ def plan(maps, target: str, sources: list[str]) -> dict:
         slot_of: dict[int, int] = {}
         for bank in sorted(need, key=lambda b: -len(need[b])):
             cols = spal[bank]
-            for slot, have in bank_colors.items():  # an already loaded palette with the same colours on these indices
+            for slot, have in list(own.items()) + list(bank_colors.items()):  # the same colours on these indices
                 if all(have[i] == cols[i] for i in need[bank]):
                     slot_of[bank] = slot
                     break
@@ -198,6 +213,10 @@ def plan(maps, target: str, sources: list[str]) -> dict:
                 if not px.any():
                     ent.append(0)
                     continue
+                if same_primary and e["tile"] < snpt:  # the same primary tileset: its tiles are loaded already
+                    ent.append(e["tile"] | (int(e["hflip"]) << 10) | (int(e["vflip"]) << 11)
+                               | (slot_of[e["palette"]] << 12))
+                    continue
                 key = px.tobytes()
                 if key not in glyphs:
                     if not free_tiles:
@@ -209,7 +228,7 @@ def plan(maps, target: str, sources: list[str]) -> dict:
                           "attr": int(mt["raw_attr"]), "version": VERSIONS.get(sver, "LAYOUT_VERSION_EMERALD")})
     if not metas:
         return {}
-    first = 1024 - len(metas)
+    first = (beside["first"] if beside else 1024) - len(metas)  # below a hand-made seam's range
     if first < info["metatiles"]:
         raise DecompError(f"{target}: {len(metas)} adapters don't fit above its {info['metatiles']} metatiles")
     return {"target": target, "layout": _layout_symbol(maps, target), "first": first, "metatiles": metas,
@@ -275,7 +294,8 @@ def render_header(plans: list[dict]) -> str:
 
 
 def _hook(maps) -> None:
-    """Include the header in kanto_connection_seam.c and put PAE_SEAMS first in sKantoSeams (once)."""
+    """Include the header in kanto_connection_seam.c and put PAE_SEAMS in sKantoSeams (once): last, so a map's
+    hand-made seam is the first entry the game finds for it."""
     p = maps.root / SEAM_C
     text = p.read_text()
     if "pae_seams.h" in text:
@@ -284,10 +304,47 @@ def _hook(maps) -> None:
         raise DecompError(f"{SEAM_C} has no sKantoSeams table to add pae's seams to")
     text = text.replace('#include "kanto_connection_seam.h"\n', '#include "kanto_connection_seam.h"\n'
                         '#include "data/pae_seams.h"\n', 1)
-    text = text.replace("static const struct KantoSeam sKantoSeams[] = {\n",
-                        "static const struct KantoSeam sKantoSeams[] = {\n    PAE_SEAMS\n", 1)
+    head, rest = text.split("static const struct KantoSeam sKantoSeams[] = {\n", 1)
+    table, tail = rest.split("};", 1)
+    text = head + "static const struct KantoSeam sKantoSeams[] = {\n" + table + "    PAE_SEAMS\n};" + tail
     maps.dp._backup(SEAM_C)
     p.write_text(text)
+
+
+def hand_made(maps, layout: str) -> dict | None:
+    """What a layout's hand-made seam takes: its metatile range, VRAM tile slots and palette slots (pae's adapters
+    for other neighbours go beside it), or None."""
+    p = maps.root / SEAM_C
+    if not p.exists():
+        return None
+    import re
+    text = p.read_text()
+    body = text.split("static const struct KantoSeam sKantoSeams[] = {", 1)
+    if len(body) != 2:
+        return None
+    row = re.search(rf"\{{\s*&{layout}\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\w+)\s*,\s*(\d+)\s*,\s*(\d+)",
+                    body[1].split("};", 1)[0])
+    if not row:
+        return None
+    _, glyphs, pals, anims, first, count = row.groups()
+
+    def array(name):
+        m = re.search(rf"\b{name}\[\]\s*=\s*\{{(.*?)\n\}};", text, re.DOTALL)
+        return m.group(1) if m else ""
+    tiles, banks = set(), set()
+    for dest, size in re.findall(r"\{\s*\w+\s*,\s*(\d+)\s*,\s*(\d+)\s*\}", array(glyphs) if glyphs != "NULL" else ""):
+        tiles |= set(range(int(dest), int(dest) + int(size) // 32))
+    for dest in re.findall(r"\}\s*,\s*(\d+)\s*\}", array(pals) if pals != "NULL" else ""):
+        banks.add(int(dest) // 16)
+    for dest, size in re.findall(r"\{\s*\w+\s*,\s*(\d+)\s*,\s*(\d+)\s*,", array(anims) if anims != "NULL" else ""):
+        tiles |= set(range(int(dest), int(dest) + int(size) // 32))
+    return {"first": int(first), "count": int(count), "tiles": tiles, "banks": banks}
+
+
+def _several_per_layout(maps) -> bool:
+    """Whether the game looks at every seam entry of a layout (needed to add pae's beside a hand-made one)."""
+    p = maps.root / SEAM_C
+    return p.exists() and "KantoSeam_FindNext" in p.read_text()
 
 
 def existing_targets(maps) -> set[str]:
@@ -325,9 +382,14 @@ def build(maps, map_name: str) -> list[dict]:
     hand = existing_targets(maps)
     plans = []
     for t, srcs in record.items():
+        beside = None
         if _layout_symbol(maps, t) in hand:
-            raise DecompError(f"{t} already has a hand-made seam in {SEAM_C}; pae can't add to it yet")
-        p = plan(maps, t, srcs)
+            if not _several_per_layout(maps):
+                raise DecompError(f"{t} already has a hand-made seam in {SEAM_C}, and this game uses one seam per "
+                                  "map (pae's go beside a hand-made one when the game looks at every entry of a "
+                                  "map: KantoSeam_FindNext)")
+            beside = hand_made(maps, _layout_symbol(maps, t))
+        p = plan(maps, t, srcs, beside)
         if p:
             plans.append(p)
     maps.dp._backup(RECORD)
