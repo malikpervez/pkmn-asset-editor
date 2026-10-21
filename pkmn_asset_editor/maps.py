@@ -186,11 +186,45 @@ class MapEditor:
                 return n
         raise DecompError(f"unknown map '{name}'")
 
+    GEOMETRY_FIELDS = ("width", "height", "primary_tileset", "secondary_tileset", "border_filepath",
+                       "blockdata_filepath", "border_width", "border_height", "layout_version")
+
     def layout_of(self, name: str) -> dict:
-        lid = self.get_map(name).get("layout")
+        """The layout the game builds for this map: its layout, with the map's own ``firered_geometry`` (a fork
+        where a map overrides its layout's size, tilesets or block files) applied on top."""
+        data = self.get_map(name)
+        lid = data.get("layout")
         if lid not in self.layouts:
             raise DecompError(f"map {name} uses unknown layout {lid}")
-        return self.layouts[lid]
+        geo = data.get("firered_geometry")
+        if not isinstance(geo, dict):
+            return self.layouts[lid]
+        out = dict(self.layouts[lid])
+        out.update({k: v for k, v in geo.items() if k in self.GEOMETRY_FIELDS})
+        out["_geometry_map"] = self.resolve(name)
+        return out
+
+    def set_geometry(self, name: str, **fields) -> dict:
+        """Change a map's size, tilesets, block files or layout version. A map with its own ``firered_geometry``
+        keeps the change there; otherwise its layout changes (with every map that shares it)."""
+        bad = [k for k in fields if k not in self.GEOMETRY_FIELDS]
+        if bad:
+            raise DecompError(f"unknown geometry field(s): {', '.join(bad)}")
+        for k in ("primary_tileset", "secondary_tileset"):
+            if fields.get(k) and fields[k] not in self.tilesets:
+                raise DecompError(f"unknown tileset {fields[k]} (not in src/data/tilesets/headers.h)")
+        name = self.resolve(name)
+        data = self.get_map(name)
+        if isinstance(data.get("firered_geometry"), dict):
+            data["firered_geometry"].update({k: v for k, v in fields.items() if v is not None})
+            path = self.root / "data" / "maps" / name / "map.json"
+            self.dp._backup(str(path.relative_to(self.root)))
+            _dump(path, data)
+            self.dp._changed = None
+        else:
+            self.layouts[data["layout"]].update({k: v for k, v in fields.items() if v is not None})
+            self._save_layouts()
+        return self.layout_of(name)
 
     def list_maps(self) -> list[dict]:
         return [dict(m) for m in self.maps.values()]
@@ -220,7 +254,8 @@ class MapEditor:
         if not (1 <= width <= 1024 and 1 <= height <= 1024):
             raise DecompError("layouts must be between 1 and 1024 blocks wide/high")
         layout = self.layout_of(name)
-        users = [n for n, m in self.maps.items() if m["layout"] == layout["id"]]
+        users = [layout["_geometry_map"]] if "_geometry_map" in layout else \
+            [n for n, m in self.maps.items() if m["layout"] == layout["id"]]
         old = self.read_blocks(layout)
         if fill is None:
             border = self.read_blocks(layout, "border")
@@ -228,8 +263,7 @@ class MapEditor:
         new = np.full((height, width), fill, dtype=np.int32)
         h, w = min(height, old.shape[0]), min(width, old.shape[1])
         new[:h, :w] = old[:h, :w]
-        layout["width"], layout["height"] = width, height
-        self._save_layouts()
+        self.set_geometry(name, width=width, height=height)
         self.write_blocks(name, new)
         notes = []
         if len(users) > 1:

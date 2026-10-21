@@ -359,7 +359,8 @@ class TilesetEditor:
 
     # ------------------------------------------------------------------ artwork -> metatiles
     def import_image(self, map_name: str, src, base_metatile: int | None = None, bank: int | None = None,
-                     new_palette: bool = False, behavior: int | str = 0, resize_to: tuple[int, int] | None = None) -> dict:
+                     new_palette: bool = False, behavior: int | str = 0, resize_to: tuple[int, int] | None = None,
+                     bases: list[int] | None = None) -> dict:
         """Turn artwork into new tiles + metatiles in the secondary tileset and return a paintable stamp.
 
         * ``bank``: palette to use (default: the one that represents the art best). With ``new_palette`` the
@@ -367,6 +368,8 @@ class TilesetEditor:
         * ``base_metatile``: its bottom layer goes under the art (e.g. grass), so transparent pixels show
           ground; the art goes on the top layer with layer type COVERED (drawn below the player).
           Without a base, the art is the bottom layer of a NORMAL metatile.
+        * ``bases``: a base metatile for each block of the stamp (row by row), e.g. the blocks the art will
+          cover, so edges and paths under it stay as they are; it overrides ``base_metatile``.
         """
         layout = self.maps.layout_of(map_name)
         prim, sec, version = self.sides(layout)
@@ -430,13 +433,18 @@ class TilesetEditor:
             notes.append(f"added {len(new_pixels)} new tile(s) to {sec.symbol}")
         # metatiles
         tw = w // 8
-        if base_metatile is not None:
-            base = self.get_metatile(map_name, base_metatile)["entries"]
-            bottom = [base[i] for i in range(4)]
-            layer_type = 1  # COVERED: both layers below sprites, ground shows through transparent pixels
-        else:
-            bottom = None
-            layer_type = 0
+        if bases is not None and len(bases) != (w // 16) * (h // 16):
+            raise DecompError(f"bases needs {(w // 16) * (h // 16)} metatiles (one per block), got {len(bases)}")
+        bottoms: dict[int, list] = {}
+
+        def bottom_of(mid: int) -> list:
+            if mid not in bottoms:
+                bottoms[mid] = self.get_metatile(map_name, mid)["entries"][:4]
+            return bottoms[mid]
+        if bases is None and base_metatile is not None:
+            bases = [base_metatile] * ((w // 16) * (h // 16))
+        # COVERED: both layers below sprites, ground shows through transparent pixels
+        layer_type = 1 if bases is not None else 0
         blank = self._blank_tile(layout)
         sec_metas = self._read_metas(sec)
         sec_attrs = self._read_attrs(sec, version, len(sec_metas))
@@ -451,7 +459,8 @@ class TilesetEditor:
                     for qx in (0, 1):
                         t, hf, vf = cells[(my * 2 + qy) * tw + mx * 2 + qx]
                         quad.append(t | (hf << 10) | (vf << 11) | (bank << 12))
-                if bottom is not None:
+                if bases is not None:
+                    bottom = bottom_of(bases[my * (w // 16) + mx])
                     row = [e["tile"] | (e["hflip"] << 10) | (e["vflip"] << 11) | (e["palette"] << 12) for e in bottom] + quad
                 else:
                     row = quad + [blank] * 4

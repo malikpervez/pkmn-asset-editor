@@ -1,0 +1,284 @@
+"""Connection seams: neighbouring maps drawn right when they use other tilesets.
+
+When two connected maps use different tilesets, the strip of the neighbour the game shows at a map's edge (7 blocks
+deep) is drawn with *this* map's tiles, which shows garbage. Forks with a ``kanto_connection_seam.c`` (this repo's
+FireRed Kanto/Johto hack) can load extra "adapter" metatiles for that strip: the neighbour's tiles copied into free
+VRAM tile slots, its palettes into free palette slots, and metatiles at the top of the metatile range that the
+strip's blocks are translated to.
+
+``build(maps, map_name)`` records that ``map_name`` and its neighbours need seams for each other (in
+``src/data/pae_seams.json``) and regenerates ``src/data/pae_seams.h`` from that record, which
+``kanto_connection_seam.c`` includes (added once).
+"""
+
+from __future__ import annotations
+
+import json
+
+import numpy as np
+
+from .decomp import DecompError
+
+DEPTH = 7  # MAP_OFFSET: how far into a neighbour the game draws
+RECORD = "src/data/pae_seams.json"
+HEADER = "src/data/pae_seams.h"
+SEAM_C = "src/kanto_connection_seam.c"
+VERSIONS = {"emerald": "LAYOUT_VERSION_EMERALD", "frlg": "LAYOUT_VERSION_FRLG", "hns": "LAYOUT_VERSION_HNS"}
+
+
+def _layout_symbol(maps, name: str) -> str:
+    """The MapLayout the game uses for this map (a map with its own geometry gets <Map>_FireRedGeometry)."""
+    data = maps.get_map(name)
+    if isinstance(data.get("firered_geometry"), dict):
+        return f"{name}_FireRedGeometry"
+    return maps.layouts[data["layout"]]["name"]
+
+
+def _context(maps, name: str):
+    lay = maps.layout_of(name)
+    te = maps.tileset_editor
+    prim, sec, version = te.sides(lay)
+    return lay, te, prim, sec, version
+
+
+def _same_tilesets(a: dict, b: dict) -> bool:
+    return (a["primary_tileset"], a["secondary_tileset"], a.get("layout_version", "emerald")) == \
+        (b["primary_tileset"], b["secondary_tileset"], b.get("layout_version", "emerald"))
+
+
+def strip(maps, target: str, source: str) -> set[int]:
+    """Metatile ids of ``source`` in the strip ``target`` shows of it (empty if they aren't connected)."""
+    tl, sl = maps.layout_of(target), maps.layout_of(source)
+    blocks = maps.read_blocks(sl) & 0x3FF
+    sid = maps.get_map(source)["id"]
+    out: set[int] = set()
+    for c in maps.get_map(target).get("connections") or []:
+        if c.get("map") != sid:
+            continue
+        d, off = c["direction"], int(c.get("offset", 0))
+        sh, sw = blocks.shape
+        if d in ("up", "down"):
+            xs = [x - off for x in range(-DEPTH, tl["width"] + DEPTH + 1) if 0 <= x - off < sw]
+            ys = range(sh - DEPTH, sh) if d == "up" else range(0, DEPTH)
+        elif d in ("left", "right"):
+            ys = [y - off for y in range(-DEPTH, tl["height"] + DEPTH + 1) if 0 <= y - off < sh]
+            xs = range(sw - DEPTH, sw) if d == "left" else range(0, DEPTH)
+        else:
+            continue
+        for y in ys:
+            for x in xs:
+                if 0 <= y < sh and 0 <= x < sw:
+                    out.add(int(blocks[y, x]))
+    return out
+
+
+def _used(maps, name: str) -> tuple[set[int], set[int], dict]:
+    """(tile slots, palette banks) the map's own tilesets use, and info."""
+    lay, te, prim, sec, version = _context(maps, name)
+    npm, npt, npp = maps.consts(version)
+    tiles = set(range(0, te._tile_count(prim))) | set(range(npt, npt + te._tile_count(sec)))
+    tiles |= set(range(434, 450)) | set(range(1008, 1024))  # door animation slots (HnS, and FRLG/Emerald)
+    tiles.add(0)
+    banks = set()
+    for side in (prim, sec):
+        for row in te._read_metas(side):
+            for v in row:
+                banks.add(int(v) >> 12)
+    return tiles, banks, {"npm": npm, "npt": npt, "npp": npp, "version": version,
+                          "metatiles": sec.metatile_base + len(te._read_metas(sec))}
+
+
+def plan(maps, target: str, sources: list[str]) -> dict:
+    """Adapters ``target`` needs to draw the strips of ``sources``."""
+    used_tiles, used_banks, info = _used(maps, target)
+    free_tiles = [t for t in range(1023, 0, -1) if t not in used_tiles]
+    free_banks = [b for b in range(13) if b not in used_banks]
+    metas, glyphs = [], {}  # glyph pixels bytes -> slot
+    bank_colors: dict[int, list] = {}  # slot -> colours loaded there
+    for src in sources:
+        mids = sorted(strip(maps, target, src))
+        if not mids:
+            continue
+        slay, ste, sprim, ssec, sver = _context(maps, src)
+        spal = ste.palettes(src)
+        stiles = {}
+        for side in (sprim, ssec):
+            arr, _ = ste.read_tiles(side)
+            stiles[side.tile_base] = (arr, ste._tile_count(side))
+        snpm, snpt, _ = maps.consts(sver)
+
+        def pixels(t: int) -> np.ndarray:
+            base = 0 if t < snpt else snpt
+            arr, n = stiles[base]
+            return arr[t - base] if t - base < min(n, len(arr)) else np.zeros((8, 8), np.uint8)
+        # which colour indices each bank needs, to share palette slots where the colours agree
+        need: dict[int, set[int]] = {}
+        rows = {}
+        for mid in mids:
+            mt = ste.get_metatile(src, mid)
+            rows[mid] = mt
+            for e in mt["entries"]:
+                px = pixels(e["tile"])
+                if px.any():
+                    need.setdefault(e["palette"], set()).update(int(v) for v in np.unique(px) if v)
+        slot_of: dict[int, int] = {}
+        for bank in sorted(need, key=lambda b: -len(need[b])):
+            cols = spal[bank]
+            for slot, have in bank_colors.items():  # an already loaded palette with the same colours on these indices
+                if all(have[i] == cols[i] for i in need[bank]):
+                    slot_of[bank] = slot
+                    break
+            else:
+                if not free_banks:
+                    raise DecompError(f"{target}: no free palette slot left for {src}'s palette {bank} "
+                                      f"(the strip needs {len(need)} palettes)")
+                slot = free_banks.pop(0)
+                bank_colors[slot] = list(cols)
+                slot_of[bank] = slot
+        for mid in mids:
+            mt = rows[mid]
+            ent = []
+            for e in mt["entries"]:
+                px = pixels(e["tile"])
+                if not px.any():
+                    ent.append(0)
+                    continue
+                key = px.tobytes()
+                if key not in glyphs:
+                    if not free_tiles:
+                        raise DecompError(f"{target}: no free tile slot left for {src}'s strip")
+                    glyphs[key] = free_tiles.pop(0)
+                ent.append(glyphs[key] | (int(e["hflip"]) << 10) | (int(e["vflip"]) << 11)
+                           | (slot_of[e["palette"]] << 12))
+            metas.append({"source": src, "source_layout": _layout_symbol(maps, src), "mid": mid, "tiles": ent,
+                          "attr": int(mt["raw_attr"]), "version": VERSIONS.get(sver, "LAYOUT_VERSION_EMERALD")})
+    if not metas:
+        return {}
+    first = 1024 - len(metas)
+    if first < info["metatiles"]:
+        raise DecompError(f"{target}: {len(metas)} adapters don't fit above its {info['metatiles']} metatiles")
+    return {"target": target, "layout": _layout_symbol(maps, target), "first": first, "metatiles": metas,
+            "glyphs": {slot: np.frombuffer(k, np.uint8).reshape(8, 8) for k, slot in glyphs.items()},
+            "palettes": bank_colors}
+
+
+def _c_glyphs(prefix: str, glyphs: dict) -> tuple[str, int]:
+    slots = sorted(glyphs)
+    runs, cur = [], []
+    for s in slots:
+        if cur and s != cur[-1] + 1:
+            runs.append(cur)
+            cur = []
+        cur.append(s)
+    if cur:
+        runs.append(cur)
+    out = []
+    for i, run in enumerate(runs):
+        words = []
+        for s in run:
+            px = glyphs[s]
+            data = (px[:, 0::2] | (px[:, 1::2] << 4)).astype(np.uint8).tobytes()
+            words += [int.from_bytes(data[j:j + 2], "little") for j in range(0, 32, 2)]
+        out.append(f"static const u16 ALIGNED(4) {prefix}_GlyphRun{i}[] = {{ "
+                   + ", ".join(f"0x{w:04X}" for w in words) + " };\n")
+    out.append(f"static const struct KantoSeamGlyphRun {prefix}_GlyphRuns[] = {{\n"
+               + "".join(f"    {{ {prefix}_GlyphRun{i}, {run[0]}, {len(run) * 32} }},\n" for i, run in enumerate(runs))
+               + "};\n")
+    return "".join(out), len(runs)
+
+
+def render_header(plans: list[dict]) -> str:
+    out = ["// Generated by pae (`pae seam build`) from src/data/pae_seams.json: adapter metatiles for connection",
+           "// strips across different tilesets. Do not edit by hand.", "#ifndef GUARD_PAE_SEAMS_H",
+           "#define GUARD_PAE_SEAMS_H", ""]
+    layouts = sorted({p["layout"] for p in plans} | {m["source_layout"] for p in plans for m in p["metatiles"]})
+    out += [f"extern const struct MapLayout {s};" for s in layouts] + [""]
+    entries = []
+    for p in plans:
+        pre = f"sPaeSeam_{p['target']}"
+        out.append(f"static const struct KantoSeamMetatile {pre}_Metatiles[] = {{")
+        for m in p["metatiles"]:
+            out.append(f"    {{ .sourceLayout = &{m['source_layout']}, .attributes = 0x{m['attr']:08X}u, "
+                       f".sourceMid = {m['mid']}, .tiles = {{ " + ", ".join(f"0x{t:04X}" for t in m["tiles"])
+                       + f" }}, .layoutVersion = {m['version']} }},")
+        out.append("};")
+        g, nruns = _c_glyphs(pre, p["glyphs"])
+        out.append(g)
+        out.append(f"static const struct KantoSeamPalette ALIGNED(4) {pre}_Palettes[] = {{")
+        for slot, cols in sorted(p["palettes"].items()):
+            c555 = [(r >> 3) | ((g_ >> 3) << 5) | ((b >> 3) << 10) for r, g_, b in cols]
+            out.append("    { { " + ", ".join(f"0x{c:04X}" for c in c555) + f" }}, {slot * 16} }},")
+        out.append("};\n")
+        entries.append(f"{{ &{p['layout']}, {pre}_Metatiles, {pre}_GlyphRuns, {pre}_Palettes, NULL, {p['first']}, "
+                       f"{len(p['metatiles'])}, {nruns}, {len(p['palettes'])}, 0, 0 }},")
+    out.append("#define PAE_SEAMS \\")
+    out += [f"    {e} \\" for e in entries]
+    out += ["", "#endif // GUARD_PAE_SEAMS_H", ""]
+    return "\n".join(out)
+
+
+def _hook(maps) -> None:
+    """Include the header in kanto_connection_seam.c and put PAE_SEAMS first in sKantoSeams (once)."""
+    p = maps.root / SEAM_C
+    text = p.read_text()
+    if "pae_seams.h" in text:
+        return
+    if "static const struct KantoSeam sKantoSeams[] = {" not in text:
+        raise DecompError(f"{SEAM_C} has no sKantoSeams table to add pae's seams to")
+    text = text.replace('#include "kanto_connection_seam.h"\n', '#include "kanto_connection_seam.h"\n'
+                        '#include "data/pae_seams.h"\n', 1)
+    text = text.replace("static const struct KantoSeam sKantoSeams[] = {\n",
+                        "static const struct KantoSeam sKantoSeams[] = {\n    PAE_SEAMS\n", 1)
+    maps.dp._backup(SEAM_C)
+    p.write_text(text)
+
+
+def existing_targets(maps) -> set[str]:
+    """Layout symbols that already have a hand-made seam (pae won't replace those)."""
+    p = maps.root / SEAM_C
+    if not p.exists():
+        return set()
+    import re
+    body = p.read_text().split("static const struct KantoSeam sKantoSeams[] = {", 1)
+    return set(re.findall(r"\{\s*&(\w+)\s*,", body[1].split("};", 1)[0])) if len(body) == 2 else set()
+
+
+def build(maps, map_name: str) -> list[dict]:
+    """Record seams between ``map_name`` and each neighbour with other tilesets, then regenerate the header."""
+    if not (maps.root / SEAM_C).exists():
+        raise DecompError(f"this game has no {SEAM_C} (connection seams are a feature of that fork)")
+    name = maps.resolve(map_name)
+    rec_path = maps.root / RECORD
+    record = json.loads(rec_path.read_text()) if rec_path.exists() else {}
+    lay = maps.layout_of(name)
+    for c in maps.get_map(name).get("connections") or []:
+        other = maps.map_by_id.get(c.get("map"))
+        if other is None or c.get("direction") not in ("up", "down", "left", "right"):
+            continue
+        if _same_tilesets(lay, maps.layout_of(other)):
+            continue
+        for t, s in ((name, other), (other, name)):
+            record.setdefault(t, [])
+            if s not in record[t]:
+                record[t].append(s)
+    # drop pairs that share tilesets now
+    record = {t: [s for s in srcs if not _same_tilesets(maps.layout_of(t), maps.layout_of(s))]
+              for t, srcs in record.items()}
+    record = {t: s for t, s in sorted(record.items()) if s}
+    hand = existing_targets(maps)
+    plans = []
+    for t, srcs in record.items():
+        if _layout_symbol(maps, t) in hand:
+            raise DecompError(f"{t} already has a hand-made seam in {SEAM_C}; pae can't add to it yet")
+        p = plan(maps, t, srcs)
+        if p:
+            plans.append(p)
+    maps.dp._backup(RECORD)
+    rec_path.write_text(json.dumps(record, indent=1) + "\n")
+    maps.dp._backup(HEADER)
+    (maps.root / HEADER).write_text(render_header(plans))
+    _hook(maps)
+    maps.dp._changed = None
+    return [{"target": p["target"], "adapters": len(p["metatiles"]), "glyphs": len(p["glyphs"]),
+             "palettes": sorted(p["palettes"]), "sources": sorted({m["source"] for m in p["metatiles"]})}
+            for p in plans]

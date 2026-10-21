@@ -187,6 +187,37 @@ make a town a **fly spot** (where you land, and the flag that unlocks it).
 
 ![The town map with Petalburg City selected and where you land when you fly there](docs/images/town-map.png)
 
+### A map from scratch: your own tiles
+
+You can draw a whole map's look yourself, with no tiles from the base game: new tilesets built from your
+artwork, the map painted from a text grid, and the pieces the game needs around them made for you.
+
+```
+pae tileset new gTileset_MyTown_General --primary     # empty tilesets, registered in the source
+pae tileset new gTileset_MyTown --secondary
+pae tileset spec                                      # the build spec format
+pae tileset build art/spec.json                       # artwork -> tiles, palettes, metatiles (+ names.json)
+pae map geometry MyTown --primary gTileset_MyTown_General --secondary gTileset_MyTown \
+    --blockdata data/layouts/MyTown_New/map.bin --border data/layouts/MyTown_New/border.bin
+pae map paint MyTown art/grid.txt art/legend.json --names art/names.json --border art/border.txt
+pae door add MyTown 6 7 --panel 3,0,13,14             # the door you drew opens (its panel slides up)
+pae seam build MyTown                                 # neighbours with other tilesets drawn right (see below)
+```
+
+* **The spec** lists your metatiles: a block (or a several-block *stamp*, like a house) of an image, its
+  behaviour, whether it's solid, which blocks stay walkable (a door), a ground metatile under transparent pixels,
+  rows drawn over the player, and the palettes it may use (for each row, too). Identical tiles (also flipped
+  ones) are stored once; you choose the palettes, so the colours stay exactly yours.
+* **The grid** has one character per block; the legend says what each one is. A stamp's character fills its
+  whole rectangle. `{"auto": "path"}` picks edge variants (`path#0`…`path#15`, by which neighbours are path too)
+  and `{"pick": [...]}` spreads variants like grass.
+* **Seams** (forks with `kanto_connection_seam.c`, like the FireRed Kanto/Johto hack): when two connected maps use
+  different tilesets, the strip of the neighbour the game shows at the edge would be drawn with the wrong tiles.
+  `pae seam build` copies the neighbour's tiles and palettes into free slots, both ways, so each map sees the
+  other right. A strip has to fit the palette slots its viewer has free; it tells you when it doesn't.
+* **Maps with their own geometry** (`firered_geometry` in `map.json`, in that hack): pae shows and edits what the
+  game builds, and `pae map geometry` changes it there.
+
 ### Test in game, from anywhere in the story
 
 **▶ Test in game** builds your game and plays it in the page, starting at the
@@ -737,7 +768,9 @@ sheet of the results, then run `pae check`."*
 | `pae sync-palettes [ID…]` | recolour PNGs after editing `.pal` files |
 | `pae sheet PREFIX -o FILE` / `pae render ID -o FILE` | previews |
 | `pae status` / `pae revert ID… / --all` | what you changed / restore originals |
-| `pae map list / render / metatiles / events / new / link / tiles / import-art` | maps, events and warps |
+| `pae map list / render / metatiles / events / new / link / tiles / import-art / geometry / paint` | maps, events, warps, size, tilesets and blocks |
+| `pae tileset new SYMBOL --primary\|--secondary / build SPEC / spec` | tilesets from scratch |
+| `pae seam build MAP` · `pae door add MAP X Y --panel x0,y0,x1,y1` | connection strips across tilesets · door animations |
 | `pae text check [MAP] / preview MAP LABEL -o PNG` | dialogue in the game's font |
 | `pae trainer list [Q] / show ID / set ID --mon … --field Key=Value` | trainer teams |
 | `pae wild show MAP / set MAP KIND SLOT… [--rate N]` | wild Pokémon (`land`, `water`, `rock_smash`, `fishing`) |
