@@ -296,6 +296,21 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--group")
     q.add_argument("--share-layout", action="store_true", help="reuse the source's blocks instead of copying them")
     q.add_argument("--id", help="map id constant (default derived from the name)")
+    q = with_project(msub.add_parser("paint", help="fill a map's blocks from a text grid (one character per block)"))
+    q.add_argument("name")
+    q.add_argument("grid", help="text file: one character per block")
+    q.add_argument("legend", help="JSON: character -> metatile name, or {name, solid, elevation}")
+    q.add_argument("--names", required=True, help="names.json written by `pae tileset build`")
+    q.add_argument("--border", help="text grid for the border blocks")
+    q = with_project(msub.add_parser("geometry", help="show or change a map's size, tilesets and block files"))
+    q.add_argument("name")
+    for k in ("primary", "secondary"):
+        q.add_argument(f"--{k}", help=f"{k} tileset (gTileset_X)")
+    q.add_argument("--blockdata", help="block file (data/layouts/X/map.bin); created if missing")
+    q.add_argument("--border", help="border file (data/layouts/X/border.bin); created if missing")
+    q.add_argument("--version", choices=["emerald", "frlg", "hns"], help="layout version (metatile format, doors)")
+    q.add_argument("--width", type=int)
+    q.add_argument("--height", type=int)
     q = with_project(msub.add_parser("tiles", help="tileset info for a map (metatile/tile counts and limits)"))
     q.add_argument("name")
     q = with_project(msub.add_parser("import-art", help="turn artwork into new metatiles (and optionally place it on the map)"))
@@ -314,6 +329,31 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("dest_map")
     q.add_argument("dest_warp", type=int)
 
+    p = sub.add_parser("tileset", help="source tree: make tilesets from scratch (new, build from artwork)")
+    tsub2 = p.add_subparsers(dest="tileset_cmd", required=True)
+    q = with_project(tsub2.add_parser("new", help="add an empty tileset (files + its entries in the source)"))
+    q.add_argument("symbol", help="gTileset_Name")
+    g = q.add_mutually_exclusive_group(required=True)
+    g.add_argument("--primary", action="store_true")
+    g.add_argument("--secondary", action="store_true")
+    q.add_argument("--dir", help="folder (default data/tilesets/primary|secondary/<name>)")
+    q = with_project(tsub2.add_parser("build", help="build tilesets from block artwork as a spec says "
+                                                     "(`pae tileset spec` shows the format)"))
+    q.add_argument("spec")
+    with_project(tsub2.add_parser("spec", help="show the build spec format"))
+    p = sub.add_parser("seam", help="source tree: draw neighbouring maps right across different tilesets "
+                                     "(connection seams; this fork's kanto_connection_seam.c)")
+    ssub2 = p.add_subparsers(dest="seam_cmd", required=True)
+    q = with_project(ssub2.add_parser("build", help="adapters between a map and each neighbour with other tilesets"))
+    q.add_argument("name")
+    p = sub.add_parser("door", help="source tree: door animations for doors you drew")
+    dsub = p.add_subparsers(dest="door_cmd", required=True)
+    q = with_project(dsub.add_parser("add", help="animate the door at X,Y of a map (its panel slides up)"))
+    q.add_argument("name")
+    q.add_argument("x", type=int)
+    q.add_argument("y", type=int)
+    q.add_argument("--panel", required=True, help="the door panel inside the 16x16 block: x0,y0,x1,y1 (pixels)")
+    q.add_argument("--sound", choices=["normal", "sliding"], default="normal")
     p = sub.add_parser("anim", help="source tree: tileset animations - water, flowers, waterfalls… (see `pae anim -h`)")
     asub = p.add_subparsers(dest="anim_cmd", required=True)
     q = with_project(asub.add_parser("list", help="list tileset animations (all, or those a map shows)"))
@@ -874,6 +914,38 @@ def _run(args) -> int:
             for n in m.duplicate_map(args.source, args.new_name, args.group, not args.share_layout, args.id):
                 print(f"note: {n}")
             print(f"created {args.new_name} ({m.get_map(args.new_name)['id']})")
+        elif args.map_cmd == "paint":
+            from .tilesetbuild import paint
+            names = json.loads(Path(args.names).read_text())
+            legend = json.loads(Path(args.legend).read_text())
+            b = paint(m, args.name, Path(args.grid).read_text(), legend, names)
+            print(f"painted {args.name}: {b.shape[1]}x{b.shape[0]} blocks, {len(set((b & 0x3FF).ravel()))} metatiles")
+            if args.border:
+                bb = paint(m, args.name, Path(args.border).read_text(), legend, names, which="border")
+                print(f"border: {bb.shape[1]}x{bb.shape[0]}")
+        elif args.map_cmd == "geometry":
+            lay = m.layout_of(args.name)
+            fields = {"primary_tileset": args.primary, "secondary_tileset": args.secondary,
+                      "blockdata_filepath": args.blockdata, "border_filepath": args.border,
+                      "layout_version": args.version}
+            fields = {k: v for k, v in fields.items() if v}
+            for key in ("blockdata_filepath", "border_filepath"):
+                if key in fields and not (proj.root / fields[key]).exists():
+                    w, h = (lay["width"], lay["height"]) if key == "blockdata_filepath" else \
+                        (lay.get("border_width", 2), lay.get("border_height", 2))
+                    (proj.root / fields[key]).parent.mkdir(parents=True, exist_ok=True)
+                    (proj.root / fields[key]).write_bytes(open(proj.root / lay[key], "rb").read()[: w * h * 2])
+            if fields:
+                lay = m.set_geometry(args.name, **fields)
+            if args.width or args.height:
+                for n in m.resize(args.name, args.width or lay["width"], args.height or lay["height"]):
+                    print(f"note: {n}")
+                lay = m.layout_of(args.name)
+            for k in m.GEOMETRY_FIELDS:
+                if k in lay:
+                    print(f"{k}: {lay[k]}")
+            print("kept in: " + (f"data/maps/{lay['_geometry_map']}/map.json (firered_geometry)"
+                                 if "_geometry_map" in lay else f"layout {lay['id']}"))
         elif args.map_cmd == "tiles":
             print(json.dumps(m.tileset_editor.info(args.name), indent=2))
         elif args.map_cmd == "import-art":
@@ -1278,6 +1350,45 @@ def _run(args) -> int:
         elif c == "add":
             i = st.add_chapter(args.name, args.at - 1 if args.at else None, args.flag)
             print(f"added chapter {i + 1}: {args.name}")
+        return 0
+    if args.cmd == "door":
+        from . import doors
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("doors need a pokeemerald-style source tree")
+        panel = tuple(int(v) for v in args.panel.split(","))
+        if len(panel) != 4:
+            raise ProjectError("--panel is x0,y0,x1,y1")
+        r = doors.add(m, args.name, args.x, args.y, panel, args.sound)
+        print(f"door metatile 0x{r['metatile']:03X} of {r['tileset']} animates (palettes {r['banks']}); "
+              f"wrote {doors.HEADER}")
+        return 0
+    if args.cmd == "seam":
+        from . import seams
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("seams need a pokeemerald-style source tree")
+        for r in seams.build(m, args.name):
+            print(f"{r['target']}: {r['adapters']} adapter metatiles for {', '.join(r['sources'])}; "
+                  f"{r['glyphs']} tiles, palette slot(s) {', '.join(map(str, r['palettes']))}")
+        print(f"wrote {seams.HEADER} (from {seams.RECORD})")
+        return 0
+    if args.cmd == "tileset":
+        from . import tilesetbuild as tb
+        if args.tileset_cmd == "spec":
+            print(tb.BUILD_SPEC)
+            return 0
+        m = getattr(proj, "maps", None)
+        if m is None:
+            raise ProjectError("tilesets need a pokeemerald-style source tree")
+        if args.tileset_cmd == "new":
+            r = tb.new_tileset(proj, args.symbol, args.secondary, args.dir)
+            print(f"created {r['symbol']} in {r['folder']}")
+            return 0
+        r = tb.build(m, args.spec)
+        for k, sym in r["tilesets"].items():
+            print(f"{sym}: {r['tiles'][k]} tiles, {r['metatile_counts'][k]} metatiles")
+        print(f"names: {Path(args.spec).parent / 'names.json'}")
         return 0
     if args.cmd == "anim":
         m = getattr(proj, "maps", None)
