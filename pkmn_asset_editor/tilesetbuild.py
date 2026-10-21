@@ -33,7 +33,8 @@ BUILD_SPEC = """\
      "frames": ["water_f1.png", "water_f2.png"], "speed": 16}],  // game frames per animation frame
   "field_effects": {                        // the tall grass drawn over the player's feet on this tileset's maps:
     "tall_grass": {"image": "grass_fx.png", //  five 16x16 frames side by side (as the game's), in the colours
-                   "bank": 0, "tileset": "primary"}},  //  of one bank (usually the grass tiles' own)
+                   "bank": 0, "tileset": "primary",  //  of one bank (usually the grass tiles' own); grass with
+                   "metatiles": {"flowery_grass": "flowery_fx.png"}}},  //  its own sprite: by metatile name
   "metatiles": [
     {"name": "grass", "tileset": "primary", "image": "ground.png", "x": 0, "y": 0, "behavior": "MB_NORMAL"},
     {"name": "house", "tileset": "secondary", "image": "house.png", "x": 0, "y": 0, "w": 5, "h": 4,
@@ -50,7 +51,7 @@ too: 1 north, 2 east, 4 south, 8 west) and use {"auto": "path"} in the legend; {
 variants of a piece, spread by position; "path#15.1" is the piece for an inside corner, the diagonal neighbour not
 path while both sides are (1 NE, 2 SE, 4 SW, 8 NW), used when drawn; a piece may be a stamp, e.g. 2x2 trees
 "forest#0".."forest#15", and then its neighbours are the cells of its size); {"pick": ["grass", "grass2"]}
-spreads variants; {"tile": "forest"} repeats a stamp as a pattern (block x, y shows its piece x mod w, y mod h)."""
+spreads variants (with "order": "checker", staggered); {"tile": "forest"} repeats a stamp as a pattern (block x, y shows its piece x mod w, y mod h)."""
 
 
 def _snake(symbol: str) -> str:
@@ -368,7 +369,7 @@ def build(maps, spec_path) -> dict:
                 write_jasc(maps.root / rel, cols)
     anim_out = [_write_animation(maps, a, sides, version, pals) for a in anims]
     for effect, fx in spec.get("field_effects", {}).items():
-        _write_field_effect(maps, effect, fx, sides, pals, image)
+        _write_field_effect(maps, effect, fx, sides, pals, image, names)
     out = {"version": version, "tilesets": {k: v.symbol for k, v in sides.items()}, "metatiles": names,
            "tiles": {k: len(tiles[k].pixels) for k in sides}, "metatile_counts": {k: len(metas[k]) for k in sides}}
     if anim_out:
@@ -378,7 +379,7 @@ def build(maps, spec_path) -> dict:
     return out
 
 
-def _write_field_effect(maps, effect: str, fx: dict, sides: dict, pals: dict, image) -> None:
+def _write_field_effect(maps, effect: str, fx: dict, sides: dict, pals: dict, image, names: dict) -> None:
     from . import fieldeffects
     if effect != "tall_grass":
         raise DecompError(f"unknown field effect {effect} (pae draws: tall_grass)")
@@ -396,7 +397,23 @@ def _write_field_effect(maps, effect: str, fx: dict, sides: dict, pals: dict, im
     d = ((rgba[..., :3].astype(np.int32)[..., None, :] - pal[None, None]) ** 2).sum(-1)
     idx = np.where(rgba[..., 3] >= 128, d.argmin(-1) + 1, 0).astype(np.uint8)
     frames = [idx[:, 16 * k:16 * k + 16] for k in range(fieldeffects.FRAMES)]
-    fieldeffects.set_tall_grass(maps, sides[side].symbol, frames, pals[bank])
+    by_metatile = {}
+    for name, img in fx.get("metatiles", {}).items():  # grass with a sprite of its own
+        if name not in names:
+            raise DecompError(f"field effect {effect}: no metatile {name} in the spec")
+        own = _fx_frames(image(img), pal, effect, img)
+        for mid in names[name]["ids"]:
+            by_metatile[mid] = own
+    fieldeffects.set_tall_grass(maps, sides[side].symbol, frames, pals[bank], by_metatile)
+
+
+def _fx_frames(rgba, pal, effect, img) -> list:
+    from . import fieldeffects
+    if rgba.shape[:2] != (16, 16 * fieldeffects.FRAMES):
+        raise DecompError(f"field effect {effect}: {img} must be {16 * fieldeffects.FRAMES}x16")
+    d = ((rgba[..., :3].astype(np.int32)[..., None, :] - pal[None, None]) ** 2).sum(-1)
+    idx = np.where(rgba[..., 3] >= 128, d.argmin(-1) + 1, 0).astype(np.uint8)
+    return [idx[:, 16 * k:16 * k + 16] for k in range(fieldeffects.FRAMES)]
 
 
 def _write_animation(maps, a: dict, sides: dict, version: str, pals: dict) -> dict:
@@ -504,8 +521,10 @@ def paint(maps, map_name: str, grid: str, legend: dict, names: dict, which: str 
                 # variants "name~1", "name~2"... are spread by position, like "pick"
                 variants = [name] + [f"{name}~{k}" for k in range(1, 64) if f"{name}~{k}" in meta]
                 item["name"] = variants[(x * 7919 + y * 104729 + (x * y) % 13) % len(variants)]
-            elif "pick" in item:  # a variant chosen by position (the same every time)
-                item["name"] = item["pick"][(x * 7919 + y * 104729 + (x * y) % 13) % len(item["pick"])]
+            elif "pick" in item:  # a variant chosen by position (the same every time), or staggered
+                n = len(item["pick"])
+                k = (x + y) % n if item.get("order") == "checker" else (x * 7919 + y * 104729 + (x * y) % 13) % n
+                item["name"] = item["pick"][k]
             elif "tile" in item:  # a stamp repeated as a pattern: each block shows the piece at its position
                 item["name"] = item["tile"]
             m = meta.get(item["name"])

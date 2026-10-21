@@ -352,16 +352,43 @@ def test_tall_grass_effect(root, tmp_path):
     f0 = np.array(rec[0]["frames"][0])
     assert (f0[8:] == 2).all() and (f0[:8] == 0).all() and rec[0]["frames"][1][3][4] == 5
     header = (root / "src/data/pae_field_effects.h").read_text()
-    assert "sPaeTallGrassPic_0[640]" in header and "{ &gTileset_NewGeneral, sPaeTallGrassFrames_0" in header
+    assert "sPaeTallGrassPic_0[640]" in header
+    assert "{ &gTileset_NewGeneral, PAE_TALL_GRASS_ANY, sPaeTallGrassFrames_0, &sPaeTallGrassPalette_0 }" in header
     assert "0x1040" in header and "PaeTallGrassTemplate" in header
     c = (root / "src/field_effect_helpers.c").read_text()
     assert c.count('#include "data/pae_field_effects.h"') == 1
-    assert "template = PaeTallGrassTemplate(gFieldEffectObjectTemplatePointers[FLDEFFOBJ_TALL_GRASS]);" in c
+    assert "template = PaeTallGrassTemplate(gFieldEffectObjectTemplatePointers[FLDEFFOBJ_TALL_GRASS], x, y);" in c
+    # a grass block with a sprite of its own: found before the tileset's
+    fx2 = fx.copy()
+    fx2[8:, :16] = (*PAL[3], 255)
+    Image.fromarray(fx2, "RGBA").save(art / "grass_fx2.png")
+    spec["field_effects"]["tall_grass"]["metatiles"] = {"path#15": "grass_fx2.png"}
+    (art / "spec.json").write_text(json.dumps(spec))
+    tb.build(m, art / "spec.json")
+    rec = json.loads((root / "src/data/pae_field_effects.json").read_text())
+    assert list(rec[0]["by_metatile"]) == ["1"] and rec[0]["by_metatile"]["1"][0][15][0] == 3
+    header = (root / "src/data/pae_field_effects.h").read_text()
+    assert header.index("{ &gTileset_NewGeneral, 1, sPaeTallGrassFrames_0_1") < header.index("PAE_TALL_GRASS_ANY, sPaeT")
+    assert "MapGridGetMetatileIdAt(x, y)" in header
+    # an older hook (no place) is brought up to date
+    (root / "src/field_effect_helpers.c").write_text(c.replace(", x, y);", ");"))
+    tb.build(m, art / "spec.json")
+    assert "FLDEFFOBJ_TALL_GRASS], x, y);" in (root / "src/field_effect_helpers.c").read_text()
+    del spec["field_effects"]["tall_grass"]["metatiles"]
     assert c.index('"constants/songs.h"') < c.index("pae_field_effects.h")
     spec["field_effects"]["tall_grass"]["image"] = "house.png"
     (art / "spec.json").write_text(json.dumps(spec))
     with pytest.raises(DecompError, match="80x16"):
         tb.build(m, art / "spec.json")
+
+
+def test_paint_pick_checker(root, tmp_path):
+    _, m, art, _ = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown")
+    b = tb.paint(m, "Town", "....\n" * 8, {".": {"pick": ["grass", "path#15"], "order": "checker"}}, names)
+    g, p = names["metatiles"]["grass"]["ids"][0], names["metatiles"]["path#15"]["ids"][0]
+    assert [[int(v) & 0x3FF for v in r] for r in b[:2]] == [[g, p, g, p], [p, g, p, g]]
 
 
 def test_paint_joins_with(root, tmp_path):

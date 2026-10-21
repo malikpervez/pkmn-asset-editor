@@ -224,7 +224,9 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
 * **Tall grass**: the game draws a sprite over the player's feet in tall grass, FRLG's own. Give the spec
   `"field_effects": {"tall_grass": {"image": "grass_fx.png", "bank": 0}}` (five 16x16 frames, as the game's) and
   maps on that tileset use yours, so it blends into the grass you drew (generated into
-  `src/data/pae_field_effects.h`, asked for once in `FldEff_TallGrass`).
+  `src/data/pae_field_effects.h`, asked for once in `FldEff_TallGrass`). Several kinds of grass in one tileset can
+  each have their own (`"metatiles": {"flowery_grass": "flowery_fx.png"}`): the block under the player picks it.
+  `{"pick": ["grass_a", "grass_b"], "order": "checker"}` in the legend staggers two kinds in a field.
 * **One kit for many maps**: maps that share a primary tileset (built the same in every map's spec, then each
   map's own secondary) can use each other's tiles at the joins; their seams copy only the secondary tiles and use
   the map's own palettes where the colours agree.
