@@ -4,6 +4,7 @@ The game animates a door only when its metatile is in the door table of ``src/fi
 frames. ``add(maps, map_name, x, y, panel)`` makes those frames from the closed door on the map: the door panel (a
 pixel box inside the 16x16 block) slides up and shows the dark doorway, in three steps. Doors are recorded in
 ``src/data/pae_doors.json``; ``src/data/pae_doors.h`` is generated from it and included in the door table (once).
+A record whose metatile is no longer a door (a tileset rebuild moved the blocks) is dropped at the next ``add``.
 Small (one block) doors on FRLG/HnS-style layouts, the kind outdoor houses use.
 """
 
@@ -95,6 +96,19 @@ def _tileset_of(maps, map_name: str, mid: int) -> str:
     return prim.symbol if mid < sec.metatile_base else sec.symbol
 
 
+def _still_a_door(maps, r: dict) -> bool:
+    """Whether a record's metatile is still a door block of its tileset (False once a rebuild has moved it)."""
+    te = maps.tileset_editor
+    try:
+        mt = te.get_metatile(r["map"], r["metatile"])
+        version = te.sides(maps.layout_of(r["map"]))[2]
+    except (DecompError, KeyError):
+        return False
+    names = te.behaviors(version)
+    name = names[mt["behavior"]] if mt["behavior"] < len(names) else None
+    return mt["tileset"] == r["tileset"] and ("DOOR" in name if name else mt["behavior"] != 0)
+
+
 def add(maps, map_name: str, x: int, y: int, panel: tuple[int, int, int, int], sound: str = "normal") -> dict:
     name = maps.resolve(map_name)
     if not (maps.root / DOOR_C).exists():
@@ -111,7 +125,7 @@ def add(maps, map_name: str, x: int, y: int, panel: tuple[int, int, int, int], s
     rec_path = maps.root / RECORD
     rec = json.loads(rec_path.read_text()) if rec_path.exists() else []
     key = (_tileset_of(maps, name, mid), mid)
-    rec = [r for r in rec if (r["tileset"], r["metatile"]) != key]
+    rec = [r for r in rec if (r["tileset"], r["metatile"]) != key and _still_a_door(maps, r)]
     rec.append({"map": name, "tileset": key[0], "metatile": mid, "panel": list(panel), "sound": sound,
                 "banks": banks, "frames": [[t.tolist() for t in f] for f in fr]})
     maps.dp._backup(RECORD)

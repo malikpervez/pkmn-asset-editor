@@ -214,10 +214,11 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
 * **The grid** has one character per block; the legend says what each one is. A stamp's character fills its
   whole rectangle. `{"auto": "path"}` picks edge variants (`path#0`…`path#15`, by which neighbours are path too),
   `{"pick": [...]}` spreads variants like grass and `{"tile": "forest"}` repeats a stamp as a pattern over any
-  area (a forest of pines).
+  area (a forest of pines). An edge piece can have variants too (`water#15~1`, `water#15~2`), spread by position,
+  so open water doesn't repeat every block.
 * **Animated tiles** (water, flowers): give the spec an `animations` entry with the image its metatiles are drawn
   from and the other frames, laid out like it. Their tiles go in one run and the animation's code is written into
-  `src/tileset_anims.c` (and kept pointing at the run when a rebuild moves it).
+  `src/tileset_anims.c`, and kept in step on every rebuild: where the run is, how many tiles, frames and the speed.
 * **Events and cutscenes**: `pae map place` moves a warp, object, trigger or sign; `pae map path` walks between
   blocks around anything solid (shortest, then fewest turns) and writes the movement under a label in the map's
   script. For someone who follows, route them through the leader's start and add `--stop-short 1`.
@@ -258,7 +259,9 @@ checkpoints happen between two frames.
 ![Playing Mauville City at chapter 9 with a Marshtomp and a Zigzagoon](docs/images/test-window-game.png)
 
 How it works: `make` runs, then the ROM boots in a headless libmgba driver
-(`native/pae_mgba.c`, compiled on first use). A new game starts with
+(`native/pae_mgba.c`, compiled on first use). The game's clock reads 12:00 (UTC) when it boots, on every
+computer, so games with a day/night tint look the same in every replay; `PAE_CLOCK=20:30` picks another time of
+day and `PAE_CLOCK=wall` uses the real one. A new game starts with
 expansion's Quickstart, and `pae` **warps to the map** through `CB2_LoadMap`,
 the same path a door takes (symbol addresses come from the build's `.elf`), so
 people, map scripts and story triggers run as they do in a real game. Story

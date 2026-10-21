@@ -160,3 +160,15 @@ def test_checkpoint_real_rom(tmp_path):
         assert session.game.call("FlagGet", values["FLAG_BADGE01_GET"]) == 1
     finally:
         session.close()
+
+
+def test_clock_env(monkeypatch):
+    monkeypatch.delenv("PAE_CLOCK", raising=False)
+    env = pt.clock_env()  # noon (UTC) unless told otherwise: the same tint on every computer
+    assert env["PAE_RTC"] == str(pt.CLOCK_DAY + 12 * 3600) and env["TZ"] == "UTC"
+    assert pt.clock_env("20:30")["PAE_RTC"] == str(pt.CLOCK_DAY + 20 * 3600 + 30 * 60)
+    monkeypatch.setenv("PAE_CLOCK", "wall")
+    monkeypatch.setenv("PAE_RTC", "123")
+    assert "PAE_RTC" not in pt.clock_env()
+    with pytest.raises(pt.PlaytestError, match="time of day"):
+        pt.clock_env("25:00")

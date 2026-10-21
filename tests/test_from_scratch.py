@@ -83,7 +83,7 @@ def _scratch(root, tmp_path):
                 {"name": "path#15", "tileset": "primary", "image": "ground.png", "x": 16},
                 {"name": "path#14", "tileset": "primary", "image": "ground.png", "x": 32},
                 {"name": "house", "image": "house.png", "w": 2, "h": 2, "ground": "grass", "solid": True,
-                 "open": ["0,1"], "behaviors": {"0,1": 1}}]}
+                 "open": ["0,1"], "behaviors": {"0,1": "MB_DOOR"}}]}
     (art / "spec.json").write_text(json.dumps(spec))
     out = tb.build(m, art / "spec.json")
     return proj, m, art, out
@@ -102,7 +102,7 @@ def test_build_and_paint(root, tmp_path):
     assert not used & {3, 4}
     h = te.get_metatile("Town", 512)
     assert h["entries"][:4] == g["entries"][:4] and h["layer_type"] == 1  # grass under the house art
-    assert te.get_metatile("Town", 514)["behavior"] == 1
+    assert te.get_metatile("Town", 514)["behavior"] == 0x11  # MB_DOOR
     grid = "....\n====\n====\n..HH\n..HH\n" + "....\n" * 3
     legend = {".": "grass", "=": {"auto": "path"}, "H": "house"}
     b = tb.paint(m, "Town", grid, legend, names)
@@ -155,6 +155,12 @@ def test_seams_and_doors(root, tmp_path):
     assert (last[:, 4:] == last[0, 4]).all()
     assert "PAE_DOORS" in (root / "src/field_door.c").read_text()
     assert "{ 514, &gTileset_NewTown, DOOR_SOUND_NORMAL, 1," in (root / "src/data/pae_doors.h").read_text()
+    # a tileset rebuild moved a door's block: its old record (now a grass block) goes at the next add
+    stale = dict(rec[0], metatile=names["metatiles"]["grass"]["ids"][0], tileset="gTileset_NewGeneral")
+    (root / "src/data/pae_doors.json").write_text(json.dumps(rec + [stale]))
+    assert doors._still_a_door(m, rec[0]) and not doors._still_a_door(m, stale)
+    doors.add(m, "Town", 2, 1, (4, 4, 12, 16))
+    assert [r["metatile"] for r in json.loads((root / "src/data/pae_doors.json").read_text())] == [514]
 
 
 def test_pattern_paint(root, tmp_path):
@@ -167,6 +173,28 @@ def test_pattern_paint(root, tmp_path):
         for x in range(3):  # any rectangle: each block is the piece at (x mod 2, y mod 2)
             assert b[y, x] & 0x3FF == ids[(y % 2) * 2 + x % 2]
     assert b[1, 0] & 0x3FF == ids[2] and (b[1, 0] >> 10) & 3 == 0  # the door piece stays open
+
+    # variants of an edge piece ("grass~1"): spread over the area by position, the same each time
+    names["metatiles"]["grass~1"] = dict(names["metatiles"]["grass"], ids=names["metatiles"]["path#15"]["ids"])
+    b2 = tb.paint(m, "Town", "....\n" * 8, {".": {"auto": "grass"}}, names)
+    found = {int(v) & 0x3FF for v in b2.ravel()}
+    assert found == {names["metatiles"]["grass"]["ids"][0], names["metatiles"]["path#15"]["ids"][0]}
+    assert (tb.paint(m, "Town", "....\n" * 8, {".": {"auto": "grass"}}, names) == b2).all()
+
+    # edge pieces that are stamps (2x2 trees): the variant comes from the neighbouring 2x2 cells
+    g0, p15, p14 = (names["metatiles"][n]["ids"][0] for n in ("grass", "path#15", "path#14"))
+    names["metatiles"]["tree#15"] = {"ids": names["metatiles"]["house"]["ids"], "w": 2, "h": 2, "solid": True}
+    names["metatiles"]["tree#11"] = {"ids": [g0, p15, p14, g0], "w": 2, "h": 2, "solid": True}  # open below
+    b3 = tb.paint(m, "Town", "TTTT\n" * 4 + "....\n" * 4, {"T": {"auto": "tree"}, ".": "grass"}, names)
+    house = names["metatiles"]["house"]["ids"]
+    assert [int(b3[y, x]) & 0x3FF for y, x in ((0, 0), (1, 1), (0, 3))] == [house[0], house[3], house[1]]
+    assert [int(b3[y, x]) & 0x3FF for y, x in ((2, 0), (2, 1), (3, 0), (3, 3))] == [g0, p15, p14, g0]
+    assert (b3[:4] >> 10 & 3 == 1).all()
+    # an inside corner: forest north and east, open to the north-east; drawn as "tree#15.1"
+    names["metatiles"]["tree#15.1"] = {"ids": [p14] * 4, "w": 2, "h": 2, "solid": True}
+    b4 = tb.paint(m, "Town", "TT..\nTT..\n" + "TTTT\n" * 4 + "....\n" * 2, {"T": {"auto": "tree"}, ".": "grass"},
+                  names)
+    assert int(b4[2, 0]) & 0x3FF == p14 and int(b4[0, 0]) & 0x3FF != p14
 
 
 ANIMS_C = """\
@@ -235,6 +263,16 @@ def test_animated_tiles(root, tmp_path):
     first2 = out2["animations"][0]["first_tile"]
     assert first2 != first
     assert f"TILE_OFFSET_4BPP({first2})), {n} * TILE_SIZE_4BPP" in (root / "src/tileset_anims.c").read_text()
+    # another frame and another speed: the code follows
+    _water(art / "water3.png", 12)
+    spec["animations"][0].update(frames=["water1.png", "water2.png", "water3.png"], speed=4)
+    (art / "spec.json").write_text(json.dumps(spec))
+    out3 = tb.build(DecompProject(root).maps, art / "spec.json")
+    assert out3["animations"][0]["frames"] == 4
+    text = (root / "src/tileset_anims.c").read_text()
+    assert "gTilesetAnims_NewGeneral_Pond_Frame3" in text.split("gTilesetAnims_NewGeneral_Pond[] = {")[1]
+    assert "timer % 4 ==" in text
+    assert (root / "data/tilesets/primary/new_general/anim/pond/3.png").exists()
 
 
 def test_seam_borrows_what_the_map_never_shows(root, tmp_path, monkeypatch):
