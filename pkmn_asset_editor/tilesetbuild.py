@@ -42,8 +42,9 @@ BUILD_SPEC = """\
 }
 Edge variants for `pae map paint`: name metatiles "path#0" ... "path#15" (the number says which neighbours are path
 too: 1 north, 2 east, 4 south, 8 west) and use {"auto": "path"} in the legend ("path#15~1", "path#15~2"... are
-variants of a piece, spread by position; a piece may be a stamp, e.g. 2x2 trees "forest#0".."forest#15", and then
-its neighbours are the cells of its size); {"pick": ["grass", "grass2"]}
+variants of a piece, spread by position; "path#15.1" is the piece for an inside corner, the diagonal neighbour not
+path while both sides are (1 NE, 2 SE, 4 SW, 8 NW), used when drawn; a piece may be a stamp, e.g. 2x2 trees
+"forest#0".."forest#15", and then its neighbours are the cells of its size); {"pick": ["grass", "grass2"]}
 spreads variants; {"tile": "forest"} repeats a stamp as a pattern (block x, y shows its piece x mod w, y mod h)."""
 
 
@@ -438,9 +439,17 @@ def paint(maps, map_name: str, grid: str, legend: dict, names: dict, which: str 
                     if same(x0 + dx * cw, y0 + dy * chh):
                         mask |= bit
                 pattern = pattern or cw > 1 or chh > 1
+                # inside corners: both sides the same but the diagonal not (1 NE, 2 SE, 4 SW, 8 NW); a variant
+                # "path#15.1" is used when someone drew it
+                corners = 0
+                for bit, (dx, dy), sides in ((1, (1, -1), 1 | 2), (2, (1, 1), 2 | 4), (4, (-1, 1), 4 | 8),
+                                             (8, (-1, -1), 8 | 1)):
+                    if mask & sides == sides and not same(x0 + dx * cw, y0 + dy * chh):
+                        corners |= bit
                 # a variant nobody drew falls back to the plain one (all neighbours the same)
-                name = next((n for n in (f"{item['auto']}#{mask}", f"{item['auto']}#15", item["auto"])
-                             if n in meta), item["auto"])
+                name = next((n for n in (f"{item['auto']}#{mask}.{corners}" if corners else None,
+                                         f"{item['auto']}#{mask}", f"{item['auto']}#15", item["auto"])
+                             if n and n in meta), item["auto"])
                 # variants "name~1", "name~2"... are spread by position, like "pick"
                 variants = [name] + [f"{name}~{k}" for k in range(1, 64) if f"{name}~{k}" in meta]
                 item["name"] = variants[(x * 7919 + y * 104729 + (x * y) % 13) % len(variants)]

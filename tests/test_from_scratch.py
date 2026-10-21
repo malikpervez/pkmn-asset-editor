@@ -184,6 +184,11 @@ def test_pattern_paint(root, tmp_path):
     assert [int(b3[y, x]) & 0x3FF for y, x in ((0, 0), (1, 1), (0, 3))] == [house[0], house[3], house[1]]
     assert [int(b3[y, x]) & 0x3FF for y, x in ((2, 0), (2, 1), (3, 0), (3, 3))] == [g0, p15, p14, g0]
     assert (b3[:4] >> 10 & 3 == 1).all()
+    # an inside corner: forest north and east, open to the north-east; drawn as "tree#15.1"
+    names["metatiles"]["tree#15.1"] = {"ids": [p14] * 4, "w": 2, "h": 2, "solid": True}
+    b4 = tb.paint(m, "Town", "TT..\nTT..\n" + "TTTT\n" * 4 + "....\n" * 2, {"T": {"auto": "tree"}, ".": "grass"},
+                  names)
+    assert int(b4[2, 0]) & 0x3FF == p14 and int(b4[0, 0]) & 0x3FF != p14
 
 
 ANIMS_C = """\
