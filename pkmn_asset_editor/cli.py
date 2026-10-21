@@ -323,6 +323,30 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--bank", type=int, help="palette bank to use (default: best match)")
     q.add_argument("--new-palette", action="store_true", help="write the art's colours into --bank")
     q.add_argument("--solid", action="store_true", help="make the placed blocks impassable")
+    q = with_project(msub.add_parser("place", help="move an event (object, warp, coord trigger, bg sign) to a block"))
+    q.add_argument("name")
+    q.add_argument("kind", choices=["object", "warp", "coord", "bg"])
+    q.add_argument("which", help="its index (as `pae map events` lists it), or an object's local id")
+    q.add_argument("x", type=int)
+    q.add_argument("y", type=int)
+    q.add_argument("--elevation", type=int)
+    q = with_project(msub.add_parser("path", help="a walk between blocks as movement commands (around what's solid)"))
+    q.add_argument("name")
+    q.add_argument("points", nargs="+", help="x,y blocks to walk through in order (the first is where it starts)")
+    q.add_argument("--surf", action="store_true", help="walk on water instead of land")
+    q.add_argument("--avoid-objects", action="store_true", help="don't walk through other objects' starting blocks")
+    q.add_argument("--fast", action="store_true", help="walk_fast_* instead of walk_*")
+    q.add_argument("--stop-short", type=int, default=0, help="stop this many steps before the end (to follow)")
+    q.add_argument("--then", nargs="*", default=[], help="commands to add after the walk (e.g. walk_in_place_faster_up)")
+    q.add_argument("--write", metavar="LABEL", help="put the commands under this movement label in the map's script")
+    q = with_project(msub.add_parser("connect", help="join two maps edge to edge (both ways), e.g. a route north of a "
+                                                     "town"))
+    q.add_argument("name")
+    q.add_argument("direction", choices=["up", "down", "left", "right"], help="which side of NAME the other map is on")
+    q.add_argument("other")
+    g = q.add_mutually_exclusive_group(required=True)
+    g.add_argument("--offset", type=int, help="the other map's shift along the edge, in blocks")
+    g.add_argument("--align", metavar="A,B", help="line up NAME's column (or row) A with the other map's B")
     q = with_project(msub.add_parser("link", help="connect two warps in both directions"))
     q.add_argument("map")
     q.add_argument("warp", type=int)
@@ -980,6 +1004,32 @@ def _run(args) -> int:
                             b[yy, xx] = v
                 m.write_blocks(args.name, b)
                 print(f"placed at ({args.x}, {args.y}) on {args.name}")
+        elif args.map_cmd == "place":
+            from .walk import place
+            r = place(m, args.name, args.kind, args.which, args.x, args.y, args.elevation)
+            print(f"moved {args.kind} {r['index']} from {r['from']} to {r['to']}")
+        elif args.map_cmd == "path":
+            from .walk import movement, walk, write_movement
+            try:
+                pts = [tuple(int(v) for v in p.split(",")) for p in args.points]
+            except ValueError:
+                raise ProjectError("blocks are x,y (e.g. 14,9)")
+            dirs, end = walk(m, args.name, pts, args.surf, args.avoid_objects, args.stop_short)
+            cmds = movement(dirs, args.fast) + list(args.then)
+            if args.write:
+                write_movement(m, args.name, args.write, cmds)
+                print(f"{args.write}: {len(dirs)} steps, ends at {end[0]},{end[1]}")
+            else:
+                print("\n".join(cmds))
+                print(f"@ {len(dirs)} steps, ends at {end[0]},{end[1]}")
+        elif args.map_cmd == "connect":
+            off = args.offset
+            if args.align:
+                a_, b_ = (int(v) for v in args.align.split(","))
+                off = a_ - b_
+            ca, cb = m.connect(args.name, args.direction, args.other, off)
+            print(f"{args.name}: {args.other} {ca['direction']} (offset {ca['offset']}); "
+                  f"{args.other}: {args.name} {cb['direction']} (offset {cb['offset']})")
         elif args.map_cmd == "link":
             m.link_warps(args.map, args.warp, args.dest_map, args.dest_warp)
             print(f"linked {args.map} warp {args.warp} <-> {args.dest_map} warp {args.dest_warp}")

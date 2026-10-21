@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 
 import decomp_fixture
-from pkmn_asset_editor import doors, seams
+from pkmn_asset_editor import doors, seams, walk
 from pkmn_asset_editor import tilesetbuild as tb
 from pkmn_asset_editor.cli import main
 from pkmn_asset_editor.decomp import DecompError, DecompProject
@@ -155,3 +155,141 @@ def test_seams_and_doors(root, tmp_path):
     assert (last[:, 4:] == last[0, 4]).all()
     assert "PAE_DOORS" in (root / "src/field_door.c").read_text()
     assert "{ 514, &gTileset_NewTown, DOOR_SOUND_NORMAL, 1," in (root / "src/data/pae_doors.h").read_text()
+
+
+def test_pattern_paint(root, tmp_path):
+    proj, m, art, out = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown")
+    b = tb.paint(m, "Town", "HHH.\nHHH.\nHHH.\n" + "....\n" * 5, {"H": {"tile": "house"}, ".": "grass"}, names)
+    ids = names["metatiles"]["house"]["ids"]
+    for y in range(3):
+        for x in range(3):  # any rectangle: each block is the piece at (x mod 2, y mod 2)
+            assert b[y, x] & 0x3FF == ids[(y % 2) * 2 + x % 2]
+    assert b[1, 0] & 0x3FF == ids[2] and (b[1, 0] >> 10) & 3 == 0  # the door piece stays open
+
+
+ANIMS_C = """\
+#include "global.h"
+
+static void QueueAnimTiles_General_Flower(u16);
+
+const u16 gTilesetAnims_General_Flower_Frame0[] = INCBIN_U16("data/tilesets/primary/general/anim/flower/0.4bpp");
+
+const u16 *const gTilesetAnims_General_Flower[] = {
+    gTilesetAnims_General_Flower_Frame0
+};
+
+static void QueueAnimTiles_General_Flower(u16 timer)
+{
+    u16 i = timer % ARRAY_COUNT(gTilesetAnims_General_Flower);
+    AppendTilesetAnimToBuffer(gTilesetAnims_General_Flower[i],
+                              (u16 *)(BG_VRAM + TILE_OFFSET_4BPP(8)), 4 * TILE_SIZE_4BPP);
+}
+"""
+
+
+def _water(path, shift, cells=2):
+    """Water blocks side by side, a highlight moving right with ``shift``."""
+    img = np.zeros((16, 16 * cells, 4), np.uint8)
+    img[..., :3] = PAL[2]
+    img[..., 3] = 255
+    for c in range(cells):
+        img[4, c * 16 + (shift + 3 * c) % 16] = (*PAL[4], 255)
+    Image.fromarray(img, "RGBA").save(path)
+
+
+def test_animated_tiles(root, tmp_path):
+    (root / "src/tileset_anims.c").write_text(ANIMS_C)
+    (root / "include/tileset_anims.h").write_text("#ifndef GUARD_TILESET_ANIMS_H\n#define GUARD_TILESET_ANIMS_H\n\n"
+                                                  "#endif // GUARD_TILESET_ANIMS_H\n")
+    proj, m, art, out = _scratch(root, tmp_path)
+    for k in range(3):
+        _water(art / f"water{k}.png", 4 * k)
+    spec = json.loads((art / "spec.json").read_text())
+    spec["animations"] = [{"name": "Pond", "image": "water0.png", "frames": ["water1.png", "water2.png"], "speed": 8}]
+    spec["metatiles"] += [{"name": "water", "tileset": "primary", "image": "water0.png", "x": 0},
+                          {"name": "water2", "tileset": "primary", "image": "water0.png", "x": 16}]
+    (art / "spec.json").write_text(json.dumps(spec))
+    out = tb.build(DecompProject(root).maps, art / "spec.json")
+    a = out["animations"][0]
+    assert a["name"] == "NewGeneral_Pond" and a["frames"] == 3
+    m = DecompProject(root).maps
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown")
+    te = m.tileset_editor
+    first, n = a["first_tile"], a["tiles"]
+    assert first >= out["tiles"]["primary"] - n  # after the other tiles, in one run
+    used = {e["tile"] for mid in out["metatiles"]["water"]["ids"] + out["metatiles"]["water2"]["ids"]
+            for e in te.get_metatile("Town", mid)["entries"][:4]}
+    assert used <= set(range(first, first + n))
+    text = (root / "src/tileset_anims.c").read_text()
+    # the style the file already uses: INCBIN of the .4bpp built from the PNG
+    assert 'INCBIN_U16("data/tilesets/primary/new_general/anim/pond/2.4bpp")' in text
+    assert f"TILE_OFFSET_4BPP({first})), {n} * TILE_SIZE_4BPP" in text
+    assert (root / "data/tilesets/primary/new_general/anim/pond/2.png").exists()
+    # more art before it: the build moves the run and the code follows
+    spec["metatiles"].insert(1, {"name": "grass_b", "tileset": "primary", "image": "ground.png", "x": 32})
+    spec["metatiles"].insert(1, {"name": "path_b", "tileset": "primary", "image": "house.png", "x": 0, "y": 0})
+    (art / "spec.json").write_text(json.dumps(spec))
+    out2 = tb.build(DecompProject(root).maps, art / "spec.json")
+    first2 = out2["animations"][0]["first_tile"]
+    assert first2 != first
+    assert f"TILE_OFFSET_4BPP({first2})), {n} * TILE_SIZE_4BPP" in (root / "src/tileset_anims.c").read_text()
+
+
+def test_seam_borrows_what_the_map_never_shows(root, tmp_path, monkeypatch):
+    proj, m, art, out = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown",
+                   layout_version="hns")
+    tb.paint(m, "Town", "....\n" * 8, {".": "grass"}, names)
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["connections"] = [{"map": "MAP_TOWN_HOUSE1", "direction": "up", "offset": 0}]
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    (root / "src/kanto_connection_seam.c").write_text(
+        '#include "global.h"\n#include "kanto_connection_seam.h"\n\n'
+        'static const struct KantoSeam sKantoSeams[] = {\n};\n')
+    m = DecompProject(root).maps
+    info = {"npt": 512}
+    spare_tiles, spare_banks = seams._spare(m, "Town", info)
+    assert 0 not in spare_banks and 1 in spare_banks  # Town shows only grass (palette 0)
+    assert all(t >= 512 for t in spare_tiles) and not set(spare_tiles) & set(range(1008, 1024))
+    # with every palette slot used by the tilesets, the seam still fits by borrowing
+    real = seams._used
+
+    def all_used(maps, name):
+        tiles, banks, inf = real(maps, name)
+        return tiles, set(range(13)), inf
+    monkeypatch.setattr(seams, "_used", all_used)
+    p = seams.plan(m, "Town", ["Town_House1"])
+    assert p["palettes"] and p["borrowed"]["palettes"] == sorted(p["palettes"])
+    assert 0 not in p["palettes"]
+
+
+def test_place_path_and_connect(root):
+    m = DecompProject(root).maps
+    lay = m.layout_of("Town")
+    b = m.read_blocks(lay).copy()
+    b[:, :] = b[0, 0] & ~0x0C00  # walkable everywhere ...
+    b[2, 1:4] |= 1 << 10  # ... but a wall in the way
+    m.write_blocks("Town", b)
+    walk.place(m, "Town", "object", "0", 1, 1)
+    assert (m.get_map("Town")["object_events"][0]["x"], m.get_map("Town")["object_events"][0]["y"]) == (1, 1)
+    with pytest.raises(DecompError, match="no object event"):
+        walk.place(m, "Town", "object", "LOCALID_NOPE", 1, 1)
+    dirs, end = walk.walk(m, "Town", [(1, 1), (2, 4)])
+    assert end == (2, 4) and dirs == ["left", "down", "down", "down", "right", "right"]  # around the wall
+    follow, fend = walk.walk(m, "Town", [(1, 0), (1, 1), (2, 4)], stop_short=1)
+    assert follow[1:] == dirs[:-1]  # one step behind the leader
+    p = root / "data/maps/Town/scripts.inc"
+    p.write_text(p.read_text() + "\nTown_Movement_Walk::\n\twalk_up\n\tstep_end\n\nTown_Movement_Other::\n\tstep_end\n")
+    assert main(["map", "path", "Town", "1,1", "2,4", "--then", "face_up", "--write", "Town_Movement_Walk",
+                 "-p", str(root)]) == 0
+    text = p.read_text()
+    body = text.split("Town_Movement_Walk::\n")[1].split("step_end")[0]
+    assert body.count("walk_") == 6 and "\tface_up\n" in body and "Town_Movement_Other::\n\tstep_end" in text
+    a, back = m.connect("Town", "up", "Town_House1", -3)
+    assert (a["direction"], a["offset"], back["direction"], back["offset"]) == ("up", -3, "down", 3)
+    assert main(["map", "connect", "Town", "up", "Town_House1", "--align", "4,2", "-p", str(root)]) == 0
+    conns = DecompProject(root).maps.get_map("Town")["connections"]
+    assert [c["offset"] for c in conns if c["map"] == "MAP_TOWN_HOUSE1"] == [2]

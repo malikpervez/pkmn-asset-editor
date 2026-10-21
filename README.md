@@ -200,8 +200,11 @@ pae tileset build art/spec.json                       # artwork -> tiles, palett
 pae map geometry MyTown --primary gTileset_MyTown_General --secondary gTileset_MyTown \
     --blockdata data/layouts/MyTown_New/map.bin --border data/layouts/MyTown_New/border.bin
 pae map paint MyTown art/grid.txt art/legend.json --names art/names.json --border art/border.txt
+pae map connect MyTown up Route1 --align 14,24       # MyTown's column 14 meets Route1's 24 (both ways)
 pae door add MyTown 6 7 --panel 3,0,13,14             # the door you drew opens (its panel slides up)
 pae seam build MyTown                                 # neighbours with other tilesets drawn right (see below)
+pae map place MyTown warp 0 7 7                       # events where the new map has them
+pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Movement_ToLab
 ```
 
 * **The spec** lists your metatiles: a block (or a several-block *stamp*, like a house) of an image, its
@@ -209,12 +212,20 @@ pae seam build MyTown                                 # neighbours with other ti
   rows drawn over the player, and the palettes it may use (for each row, too). Identical tiles (also flipped
   ones) are stored once; you choose the palettes, so the colours stay exactly yours.
 * **The grid** has one character per block; the legend says what each one is. A stamp's character fills its
-  whole rectangle. `{"auto": "path"}` picks edge variants (`path#0`…`path#15`, by which neighbours are path too)
-  and `{"pick": [...]}` spreads variants like grass.
+  whole rectangle. `{"auto": "path"}` picks edge variants (`path#0`…`path#15`, by which neighbours are path too),
+  `{"pick": [...]}` spreads variants like grass and `{"tile": "forest"}` repeats a stamp as a pattern over any
+  area (a forest of pines).
+* **Animated tiles** (water, flowers): give the spec an `animations` entry with the image its metatiles are drawn
+  from and the other frames, laid out like it. Their tiles go in one run and the animation's code is written into
+  `src/tileset_anims.c` (and kept pointing at the run when a rebuild moves it).
+* **Events and cutscenes**: `pae map place` moves a warp, object, trigger or sign; `pae map path` walks between
+  blocks around anything solid (shortest, then fewest turns) and writes the movement under a label in the map's
+  script. For someone who follows, route them through the leader's start and add `--stop-short 1`.
 * **Seams** (forks with `kanto_connection_seam.c`, like the FireRed Kanto/Johto hack): when two connected maps use
   different tilesets, the strip of the neighbour the game shows at the edge would be drawn with the wrong tiles.
   `pae seam build` copies the neighbour's tiles and palettes into free slots, both ways, so each map sees the
-  other right. A strip has to fit the palette slots its viewer has free; it tells you when it doesn't.
+  other right. Free slots come first from what the viewer's tilesets never use, then palette slots and secondary
+  tiles the viewer's map never shows are borrowed (the game reloads those whenever you cross into another map).
 * **Maps with their own geometry** (`firered_geometry` in `map.json`, in that hack): pae shows and edits what the
   game builds, and `pae map geometry` changes it there.
 
@@ -771,6 +782,8 @@ sheet of the results, then run `pae check`."*
 | `pae map list / render / metatiles / events / new / link / tiles / import-art / geometry / paint` | maps, events, warps, size, tilesets and blocks |
 | `pae tileset new SYMBOL --primary\|--secondary / build SPEC / spec` | tilesets from scratch |
 | `pae seam build MAP` · `pae door add MAP X Y --panel x0,y0,x1,y1` | connection strips across tilesets · door animations |
+| `pae map connect MAP up OTHER --align A,B` · `pae map place MAP KIND WHICH X Y` | join maps edge to edge (both ways) · move an event |
+| `pae map path MAP X,Y X,Y … [--stop-short N] [--then CMD…] [--write LABEL]` | walking movements around what's solid, for cutscenes |
 | `pae text check [MAP] / preview MAP LABEL -o PNG` | dialogue in the game's font |
 | `pae trainer list [Q] / show ID / set ID --mon … --field Key=Value` | trainer teams |
 | `pae wild show MAP / set MAP KIND SLOT… [--rate N]` | wild Pokémon (`land`, `water`, `rock_smash`, `fishing`) |

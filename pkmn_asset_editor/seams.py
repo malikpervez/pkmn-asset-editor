@@ -9,6 +9,11 @@ strip's blocks are translated to.
 ``build(maps, map_name)`` records that ``map_name`` and its neighbours need seams for each other (in
 ``src/data/pae_seams.json``) and regenerates ``src/data/pae_seams.h`` from that record, which
 ``kanto_connection_seam.c`` includes (added once).
+
+Free slots: first those the map's tilesets never use. When those run out, palette slots and secondary tiles the map
+never shows are borrowed: the game reloads every palette and the secondary tiles whenever you cross into another map
+(primary tiles are not reloaded when the primary tileset stays, so those are only taken when the tileset doesn't
+use them). "Shown" is the map's blocks, its border and what its scripts put with ``setmetatile``.
 """
 
 from __future__ import annotations
@@ -88,11 +93,61 @@ def _used(maps, name: str) -> tuple[set[int], set[int], dict]:
                           "metatiles": sec.metatile_base + len(te._read_metas(sec))}
 
 
+def _shown(maps, name: str) -> set[int] | None:
+    """Metatile ids the map can show: its blocks, its border, what its scripts set (None if that can't be told)."""
+    lay = maps.layout_of(name)
+    mids = set(np.unique(maps.read_blocks(lay) & 0x3FF).tolist())
+    try:
+        mids |= set(np.unique(maps.read_blocks(lay, "border") & 0x3FF).tolist())
+    except Exception:
+        return None
+    import re
+    for m in re.finditer(r"^\s*setmetatile\s+[^,]+,\s*[^,]+,\s*(\w+)", maps.read_script(name), re.M):
+        v = m.group(1)
+        v = maps.dp.defines.get(v, v)
+        try:
+            mids.add(int(str(v), 0) & 0x3FF)
+        except ValueError:
+            return None
+    return mids
+
+
+def _spare(maps, name: str, info: dict) -> tuple[list[int], list[int]]:
+    """Secondary tile slots and palette slots the map never shows (borrowable; see the module notes)."""
+    shown = _shown(maps, name)
+    if shown is None:
+        return [], []
+    te = maps.tileset_editor
+    tiles, banks = set(), set()
+    for mid in shown:
+        try:
+            mt = te.get_metatile(name, mid)
+        except Exception:
+            continue
+        for e in mt["entries"]:
+            tiles.add(e["tile"])
+            banks.add(e["palette"])
+    from .tileset_anims import TilesetAnims
+    try:
+        for a in TilesetAnims(maps).for_map(name):
+            for sl in a.slots:
+                tiles |= set(range(sl.dest, sl.dest + a.count))
+    except DecompError:
+        pass
+    tiles |= set(range(434, 450)) | set(range(1008, 1024))
+    spare_tiles = [t for t in range(1023, info["npt"] - 1, -1) if t not in tiles]
+    return spare_tiles, [b for b in range(13) if b not in banks]
+
+
 def plan(maps, target: str, sources: list[str]) -> dict:
     """Adapters ``target`` needs to draw the strips of ``sources``."""
     used_tiles, used_banks, info = _used(maps, target)
     free_tiles = [t for t in range(1023, 0, -1) if t not in used_tiles]
     free_banks = [b for b in range(13) if b not in used_banks]
+    spare_tiles, spare_banks = _spare(maps, target, info)
+    strict_tiles, strict_banks = set(free_tiles), set(free_banks)
+    free_tiles += [t for t in spare_tiles if t not in strict_tiles]
+    free_banks += [b for b in spare_banks if b not in strict_banks]
     metas, glyphs = [], {}  # glyph pixels bytes -> slot
     bank_colors: dict[int, list] = {}  # slot -> colours loaded there
     for src in sources:
@@ -131,7 +186,7 @@ def plan(maps, target: str, sources: list[str]) -> dict:
             else:
                 if not free_banks:
                     raise DecompError(f"{target}: no free palette slot left for {src}'s palette {bank} "
-                                      f"(the strip needs {len(need)} palettes)")
+                                      f"(the strip needs {len(need)} palettes; the map shows the others)")
                 slot = free_banks.pop(0)
                 bank_colors[slot] = list(cols)
                 slot_of[bank] = slot
@@ -159,7 +214,9 @@ def plan(maps, target: str, sources: list[str]) -> dict:
         raise DecompError(f"{target}: {len(metas)} adapters don't fit above its {info['metatiles']} metatiles")
     return {"target": target, "layout": _layout_symbol(maps, target), "first": first, "metatiles": metas,
             "glyphs": {slot: np.frombuffer(k, np.uint8).reshape(8, 8) for k, slot in glyphs.items()},
-            "palettes": bank_colors}
+            "palettes": bank_colors,
+            "borrowed": {"palettes": sorted(b for b in bank_colors if b not in strict_banks),
+                         "tiles": sum(1 for s in glyphs.values() if s not in strict_tiles)}}
 
 
 def _c_glyphs(prefix: str, glyphs: dict) -> tuple[str, int]:
@@ -280,5 +337,5 @@ def build(maps, map_name: str) -> list[dict]:
     _hook(maps)
     maps.dp._changed = None
     return [{"target": p["target"], "adapters": len(p["metatiles"]), "glyphs": len(p["glyphs"]),
-             "palettes": sorted(p["palettes"]), "sources": sorted({m["source"] for m in p["metatiles"]})}
-            for p in plans]
+             "palettes": sorted(p["palettes"]), "sources": sorted({m["source"] for m in p["metatiles"]}),
+             "borrowed": p["borrowed"]} for p in plans]

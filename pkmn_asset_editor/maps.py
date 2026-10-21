@@ -518,6 +518,28 @@ class MapEditor:
         self.save_map(name, data)
         return len(data[kind]) - 1
 
+    OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left", "dive": "emerge", "emerge": "dive"}
+
+    def connect(self, map_a: str, direction: str, map_b: str, offset: int = 0) -> tuple[dict, dict]:
+        """Connect map B on ``direction``'s side of map A (and A on the other side of B). ``offset``: how far B is
+        shifted along the edge (for up/down, B's column 0 lines up with A's column ``offset``)."""
+        if direction not in self.OPPOSITE:
+            raise DecompError(f"direction must be one of {', '.join(self.OPPOSITE)}")
+        a, b = self.resolve(map_a), self.resolve(map_b)
+        da, db = self.get_map(a), self.get_map(b)
+        back = self.OPPOSITE[direction]
+        out = []
+        for data, other, d, off in ((da, db, direction, offset), (db, da, back, -offset)):
+            conns = [c for c in (data.get("connections") or [])
+                     if not (c.get("map") == other["id"] and c.get("direction") == d)]
+            c = {"map": other["id"], "offset": int(off), "direction": d}
+            conns.append(c)
+            data["connections"] = conns
+            out.append(c)
+        self.save_map(a, da)
+        self.save_map(b, db)
+        return out[0], out[1]
+
     def link_warps(self, map_a: str, warp_a: int, map_b: str, warp_b: int) -> None:
         """Make warp ``warp_a`` of map A lead to warp ``warp_b`` of map B and back."""
         a, b = self.resolve(map_a), self.resolve(map_b)
