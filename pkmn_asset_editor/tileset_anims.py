@@ -382,7 +382,9 @@ class TilesetAnims:
         raise DecompError(f"no tileset animation '{anim_id}' (see `pae anim list`)")
 
     # ------------------------------------------------------------------ per-map context
-    def _layout_tilesets(self, map_name: str) -> tuple[str, str, str]:
+    def _layout_tilesets(self, map_name) -> tuple[str, str, str]:
+        if isinstance(map_name, tuple):  # (primary, secondary, layout version) without a map
+            return map_name
         lay = self.maps.layout_of(map_name)
         return lay["primary_tileset"], lay["secondary_tileset"], lay.get("layout_version", "emerald")
 
@@ -765,7 +767,7 @@ class TilesetAnims:
         clean = strip_comments(text)
         last_decl = max((m for m in FRAME_RE.finditer(clean) if m.group(1) in a.frames), key=lambda m: m.end())
         static = "static " if clean[last_decl.start():last_decl.end()].lstrip().startswith("static") else ""
-        decl = f'\n{static}const u16 {sym}[] = INCGFX_U16("{png}", ".4bpp");'
+        decl = "\n" + self._frame_decl(sym, png, static, clean)
         text = text[:last_decl.end()] + decl + text[last_decl.end():]
         self._write(text)
         seq = list(a.sequence)
@@ -923,7 +925,8 @@ class TilesetAnims:
         dest = f"NUM_TILES_IN_PRIMARY + {rel}" if secondary else str(rel)
         if version == "frlg" and secondary:
             dest = f"NUM_TILES_IN_PRIMARY_FRLG + {rel}" if "NUM_TILES_IN_PRIMARY_FRLG" in self.dp.defines else str(tile)
-        code = "\n".join(f'const u16 {table}_Frame{i}[] = INCGFX_U16("{p}", ".4bpp");' for i, p in enumerate(pngs))
+        clean = strip_comments(self._read())
+        code = "\n".join(self._frame_decl(f"{table}_Frame{i}", p, "", clean) for i, p in enumerate(pngs))
         code += f"\n\nconst u16 *const {table}[] = {{\n" + ",\n".join(f"    {table}_Frame{i}" for i in range(frames))
         code += "\n};\n\n"
         code += (f"static void {queue}(u16 timer)\n{{\n    u16 i = timer % ARRAY_COUNT({table});\n"
@@ -981,6 +984,32 @@ class TilesetAnims:
             notes.append(f"the counter wraps at {cmax}, which is not a multiple of {period}: the animation will "
                          "skip a little once per cycle")
         return {"anim": anim.as_dict(), "notes": notes, "pngs": pngs}
+
+    @staticmethod
+    def _frame_decl(sym: str, png: str, static: str, text: str) -> str:
+        """A frame's declaration, in the style the file already uses (INCGFX_U16 from the PNG, or INCBIN_U16 of the
+        .4bpp that older trees build from it)."""
+        styles = {m.group(2) for m in FRAME_RE.finditer(text)}
+        if "BIN" in styles and "GFX" not in styles:
+            return f'{static}const u16 {sym}[] = INCBIN_U16("{re.sub(r"[.]png$", "", png)}.4bpp");'
+        return f'{static}const u16 {sym}[] = INCGFX_U16("{png}", ".4bpp");'
+
+    def retarget(self, anim_id: str, tile: int, count: int, version: str) -> TileAnim:
+        """Point an animation made by ``create`` at other tiles (``tile``, global id) and another tile count."""
+        a = self.get(anim_id)
+        text = self._read()
+        f = self.functions(strip_comments(text)).get(a.queue)
+        if f is None or len(a.slots) != 1:
+            raise DecompError(f"{a.id} isn't a simple animation (one copy); change it by hand")
+        _, npt, _ = self.maps.consts(version)
+        dest = f"NUM_TILES_IN_PRIMARY + {tile - npt}" if tile >= npt else str(tile)
+        body = text[f["body_start"]:f["end"]]
+        new = re.sub(r"TILE_OFFSET_4BPP\([^)]*\)", f"TILE_OFFSET_4BPP({dest})", body, count=1)
+        new = re.sub(r"\b\d+\s*\*\s*TILE_SIZE_4BPP", f"{count} * TILE_SIZE_4BPP", new, count=1)
+        if new == body:
+            raise DecompError(f"couldn't find where {a.queue} copies its tiles")
+        self._write(text[:f["body_start"]] + new + text[f["end"]:])
+        return self.get(anim_id)
 
     def _triggers_of(self, callback: str) -> list[int]:
         f = self.functions(strip_comments(self._read())).get(callback)

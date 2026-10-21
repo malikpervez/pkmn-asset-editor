@@ -28,6 +28,9 @@ BUILD_SPEC = """\
   "palettes": {"primary": ["a.pal", ...],   // JASC files (or lists of 16 [r,g,b]), bank by bank: the primary's
                "secondary": ["c.pal", ...]},//  start at bank 0, the secondary's after the primary's (bank 7 on FRLG)
   "reserve": {"primary": [[434, 441]]},     // global tile ids to leave blank (e.g. door animation slots)
+  "animations": [                           // animated tiles: every metatile drawn from "image" animates; the
+    {"name": "Water", "image": "water.png", //  frames are images laid out like it (frame 0 is the image itself)
+     "frames": ["water_f1.png", "water_f2.png"], "speed": 16}],  // game frames per animation frame
   "metatiles": [
     {"name": "grass", "tileset": "primary", "image": "ground.png", "x": 0, "y": 0, "behavior": "MB_NORMAL"},
     {"name": "house", "tileset": "secondary", "image": "house.png", "x": 0, "y": 0, "w": 5, "h": 4,
@@ -39,7 +42,7 @@ BUILD_SPEC = """\
 }
 Edge variants for `pae map paint`: name metatiles "path#0" ... "path#15" (the number says which neighbours are path
 too: 1 north, 2 east, 4 south, 8 west) and use {"auto": "path"} in the legend; {"pick": ["grass", "grass2"]}
-spreads variants."""
+spreads variants; {"tile": "forest"} repeats a stamp as a pattern (block x, y shows its piece x mod w, y mod h)."""
 
 
 def _snake(symbol: str) -> str:
@@ -177,6 +180,15 @@ def build(maps, spec_path) -> dict:
     attrs: dict[str, list] = {"primary": [], "secondary": []}
     names: dict[str, dict] = {}
     images: dict[str, np.ndarray] = {}
+    anims = []
+    for a in spec.get("animations", []):
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", a.get("name", "")):
+            raise DecompError("animation names may use letters, digits and _ (e.g. Water)")
+        if not a.get("frames"):
+            raise DecompError(f"animation {a['name']}: give its frames (images laid out like {a.get('image')})")
+        anims.append({"name": a["name"], "frames": [a["image"]] + list(a["frames"]), "speed": int(a.get("speed", 16)),
+                      "where": None, "tiles": [], "keys": {}})
+    anim_of = {a["frames"][0]: a for a in anims}
 
     def image(rel: str) -> np.ndarray:
         if rel not in images:
@@ -207,6 +219,26 @@ def build(maps, spec_path) -> dict:
         tid, hf, vf = tiles[where].get(px)
         return tid | (hf << 10) | (vf << 11) | (bank << 12)
 
+    def anim_entry(a: dict, where: str, ax: int, ay: int, banks: list[int]):
+        """An animated tile: its pixels in every frame (frame 0's bank for all). Placed after the loop."""
+        bank, px0 = to_tile(image(a["frames"][0])[ay:ay + 8, ax:ax + 8], banks)
+        pxs = [px0]
+        for f in a["frames"][1:]:
+            fr = image(f)
+            if fr.shape != image(a["frames"][0]).shape:
+                raise DecompError(f"animation {a['name']}: {f} must be the size of {a['frames'][0]}")
+            pxs.append(to_tile(fr[ay:ay + 8, ax:ax + 8], [bank])[1])
+        if not any(p.any() for p in pxs):
+            return 0
+        if a["where"] not in (None, where):
+            raise DecompError(f"animation {a['name']}: its metatiles must all be in one tileset")
+        a["where"] = where
+        key = b"".join(p.tobytes() for p in pxs)
+        if key not in a["keys"]:
+            a["keys"][key] = len(a["tiles"])
+            a["tiles"].append(pxs)
+        return ("anim", a["name"], a["keys"][key], bank)
+
     for m in spec.get("metatiles", []):
         where = m.get("tileset", "secondary" if "secondary" in sides else "primary")
         if where not in sides:
@@ -233,8 +265,13 @@ def build(maps, spec_path) -> dict:
         for by in range(h):
             for bx in range(w):
                 cell = art[by * 16:(by + 1) * 16, bx * 16:(bx + 1) * 16]
-                quad = [entry(where, cell[qy * 8:qy * 8 + 8, qx * 8:qx * 8 + 8], row_banks.get(by, banks))
-                        for qy in (0, 1) for qx in (0, 1)]
+                anim = anim_of.get(m["image"])
+                if anim is not None:
+                    quad = [anim_entry(anim, where, x0 + bx * 16 + qx * 8, y0 + by * 16 + qy * 8,
+                                       row_banks.get(by, banks)) for qy in (0, 1) for qx in (0, 1)]
+                else:
+                    quad = [entry(where, cell[qy * 8:qy * 8 + 8, qx * 8:qx * 8 + 8], row_banks.get(by, banks))
+                            for qy in (0, 1) for qx in (0, 1)]
                 if ground is not None:
                     row = list(gw[:4]) + quad
                     layer = 0 if by < int(m.get("over_rows", 0)) else 1  # NORMAL: top over sprites; COVERED
@@ -254,6 +291,27 @@ def build(maps, spec_path) -> dict:
         open_ = [int(a) + int(b) * w for a, b in (c.split(",") for c in m.get("open", []))]
         names[m.get("name", f"m{len(names)}")] = {"ids": ids, "w": w, "h": h, "solid": bool(m.get("solid", False)),
                                                   "elevation": m.get("elevation"), "open": open_}
+    # animated tiles go after the others, in one run (the game copies each frame over the run)
+    placed = {}
+    for a in anims:
+        if not a["tiles"]:
+            raise DecompError(f"animation {a['name']}: no metatile is drawn from {a['frames'][0]}")
+        st = tiles[a["where"]]
+        n = len(a["tiles"])
+        start = len(st.pixels)
+        while any(st.base + t in st.reserved for t in range(start, start + n)):
+            start += 1
+        if start + n > st.limit:
+            raise DecompError(f"out of tiles: animation {a['name']} needs {n} more, the tileset holds {st.limit}")
+        st.pixels += [np.zeros((8, 8), np.uint8)] * (start - len(st.pixels)) + [p[0].copy() for p in a["tiles"]]
+        a["first"] = st.base + start
+        placed[a["name"]] = a
+    for where in metas:
+        for row in metas[where]:
+            for i, v in enumerate(row):
+                if isinstance(v, tuple):
+                    a = placed[v[1]]
+                    row[i] = (a["first"] + v[2]) | (v[3] << 12)
     limits = {"primary": npm, "secondary": 1024 - npm}
     for where, ts in sides.items():
         if len(metas[where]) > limits[where]:
@@ -283,11 +341,59 @@ def build(maps, spec_path) -> dict:
                 rel = rel if rel.endswith(".pal") else re.sub(r"\.gbapal$", ".pal", rel)
                 maps.dp._backup(rel)
                 write_jasc(maps.root / rel, cols)
+    anim_out = [_write_animation(maps, a, sides, version, pals) for a in anims]
     out = {"version": version, "tilesets": {k: v.symbol for k, v in sides.items()}, "metatiles": names,
            "tiles": {k: len(tiles[k].pixels) for k in sides}, "metatile_counts": {k: len(metas[k]) for k in sides}}
+    if anim_out:
+        out["animations"] = anim_out
     (sdir / "names.json").write_text(json.dumps(out, indent=1) + "\n")
     maps.dp._changed = None
     return out
+
+
+def _write_animation(maps, a: dict, sides: dict, version: str, pals: dict) -> dict:
+    """Write an animation's frame PNGs; add its code to tileset_anims.c the first time, else keep the code in step
+    (where the tiles are and how many)."""
+    import tempfile
+
+    from .gfx import Layout, tiles_to_image
+    from .tileset_anims import TilesetAnims, _camel
+
+    ts = sides[a["where"]]
+    n, nframes = len(a["tiles"]), len(a["frames"])
+    w = max(d for d in range(1, min(n, 16) + 1) if n % d == 0)
+    bank = next((b for b in sorted(pals) if (b < maps.consts(version)[2]) == (a["where"] == "primary")), 0)
+    plte = [v for c in pals.get(bank, [(i * 16,) * 3 for i in range(16)]) for v in c]
+
+    def frame_image(k: int) -> Image.Image:
+        im = Image.fromarray(tiles_to_image(np.array([t[k] for t in a["tiles"]]), Layout.sheet(n, w)), "P")
+        im.putpalette(plte + [0] * (768 - len(plte)))
+        return im
+    ta = TilesetAnims(maps)
+    base = f"{re.sub(r'^gTileset_', '', ts.symbol)}_{_camel(a['name'])}"
+    data = ta.parse()
+    existing = data["anims"].get(base)
+    prim = sides.get("primary").symbol if "primary" in sides else None
+    sec = sides.get("secondary").symbol if "secondary" in sides else None
+    if existing is None:
+        with tempfile.TemporaryDirectory() as tmp:
+            files = []
+            for k in range(nframes):
+                f = Path(tmp) / f"{k}.png"
+                frame_image(k).save(f)
+                files.append(str(f))
+            res = ta.create((prim, sec, version), a["name"], a["first"], n, period=a["speed"], frame_files=files)
+        return {"name": base, "first_tile": a["first"], "tiles": n, "frames": nframes, "notes": res["notes"]}
+    if len(existing.frames) != nframes:
+        raise DecompError(f"animation {base} has {len(existing.frames)} frames in {ta.path.name}, the spec "
+                          f"{nframes}; change the frame count with `pae anim add-frame/remove-frame`")
+    for k, sym in enumerate(existing.frames):
+        rel = existing.pngs.get(sym)
+        maps.dp._backup(rel)
+        frame_image(k).save(maps.root / rel)
+    if existing.count != n or [s.dest for s in existing.slots] != [a["first"]]:
+        ta.retarget(base, a["first"], n, version)
+    return {"name": base, "first_tile": a["first"], "tiles": n, "frames": nframes, "notes": []}
 
 
 # ---------------------------------------------------------------------- paint
@@ -321,12 +427,20 @@ def paint(maps, map_name: str, grid: str, legend: dict, names: dict, which: str 
                                      if n in meta), item["auto"])
             elif "pick" in item:  # a variant chosen by position (the same every time)
                 item["name"] = item["pick"][(x * 7919 + y * 104729 + (x * y) % 13) % len(item["pick"])]
+            elif "tile" in item:  # a stamp repeated as a pattern: each block shows the piece at its position
+                item["name"] = item["tile"]
             m = meta.get(item["name"])
             if m is None:
                 raise DecompError(f"legend '{ch}': unknown metatile {item['name']}")
             solid = item.get("solid", m.get("solid", False))
             elev = item.get("elevation", m.get("elevation"))
             elev = 3 if elev is None else int(elev)
+            if "tile" in item:
+                k = (y % m["h"]) * m["w"] + x % m["w"]
+                blocked = bool(solid) and k not in m.get("open", [])
+                out[y, x] = m["ids"][k] | (int(blocked) << 10) | (elev << 12)
+                done[y, x] = True
+                continue
             for j in range(m["h"]):
                 for i in range(m["w"]):
                     yy, xx = y + j, x + i
