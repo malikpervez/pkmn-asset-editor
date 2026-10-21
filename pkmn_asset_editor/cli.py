@@ -304,7 +304,7 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--x", type=int, help="place the result with its top-left block here")
     q.add_argument("--y", type=int)
     q.add_argument("--base", help="metatile id whose ground goes under transparent pixels (default with "
-                                  "--x/--y: the block already there)")
+                                  "--x/--y: each block keeps the ground of the block it covers)")
     q.add_argument("--bank", type=int, help="palette bank to use (default: best match)")
     q.add_argument("--new-palette", action="store_true", help="write the art's colours into --bank")
     q.add_argument("--solid", action="store_true", help="make the placed blocks impassable")
@@ -879,9 +879,17 @@ def _run(args) -> int:
         elif args.map_cmd == "import-art":
             base = int(args.base, 0) if args.base else None
             lay = m.layout_of(args.name)
+            bases = None
             if base is None and args.x is not None and args.y is not None:
-                base = int(m.read_blocks(lay)[args.y, args.x]) & 0x3FF
-            r = m.tileset_editor.import_image(args.name, args.image, base, args.bank, args.new_palette)
+                # each block keeps the ground of the block it covers (lawn edges, paths)
+                from PIL import Image
+                with Image.open(args.image) as im:
+                    bw, bh = -(-im.width // 16), -(-im.height // 16)
+                cur = m.read_blocks(lay)
+                yy = [min(max(args.y + j, 0), cur.shape[0] - 1) for j in range(bh)]
+                xx = [min(max(args.x + i, 0), cur.shape[1] - 1) for i in range(bw)]
+                bases = [int(cur[y, x]) & 0x3FF for y in yy for x in xx]
+            r = m.tileset_editor.import_image(args.name, args.image, base, args.bank, args.new_palette, bases=bases)
             for n in r["notes"]:
                 print(f"note: {n}")
             rows = [r["ids"][y * r["w"]:(y + 1) * r["w"]] for y in range(r["h"])]

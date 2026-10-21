@@ -124,3 +124,26 @@ def test_cli_and_mcp(proj, tmp_path, capsys):
     mt = json.loads(call("get_metatile", name="Town", id=r["ids"][0])["content"][0]["text"])
     assert not call("set_metatile", name="Town", id=r["ids"][0], behavior="MB_DOOR")["isError"]
     assert json.loads(call("validate")["content"][0]["text"])["ok"]
+
+
+def test_import_art_keeps_each_blocks_ground(proj, tmp_path):
+    te = proj.maps.tileset_editor
+    src = art(tmp_path / "mill.png")
+    r = te.import_image("Town", src, bases=[0, 1, 1, 0])
+    for mid, base in zip(r["ids"], [0, 1, 1, 0]):
+        assert te.get_metatile("Town", mid)["entries"][:4] == te.get_metatile("Town", base)["entries"][:4]
+        assert te.get_metatile("Town", mid)["layer_type"] == 1
+    with pytest.raises(DecompError, match="one per block"):
+        te.import_image("Town", src, bases=[0, 1])
+    # placing with the CLI keeps the ground of the blocks it covers
+    m = proj.maps
+    b = m.read_blocks(m.layout_of("Town")).copy()
+    b[2, 2], b[2, 3], b[3, 2], b[3, 3] = 0, 1, 0, 1
+    m.write_blocks("Town", b)
+    assert main(["map", "import-art", "Town", str(src), "--x", "2", "--y", "2", "-p", str(proj.root)]) == 0
+    m = DecompProject(proj.root).maps
+    te = m.tileset_editor
+    placed = m.read_blocks(m.layout_of("Town"))
+    for (y, x), base in {(2, 2): 0, (2, 3): 1, (3, 2): 0, (3, 3): 1}.items():
+        assert te.get_metatile("Town", int(placed[y, x]) & 0x3FF)["entries"][:4] == \
+            te.get_metatile("Town", base)["entries"][:4]
