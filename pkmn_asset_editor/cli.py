@@ -370,13 +370,19 @@ def main(argv: list[str] | None = None) -> int:
     ssub2 = p.add_subparsers(dest="seam_cmd", required=True)
     q = with_project(ssub2.add_parser("build", help="adapters between a map and each neighbour with other tilesets"))
     q.add_argument("name")
+    q.add_argument("--skip", action="append", default=[], metavar="MAP",
+                   help="leave this neighbour without seams either way (e.g. no room in it until it's rebuilt)")
     p = sub.add_parser("door", help="source tree: door animations for doors you drew")
     dsub = p.add_subparsers(dest="door_cmd", required=True)
-    q = with_project(dsub.add_parser("add", help="animate the door at X,Y of a map (its panel slides up)"))
+    q = with_project(dsub.add_parser("add", help="animate the door at X,Y of a map (its panel slides up, or drawn "
+                                                 "frames)"))
     q.add_argument("name")
     q.add_argument("x", type=int)
     q.add_argument("y", type=int)
-    q.add_argument("--panel", required=True, help="the door panel inside the 16x16 block: x0,y0,x1,y1 (pixels)")
+    how = q.add_mutually_exclusive_group(required=True)
+    how.add_argument("--panel", help="the door panel inside the 16x16 block: x0,y0,x1,y1 (pixels)")
+    how.add_argument("--frames", help="three drawn frames side by side: 48x16, or 48x32 for a tall door (with the "
+                                      "block above)")
     q.add_argument("--sound", choices=["normal", "sliding"], default="normal")
     p = sub.add_parser("anim", help="source tree: tileset animations - water, flowers, waterfalls… (see `pae anim -h`)")
     asub = p.add_subparsers(dest="anim_cmd", required=True)
@@ -1406,19 +1412,26 @@ def _run(args) -> int:
         m = getattr(proj, "maps", None)
         if m is None:
             raise ProjectError("doors need a pokeemerald-style source tree")
-        panel = tuple(int(v) for v in args.panel.split(","))
-        if len(panel) != 4:
-            raise ProjectError("--panel is x0,y0,x1,y1")
-        r = doors.add(m, args.name, args.x, args.y, panel, args.sound)
-        print(f"door metatile 0x{r['metatile']:03X} of {r['tileset']} animates (palettes {r['banks']}); "
-              f"wrote {doors.HEADER}")
+        panel = image = None
+        if args.panel:
+            panel = tuple(int(v) for v in args.panel.split(","))
+            if len(panel) != 4:
+                raise ProjectError("--panel is x0,y0,x1,y1")
+        else:
+            import numpy as np
+            from PIL import Image
+            with Image.open(args.frames) as im:
+                image = np.array(im.convert("RGBA"))
+        r = doors.add(m, args.name, args.x, args.y, panel, args.sound, frames_image=image)
+        print(f"door metatile 0x{r['metatile']:03X} of {r['tileset']} animates "
+              f"({'tall, ' if r['size'] == 2 else ''}palettes {r['banks']}); wrote {doors.HEADER}")
         return 0
     if args.cmd == "seam":
         from . import seams
         m = getattr(proj, "maps", None)
         if m is None:
             raise ProjectError("seams need a pokeemerald-style source tree")
-        for r in seams.build(m, args.name):
+        for r in seams.build(m, args.name, args.skip):
             print(f"{r['target']}: {r['adapters']} adapter metatiles for {', '.join(r['sources'])}; "
                   f"{r['glyphs']} tiles, palette slot(s) {', '.join(map(str, r['palettes']))}")
         print(f"wrote {seams.HEADER} (from {seams.RECORD})")
