@@ -145,6 +145,10 @@ def test_seams_and_doors(root, tmp_path):
     assert c.count('#include "data/pae_seams.h"') == 1 and "    PAE_SEAMS\n" in c
     seams.build(m, "Town")  # again: still once
     assert (root / "src/kanto_connection_seam.c").read_text().count("PAE_SEAMS") == 1
+    # a neighbour skipped (no room in it yet): no seams either way, until a build that doesn't skip it
+    assert seams.build(m, "Town", skip=["Town_House1"]) == []
+    assert json.loads((root / "src/data/pae_seams.json").read_text()) == {}
+    assert {x["target"] for x in seams.build(m, "Town")} == {"Town", "Town_House1"}
     (root / "src/field_door.c").write_text(
         "static const struct DoorGraphics sDoorAnimGraphicsTable[] =\n{\n    {},\n};\n")
     d = doors.add(m, "Town", 2, 1, (4, 4, 12, 16))

@@ -370,6 +370,8 @@ def main(argv: list[str] | None = None) -> int:
     ssub2 = p.add_subparsers(dest="seam_cmd", required=True)
     q = with_project(ssub2.add_parser("build", help="adapters between a map and each neighbour with other tilesets"))
     q.add_argument("name")
+    q.add_argument("--skip", action="append", default=[], metavar="MAP",
+                   help="leave this neighbour without seams either way (e.g. no room in it until it's rebuilt)")
     p = sub.add_parser("door", help="source tree: door animations for doors you drew")
     dsub = p.add_subparsers(dest="door_cmd", required=True)
     q = with_project(dsub.add_parser("add", help="animate the door at X,Y of a map (its panel slides up, or drawn "
@@ -1429,7 +1431,7 @@ def _run(args) -> int:
         m = getattr(proj, "maps", None)
         if m is None:
             raise ProjectError("seams need a pokeemerald-style source tree")
-        for r in seams.build(m, args.name):
+        for r in seams.build(m, args.name, args.skip):
             print(f"{r['target']}: {r['adapters']} adapter metatiles for {', '.join(r['sources'])}; "
                   f"{r['glyphs']} tiles, palette slot(s) {', '.join(map(str, r['palettes']))}")
         print(f"wrote {seams.HEADER} (from {seams.RECORD})")

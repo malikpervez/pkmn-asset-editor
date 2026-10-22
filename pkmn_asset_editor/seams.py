@@ -357,17 +357,20 @@ def existing_targets(maps) -> set[str]:
     return set(re.findall(r"\{\s*&(\w+)\s*,", body[1].split("};", 1)[0])) if len(body) == 2 else set()
 
 
-def build(maps, map_name: str) -> list[dict]:
-    """Record seams between ``map_name`` and each neighbour with other tilesets, then regenerate the header."""
+def build(maps, map_name: str, skip=()) -> list[dict]:
+    """Record seams between ``map_name`` and each neighbour with other tilesets, then regenerate the header.
+    ``skip``: neighbours left without seams either way (e.g. one with no room for them until it's rebuilt); their
+    pairs are dropped from the record, and come back at a build that doesn't skip them."""
     if not (maps.root / SEAM_C).exists():
         raise DecompError(f"this game has no {SEAM_C} (connection seams are a feature of that fork)")
     name = maps.resolve(map_name)
     rec_path = maps.root / RECORD
     record = json.loads(rec_path.read_text()) if rec_path.exists() else {}
     lay = maps.layout_of(name)
+    skip = {maps.resolve(x) for x in skip}
     for c in maps.get_map(name).get("connections") or []:
         other = maps.map_by_id.get(c.get("map"))
-        if other is None or c.get("direction") not in ("up", "down", "left", "right"):
+        if other is None or c.get("direction") not in ("up", "down", "left", "right") or other in skip:
             continue
         if _same_tilesets(lay, maps.layout_of(other)):
             continue
@@ -376,8 +379,8 @@ def build(maps, map_name: str) -> list[dict]:
             if s not in record[t]:
                 record[t].append(s)
     # drop pairs that share tilesets now
-    record = {t: [s for s in srcs if not _same_tilesets(maps.layout_of(t), maps.layout_of(s))]
-              for t, srcs in record.items()}
+    record = {t: [s for s in srcs if not _same_tilesets(maps.layout_of(t), maps.layout_of(s)) and s not in skip]
+              for t, srcs in record.items() if t not in skip}
     record = {t: s for t, s in sorted(record.items()) if s}
     hand = existing_targets(maps)
     plans = []
