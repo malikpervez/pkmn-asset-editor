@@ -145,12 +145,35 @@ class MapEditor:
         self._parse_tilesets()
         self._labels = None
 
+    INLINE_DIR = Path(".pae") / "cache" / "inline"  # metatiles written out as C arrays, as .bin (read only)
+
+    def _inline_metatiles(self, sf: dict[str, str]) -> dict[str, str]:
+        """Metatiles a tileset has as a C array (``const u16 gMetatiles_X[] = { 0x0000, ... };``) rather than an
+        INCBIN: each written to the cache as a .bin, so they can be read like the others (pae can't change them)."""
+        src = self.root / "src" / "data" / "tilesets" / "metatiles.h"
+        out: dict[str, str] = {}
+        if not src.exists():
+            return out
+        for m in re.finditer(r"\bconst\s+u16\s+(\w+)\s*\[\s*\]\s*=\s*\{(.*?)\};", strip_comments(src.read_text()), re.S):
+            if m.group(1) in sf:
+                continue
+            words = [int(v, 0) for v in re.findall(r"\b(?:0x[0-9A-Fa-f]+|\d+)\b", m.group(2))]
+            rel = self.INLINE_DIR / f"{m.group(1)}.bin"
+            data = b"".join(w.to_bytes(2, "little") for w in words)
+            path = self.root / rel
+            if not path.exists() or path.read_bytes() != data:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(data)
+            out[m.group(1)] = rel.as_posix()
+        return out
+
     def _parse_tilesets(self) -> None:
         self.tilesets: dict[str, TilesetInfo] = {}
         headers = self.root / "src" / "data" / "tilesets" / "headers.h"
         if not headers.exists():
             return
-        sf = self.dp.symbol_file
+        sf = dict(self.dp.symbol_file)
+        sf.update(self._inline_metatiles(sf))
         pal_files: dict[str, list[tuple[int, str]]] = {}
         for r in self.dp.refs:
             m = re.match(r"(\w+)\[(\d+)\]$", r.symbol)
@@ -158,8 +181,8 @@ class MapEditor:
                 pal_files.setdefault(m.group(1), []).append((int(m.group(2)), r.file))
         for m in re.finditer(r"struct Tileset\s+(\w+)\s*=\s*\{(.*?)\};", strip_comments(headers.read_text()), re.S):
             body = m.group(2)
-            field_ = lambda k: (re.search(rf"\.{k}\s*=\s*(\w+)", body) or [None, None])[1]
-            pals = [f for _, f in sorted(pal_files.get(field_("palettes") or "", []))]
+            field_ = lambda k: self.dp.resolve_symbol((re.search(rf"\.{k}\s*=\s*(\w+)", body) or [None, ""])[1] or "")
+            pals = [f for _, f in sorted(pal_files.get(field_("palettes"), []))]
             self.tilesets[m.group(1)] = TilesetInfo(
                 m.group(1), (field_("isSecondary") or "FALSE") == "TRUE", sf.get(field_("tiles") or ""), pals,
                 sf.get(field_("metatiles") or ""), sf.get(field_("metatileAttributes") or ""))

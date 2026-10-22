@@ -42,6 +42,9 @@ from .gfx import (GRAYSCALE16, RGB, Layout, LoadedImage, decode_tiles, encode_ti
 INC_RE = re.compile(r"\bINC(GFX|BIN)_(?:U8|U16|U32|COMP|32)\s*\(")
 DECL_RE = re.compile(r"(\w+)\s*(?:\[[^\]]*\])+\s*=")
 STR_RE = re.compile(r'"([^"]*)"')
+# `extern const u32 gTilesetTiles_Mart[142] __attribute__((alias("gTilesetTiles_KantoMart_Hns")));`: a symbol that is
+# another one's data (graphics the build stores once)
+ALIAS_RE = re.compile(r'(\w+)\s*(?:\[[^\]]*\]\s*)*__attribute__\s*\(\(\s*alias\s*\(\s*"(\w+)"\s*\)\s*\)\)')
 IDENT_RE = re.compile(r"\b[gs][A-Z]\w*\b")
 DEFINE_RE = re.compile(r"^\s*#define\s+(\w+)\s+([^\s/]+)", re.M)
 
@@ -164,6 +167,19 @@ def strip_comments(text: str) -> str:
     return _COMMENT_RE.sub(repl, text)
 
 
+def scan_aliases(root: Path) -> dict[str, str]:
+    """Symbols declared as another symbol's alias (``__attribute__((alias("X")))``): alias -> its target."""
+    out: dict[str, str] = {}
+    for f in list((root / "src").rglob("*.[ch]")) + list((root / "include").rglob("*.h")):
+        try:
+            text = f.read_text(errors="replace")
+        except OSError:
+            continue
+        if "alias" in text:
+            out.update(ALIAS_RE.findall(strip_comments(text)))
+    return out
+
+
 def scan_references(root: Path) -> list[Ref]:
     refs: list[Ref] = []
     files = list((root / "src").rglob("*.[ch]")) + list((root / "include").rglob("*.h"))
@@ -283,6 +299,14 @@ class DecompProject:
         self.reindex()
 
     # ------------------------------------------------------------------ indexing
+    def resolve_symbol(self, sym: str) -> str:
+        """The symbol that holds ``sym``'s data: itself, or what its alias (chain) points to."""
+        seen = set()
+        while sym in getattr(self, "aliases", {}) and sym not in seen:
+            seen.add(sym)
+            sym = self.aliases[sym]
+        return sym
+
     def reindex(self) -> None:
         t0 = time.time()
         root = self.root
@@ -296,6 +320,11 @@ class DecompProject:
         for r in self.refs:
             if r.symbol:
                 self.symbol_file.setdefault(r.symbol, r.file)
+        self.aliases = scan_aliases(root)
+        for a in self.aliases:  # an alias reads its target's file
+            target = self.resolve_symbol(a)
+            if target in self.symbol_file:
+                self.symbol_file.setdefault(a, self.symbol_file[target])
         files = set()
         for top in ("graphics", "data/tilesets"):
             base = root / top

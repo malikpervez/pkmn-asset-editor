@@ -535,3 +535,32 @@ def test_ground_for_each_block(root, tmp_path):
     (art / "spec.json").write_text(json.dumps(spec))
     with pytest.raises(DecompError, match="1 grounds for its 2 blocks"):
         tb.build(m, art / "spec.json")
+
+
+def test_tilesets_by_alias_and_inline_arrays(root):
+    """A tileset whose data is another's (``__attribute__((alias(...)))``) or whose metatiles are written out as a C
+    array resolves like the others: maps using it render and walk; the inline metatiles are read only."""
+    g = root / "src/data/tilesets/graphics.h"
+    g.write_text(g.read_text() + 'extern const u32 gTilesetTiles_Shop[] __attribute__((alias("gTilesetTiles_Town")));\n'
+                 'extern const u16 gTilesetPalettes_Shop[16][16] __attribute__((alias("gTilesetPalettes_Town")));\n')
+    mt = root / "src/data/tilesets/metatiles.h"
+    words = ", ".join("0x0201" for _ in range(8 * 8))
+    mt.write_text(mt.read_text() + 'extern const u16 gMetatiles_Shop[] __attribute__((alias("gMetatiles_Town")));\n'
+                  f"const u16 gMetatiles_Cave[] =\n{{\n    {words}, // eight metatiles (the house uses its sixth)\n}};\n")
+    h = root / "src/data/tilesets/headers.h"
+    for sym, metas in (("Shop", "gMetatiles_Shop"), ("Cave", "gMetatiles_Cave")):
+        h.write_text(h.read_text() + f"const struct Tileset gTileset_{sym} =\n{{\n    .isCompressed = TRUE,\n"
+                     "    .isSecondary = TRUE,\n    .tiles = gTilesetTiles_Shop,\n    .palettes = gTilesetPalettes_Shop,\n"
+                     f"    .metatiles = {metas},\n    .metatileAttributes = gMetatileAttributes_Town,\n}};\n")
+    m = DecompProject(root).maps
+    shop, cave, town = (m.tilesets[f"gTileset_{s}"] for s in ("Shop", "Cave", "Town"))
+    assert (shop.tiles, shop.palettes, shop.metatiles) == (town.tiles, town.palettes, town.metatiles)
+    assert (root / cave.metatiles).read_bytes() == b"\x01\x02" * 64
+    for ts in ("gTileset_Shop", "gTileset_Cave"):
+        m.set_geometry("Town_House1", secondary_tileset=ts)
+        assert walk.walk(m, "Town_House1", [(1, 2), (4, 3)])[1] == (4, 3)
+        m.render("Town_House1")
+    te = m.tileset_editor
+    _, sec, version = te.sides(m.layout_of("Town_House1"))
+    with pytest.raises(DecompError, match="C array"):
+        te._write_metas(sec, version, te._read_metas(sec), [0] * 8)

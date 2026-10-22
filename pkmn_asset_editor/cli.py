@@ -433,6 +433,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--gif", help="also record the inputs as an animated GIF")
     p.add_argument("--no-build", action="store_true", help="use the existing ROM without running make")
     p.add_argument("--scale", type=int, default=2)
+    p.add_argument("--show-flag", action="append", default=[], help="print this flag's value at the end (repeatable)")
+    p.add_argument("--show-var", action="append", default=[], help="print this variable's value at the end (repeatable)")
 
     p = sub.add_parser("test", help="source tree: replay tests - play something once, replay it after every change")
     tsub = p.add_subparsers(dest="test_cmd", required=True)
@@ -907,6 +909,10 @@ def _run(args) -> int:
         try:
             first = _start_play(proj, args)
             final, frames = proj.play.press(args.inputs, record_every=4 if args.gif else 0) if args.inputs else (first, [])
+            for name, value in proj.play.flags(args.show_flag).items():
+                print(f"flag {name} = {value}")
+            for name, value in proj.play.vars(args.show_var).items():
+                print(f"var {name} = {value}")
             if args.save_as:
                 print(f"saved checkpoint {proj.play.save_checkpoint(args.save_as)['name']}")
         except PlaytestError as e:

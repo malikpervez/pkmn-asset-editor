@@ -512,6 +512,10 @@ How the graphics are organised (source tree):
   `INCBIN_*` references in `src/` (symbol names, output format, gbagfx
   arguments such as frame sizes), grouped into categories (pokemon, trainers,
   items, battle_anims, overworld, tilesets, …). Unreferenced files are flagged.
+  A symbol declared as another's alias (`__attribute__((alias("…")))`, graphics
+  the build stores once) reads its target's file; a tileset whose metatiles are
+  written out as a C array is read from that array (maps using it render and
+  plan walks), but pae won't change them.
 * **The palette each image really uses in game**, which is often not the PNG's
   own palette:
   * Pokémon sprites → `normal.pal` / `shiny.pal`. Forms inherit from the parent
@@ -587,6 +591,7 @@ pae play PetalburgCity --state "FLAG_BADGE01_GET, VAR_PETALBURG_GYM_STATE=2, ITE
     --script PetalburgCity_EventScript_GymSign --save-as gym-test
 pae checkpoint import before-gym ~/emerald.sav       # use a save from your emulator / flash cart
 pae play --from before-gym                           # continue it where it was saved
+pae play --from before-gym --show-flag FLAG_BADGE01_GET --show-var VAR_PETALBURG_GYM_STATE   # the story state it has
 
 # items, moves, TMs, shops, levels, new Pokémon
 pae item set ITEM_SUPER_POTION --price 600

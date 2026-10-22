@@ -162,6 +162,17 @@ def test_checkpoint_real_rom(tmp_path):
         session.close()
 
 
+@pytest.mark.skipif(not EXPANSION, reason="set PAE_TEST_EXPANSION to a built pokeemerald-expansion checkout")
+def test_play_shows_flags_and_vars(tmp_path, capsys):
+    from pkmn_asset_editor.cli import main
+    assert main(["play", "PetalburgCity", "-p", EXPANSION, "--no-build", "--x", "17", "--y", "11",
+                 "--state", "FLAG_BADGE01_GET", "--state", "VAR_PETALBURG_GYM_STATE=2", "--inputs", "wait 5",
+                 "--show-flag", "FLAG_BADGE01_GET", "--show-var", "VAR_PETALBURG_GYM_STATE",
+                 "-o", str(tmp_path / "x.png")]) == 0
+    out = capsys.readouterr().out
+    assert "flag FLAG_BADGE01_GET = True" in out and "var VAR_PETALBURG_GYM_STATE = 2" in out
+
+
 def test_clock_env(monkeypatch):
     monkeypatch.delenv("PAE_CLOCK", raising=False)
     env = pt.clock_env()  # noon (UTC) unless told otherwise: the same tint on every computer

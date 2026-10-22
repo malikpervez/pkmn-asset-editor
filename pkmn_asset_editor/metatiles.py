@@ -84,6 +84,9 @@ class TilesetEditor:
         return (vals + [0] * count)[:count]
 
     def _write_metas(self, side: Side, version: str, metas: np.ndarray, attrs: list[int]) -> None:
+        if Path(side.metatiles_file).parent == self.maps.INLINE_DIR:
+            raise DecompError(f"{side.symbol}'s metatiles are a C array in src/data/tilesets/metatiles.h; pae can "
+                              "read them but not change them (to edit them, move them to a .bin with INCBIN_U16)")
         for f in (side.metatiles_file, side.attrs_file):
             self.dp._backup(f)
         (self.root / side.metatiles_file).write_bytes(np.ascontiguousarray(metas, dtype="<u2").tobytes())
