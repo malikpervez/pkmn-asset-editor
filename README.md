@@ -591,6 +591,7 @@ pae play PetalburgCity --state "FLAG_BADGE01_GET, VAR_PETALBURG_GYM_STATE=2, ITE
     --script PetalburgCity_EventScript_GymSign --save-as gym-test
 pae checkpoint import before-gym ~/emerald.sav       # use a save from your emulator / flash cart
 pae play --from before-gym                           # continue it where it was saved
+pae play --from before-gym --show-flag FLAG_BADGE01_GET --show-var VAR_PETALBURG_GYM_STATE   # the story state it has
 
 # items, moves, TMs, shops, levels, new Pokémon
 pae item set ITEM_SUPER_POTION --price 600
