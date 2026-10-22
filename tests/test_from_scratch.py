@@ -161,6 +161,27 @@ def test_seams_and_doors(root, tmp_path):
     assert doors._still_a_door(m, rec[0]) and not doors._still_a_door(m, stale)
     doors.add(m, "Town", 2, 1, (4, 4, 12, 16))
     assert [r["metatile"] for r in json.loads((root / "src/data/pae_doors.json").read_text())] == [514]
+    # drawn frames for a tall door: the door block and the one above, as they are, then the doorway darkened
+    closed = [doors._block_rgb(m, "Town", int(m.read_blocks(m.layout_of("Town"))[y, 2]) & 0x3FF) for y in (0, 1)]
+    block = np.zeros((32, 16, 4), np.uint8)
+    for j, (rgbs, _, _) in enumerate(closed):
+        for q, t in enumerate(rgbs):
+            block[j * 16 + (q // 2) * 8:j * 16 + (q // 2) * 8 + 8, (q % 2) * 8:(q % 2) * 8 + 8, :3] = t
+    block[..., 3] = 255
+    strip = np.concatenate([block, block, block], axis=1)
+    dark = block[0, 0, :3].copy()  # a colour the house's palette has
+    strip[20:32, 36:44, :3] = dark  # the third frame: the doorway open
+    strip[0:4, 32:48, 3] = 0  # transparent: the block as it is
+    d = doors.add(m, "Town", 2, 1, frames_image=strip)
+    assert d["size"] == 2
+    r = json.loads((root / "src/data/pae_doors.json").read_text())[0]
+    assert r["size"] == 2 and len(r["frames"]) == 3 and len(r["frames"][0]) == 8 and len(r["banks"]) == 8
+    h = (root / "src/data/pae_doors.h").read_text()
+    assert "{ 514, &gTileset_NewTown, DOOR_SOUND_NORMAL, 2," in h
+    assert h.count("sPaeDoorTiles_0[768]") == 1  # three frames of 8 tiles
+    strip[0, 0, :3] = (1, 2, 3)  # a colour no palette of the block has
+    with pytest.raises(DecompError, match="colours"):
+        doors.add(m, "Town", 2, 1, frames_image=strip)
 
 
 def test_pattern_paint(root, tmp_path):
