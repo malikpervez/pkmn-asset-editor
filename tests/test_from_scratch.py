@@ -508,3 +508,30 @@ def test_ground_that_covers(root, tmp_path):
     dock = te.get_metatile("Town", names["metatiles"]["dock"]["ids"][0])["entries"]
     barrel_e = te.get_metatile("Town", names["metatiles"]["barrel"]["ids"][0])["entries"]
     assert barrel_e[:4] == dock[4:]  # the boards, not the grass under them
+
+
+def test_ground_for_each_block(root, tmp_path):
+    """A stamp's ground can be a list, one for each block (row by row); a list of the wrong length is refused."""
+    _, m, art, _ = _scratch(root, tmp_path)
+    a, b = np.full((16, 16), 3, np.uint8), np.full((16, 16), 4, np.uint8)
+    roof = np.zeros((16, 16), np.uint8)
+    roof[8:, :] = 5
+    _art(art / "rock.png", [a, b])
+    _art(art / "roof.png", [roof, roof])
+    spec = json.loads((art / "spec.json").read_text())
+    spec["metatiles"] += [{"name": "rock_a", "tileset": "primary", "image": "rock.png", "x": 0},
+                          {"name": "rock_b", "tileset": "primary", "image": "rock.png", "x": 16},
+                          {"name": "roof", "tileset": "primary", "image": "roof.png", "w": 2,
+                           "ground": ["rock_a", "rock_b"]}]
+    (art / "spec.json").write_text(json.dumps(spec))
+    names = tb.build(m, art / "spec.json")
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown")
+    te = m.tileset_editor
+    ids = names["metatiles"]["roof"]["ids"]
+    for i, under in zip(ids, ("rock_a", "rock_b")):
+        rock = te.get_metatile("Town", names["metatiles"][under]["ids"][0])["entries"]
+        assert te.get_metatile("Town", i)["entries"][:4] == rock[:4]
+    spec["metatiles"][-1]["ground"] = ["rock_a"]
+    (art / "spec.json").write_text(json.dumps(spec))
+    with pytest.raises(DecompError, match="1 grounds for its 2 blocks"):
+        tb.build(m, art / "spec.json")
