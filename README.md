@@ -211,7 +211,8 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
   behaviour, whether it's solid, which blocks stay walkable (a door), a ground metatile under transparent pixels,
   rows drawn over the player, and the palettes it may use (for each row, too). Identical tiles (also flipped
   ones) are stored once; you choose the palettes, so the colours stay exactly yours. The ground shows what it
-  shows: a barrel on a dock stands on the dock's boards, lily pads on a pond's water.
+  shows: a barrel on a dock stands on the dock's boards, lily pads on a pond's water. A stamp can have a ground
+  for each block (a list, row by row): a roof against a cliff whose texture runs on under it.
 * **The grid** has one character per block; the legend says what each one is. A stamp's character fills its
   whole rectangle. `{"auto": "path"}` picks edge variants (`path#0`…`path#15`, by which neighbours are path too),
   `{"pick": [...]}` spreads variants like grass and `{"tile": "forest"}` repeats a stamp as a pattern over any

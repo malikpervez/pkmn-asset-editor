@@ -38,7 +38,8 @@ BUILD_SPEC = """\
   "metatiles": [
     {"name": "grass", "tileset": "primary", "image": "ground.png", "x": 0, "y": 0, "behavior": "MB_NORMAL"},
     {"name": "house", "tileset": "secondary", "image": "house.png", "x": 0, "y": 0, "w": 5, "h": 4,
-     "ground": "grass",                     // what it shows goes under the art (transparent pixels show it)
+     "ground": "grass",                     // what it shows goes under the art (transparent pixels show it); or
+                                            //  a list, one for each block (row by row)
      "over_rows": 1,                        // the top rows are drawn over the player (layer NORMAL)
      "behaviors": {"2,3": "MB_ANIMATED_DOOR"}, "solid": true, "open": ["2,3"],  // a door: walkable
      "banks": [7, 8], "row_banks": {"3": [1]}}  // palettes it may use (all its rows / one row)
@@ -278,14 +279,19 @@ def build(maps, spec_path) -> dict:
         if missing or not banks:
             raise DecompError(f"{m.get('name')}: no palette in bank(s) {missing or banks}")
         ground = m.get("ground")
-        if ground is not None:
-            g = names.get(ground)
-            if g is None or g["w"] != 1:
-                raise DecompError(f"{m.get('name')}: ground {ground} must be a 1x1 metatile listed before it")
-            gw = metas["primary" if g["ids"][0] < npm else "secondary"][g["ids"][0] - (0 if g["ids"][0] < npm else npm)]
-            # what the ground shows: in each quarter its top layer where that covers it (the water of a pond,
-            # the boards of a dock), else its bottom layer
-            gw = [gw[4 + i] if _covers(gw[4 + i]) else gw[i] for i in range(4)]
+        if ground is not None:  # one ground for every block, or a list of them (one a block, row by row)
+            grounds = ground if isinstance(ground, list) else [ground] * (w * h)
+            if len(grounds) != w * h:
+                raise DecompError(f"{m.get('name')}: {len(grounds)} grounds for its {w * h} blocks")
+            gws = []
+            for gn in grounds:
+                g = names.get(gn)
+                if g is None or g["w"] != 1 or g["h"] != 1:
+                    raise DecompError(f"{m.get('name')}: ground {gn} must be a 1x1 metatile listed before it")
+                gw = metas["primary" if g["ids"][0] < npm else "secondary"][g["ids"][0] - (0 if g["ids"][0] < npm else npm)]
+                # what the ground shows: in each quarter its top layer where that covers it (the water of a pond,
+                # the boards of a dock), else its bottom layer
+                gws.append([gw[4 + i] if _covers(gw[4 + i]) else gw[i] for i in range(4)])
         ids = []
         behaviors = m.get("behaviors", {})
         for by in range(h):
@@ -299,7 +305,7 @@ def build(maps, spec_path) -> dict:
                     quad = [entry(where, cell[qy * 8:qy * 8 + 8, qx * 8:qx * 8 + 8], row_banks.get(by, banks))
                             for qy in (0, 1) for qx in (0, 1)]
                 if ground is not None:
-                    row = list(gw[:4]) + quad
+                    row = list(gws[by * w + bx]) + quad
                     layer = 0 if by < int(m.get("over_rows", 0)) else 1  # NORMAL: top over sprites; COVERED
                 else:
                     row = quad + [0, 0, 0, 0]
