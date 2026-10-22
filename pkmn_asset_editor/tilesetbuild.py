@@ -51,7 +51,8 @@ too: 1 north, 2 east, 4 south, 8 west) and use {"auto": "path"} in the legend; {
 ("path#15~1", "path#15~2"... are
 variants of a piece, spread by position; "path#15.1" is the piece for an inside corner, the diagonal neighbour not
 path while both sides are (1 NE, 2 SE, 4 SW, 8 NW), used when drawn; a piece may be a stamp, e.g. 2x2 trees
-"forest#0".."forest#15", and then its neighbours are the cells of its size); {"pick": ["grass", "grass2"]}
+"forest#0".."forest#15", and then its neighbours are the cells of its size, and each cell is one variant of it);
+{"pick": ["grass", "grass2"]}
 spreads variants (with "order": "checker", staggered); {"tile": "forest"} repeats a stamp as a pattern (block x, y shows its piece x mod w, y mod h)."""
 
 
@@ -524,9 +525,11 @@ def paint(maps, map_name: str, grid: str, legend: dict, names: dict, which: str 
                 name = next((n for n in (with_, f"{item['auto']}#{mask}.{corners}" if corners else None,
                                          f"{item['auto']}#{mask}", f"{item['auto']}#15", item["auto"])
                              if n and n in meta), item["auto"])
-                # variants "name~1", "name~2"... are spread by position, like "pick"
+                # variants "name~1", "name~2"... are spread by position, like "pick"; a stamp's by its cell, so
+                # all its blocks come from the same variant
                 variants = [name] + [f"{name}~{k}" for k in range(1, 64) if f"{name}~{k}" in meta]
-                item["name"] = variants[(x * 7919 + y * 104729 + (x * y) % 13) % len(variants)]
+                vx, vy = x0 // cw, y0 // chh
+                item["name"] = variants[(vx * 7919 + vy * 104729 + (vx * vy) % 13) % len(variants)]
             elif "pick" in item:  # a variant chosen by position (the same every time), or staggered
                 n = len(item["pick"])
                 k = (x + y) % n if item.get("order") == "checker" else (x * 7919 + y * 104729 + (x * y) % 13) % n

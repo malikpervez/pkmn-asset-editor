@@ -220,6 +220,11 @@ def test_pattern_paint(root, tmp_path):
     b4 = tb.paint(m, "Town", "TT..\nTT..\n" + "TTTT\n" * 4 + "....\n" * 2, {"T": {"auto": "tree"}, ".": "grass"},
                   names)
     assert int(b4[2, 0]) & 0x3FF == p14 and int(b4[0, 0]) & 0x3FF != p14
+    # variants of a stamp ("tree#15~1"): chosen once for each 2x2 cell, never block by block
+    names["metatiles"]["tree#15~1"] = {"ids": [p15] * 4, "w": 2, "h": 2, "solid": True}
+    b5 = tb.paint(m, "Town", "TTTTTTTT\n" * 8, {"T": {"auto": "tree"}}, names)
+    cells = {tuple(int(v) & 0x3FF for v in b5[y:y + 2, x:x + 2].ravel()) for y in range(0, 8, 2) for x in range(0, 8, 2)}
+    assert cells == {tuple(house), (p15,) * 4}
 
 
 ANIMS_C = """\
