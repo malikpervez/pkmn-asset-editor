@@ -512,6 +512,10 @@ How the graphics are organised (source tree):
   `INCBIN_*` references in `src/` (symbol names, output format, gbagfx
   arguments such as frame sizes), grouped into categories (pokemon, trainers,
   items, battle_anims, overworld, tilesets, …). Unreferenced files are flagged.
+  A symbol declared as another's alias (`__attribute__((alias("…")))`, graphics
+  the build stores once) reads its target's file; a tileset whose metatiles are
+  written out as a C array is read from that array (maps using it render and
+  plan walks), but pae won't change them.
 * **The palette each image really uses in game**, which is often not the PNG's
   own palette:
   * Pokémon sprites → `normal.pal` / `shiny.pal`. Forms inherit from the parent
