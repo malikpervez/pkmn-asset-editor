@@ -3,11 +3,14 @@
 The game animates a door only when its metatile is in the door table of ``src/field_door.c`` with animation
 frames. ``add(maps, map_name, x, y, panel)`` makes those frames from the closed door on the map: the door panel (a
 pixel box inside the 16x16 block) slides up and shows the dark doorway, in three steps. Or the frames are drawn:
-``add(..., frames=image)``, three frames side by side, 48x16 for a one-block door or 48x32 for a tall one (the door
-block and the block above it, FRLG's large doors); transparent pixels show the block as it is. Doors are recorded in
-``src/data/pae_doors.json``; ``src/data/pae_doors.h`` is generated from it and included in the door table (once).
-A record whose metatile is no longer a door (a tileset rebuild moved the blocks) is dropped at the next ``add``.
-Small (one block) doors on FRLG/HnS-style layouts, the kind outdoor houses use.
+``add(..., frames=image)``, three frames side by side, 48x16 for a one-block door, 48x32 for a tall one (the door
+block and the block above it, FRLG's large doors) or 96x32 for a wide one (two door blocks side by side and the two
+above them, a double door: ``x, y`` is its left door block, and both open whichever of them you walk into);
+transparent pixels show the block as it is. Doors are recorded in ``src/data/pae_doors.json``;
+``src/data/pae_doors.h`` is generated from it and included in the door table (once). A record whose metatile is no
+longer a door (a tileset rebuild moved the blocks) is dropped at the next ``add``. Doors on FRLG/HnS-style layouts,
+the kind outdoor houses use. A wide door needs the game's door code to know them (``DOOR_WIDE_LEFT`` in
+``src/field_door.c``) and 16 free tile slots for its frames (HnS layouts: 434-449; FRLG: 1008-1023).
 """
 
 from __future__ import annotations
@@ -19,6 +22,8 @@ import numpy as np
 from .decomp import DecompError
 
 RECORD = "src/data/pae_doors.json"
+WIDE_LEFT, WIDE_RIGHT = 3, 4  # a wide door's two door blocks (the sizes small doors are 1 and tall ones 2)
+WIDE_SLOTS = {"hns": range(434, 450), "frlg": range(1008, 1024)}  # where the game copies a wide door's frames
 HEADER = "src/data/pae_doors.h"
 DOOR_C = "src/field_door.c"
 SOUNDS = {"normal": "DOOR_SOUND_NORMAL", "sliding": "DOOR_SOUND_SLIDING"}
@@ -83,24 +88,33 @@ def _block_pixels(maps, map_name: str, mid: int) -> tuple[list[np.ndarray], list
 
 
 def drawn_frames(maps, map_name: str, x: int, y: int, image) -> tuple[int, list[list[np.ndarray]], list[int]]:
-    """Frames from a drawn strip (an RGBA array, 48 wide and 16 or 32 high): (door size, each frame's tiles - the
-    block above's four first for a tall door -, the tiles' banks). Each tile takes the bank of its block's layers
-    that has its colours; a colour no bank has is an error."""
+    """Frames from a drawn strip (an RGBA array: 48x16, 48x32, or 96x32 for a wide door): (door size - 1, 2 or
+    ``WIDE_LEFT`` -, each frame's tiles - the block above's four first for a tall door; for a wide one the left
+    column, then the right, each the block above, then the door -, the tiles' banks). Each tile takes the bank of
+    its block's layers that has its colours; a colour no bank has is an error."""
     a = np.asarray(image)
-    if a.ndim != 3 or a.shape[1] != 48 or a.shape[0] not in (16, 32):
-        raise DecompError("door frames are three frames side by side: 48x16 (a one-block door) or 48x32 (tall)")
-    size = a.shape[0] // 16
+    if a.ndim != 3 or (a.shape[1], a.shape[0]) not in ((48, 16), (48, 32), (96, 32)):
+        raise DecompError("door frames are three frames side by side: 48x16 (a one-block door), 48x32 (tall) or "
+                          "96x32 (wide: two door blocks side by side)")
+    wide = a.shape[1] == 96
+    size = WIDE_LEFT if wide else a.shape[0] // 16
     b = maps.read_blocks(maps.layout_of(map_name))
-    if size == 2 and y < 1:
+    if size != 1 and y < 1:
         raise DecompError("a tall door needs the block above it on the map")
-    blocks = [(x, y - 1), (x, y)] if size == 2 else [(x, y)]
+    if wide and x + 1 >= b.shape[1]:
+        raise DecompError("a wide door needs the block right of its left door block on the map")
+    blocks = [(x + i // 2, y - 1 + i % 2) for i in range(4)] if wide else [(x, y - 1), (x, y)] if size == 2 \
+        else [(x, y)]
+    fw = 32 if wide else 16
     closed = [_block_rgb(maps, map_name, int(b[yy, xx]) & 0x3FF) for xx, yy in blocks]
     out, banks = [], None
     for k in range(3):
         tiles, fb = [], []
         for j, (rgbs, cands, pals) in enumerate(closed):
+            row, col = (j % 2, j // 2) if wide else (j, 0)
             for q in range(4):
-                px = a[j * 16 + (q // 2) * 8:j * 16 + (q // 2) * 8 + 8, k * 16 + (q % 2) * 8:k * 16 + (q % 2) * 8 + 8]
+                y0, x0 = row * 16 + (q // 2) * 8, k * fw + col * 16 + (q % 2) * 8
+                px = a[y0:y0 + 8, x0:x0 + 8]
                 rgb = np.where(px[..., 3:4] > 0, px[..., :3].astype(np.int32), rgbs[q])
                 err, bank, t = _in_bank(rgb, cands[q], pals)
                 if err:
@@ -181,23 +195,53 @@ def add(maps, map_name: str, x: int, y: int, panel: tuple[int, int, int, int] | 
         fr = frames(tiles, banks, pals, panel)
     else:
         raise DecompError("give the door's panel (to slide it up) or its drawn frames")
+    leaves = [(mid, size)]  # a wide door: its left door block, then its right (the same frames)
+    if size == WIDE_LEFT:
+        _check_wide(maps, name, lay)
+        right = int(b[y, x + 1]) & 0x3FF
+        if right == mid:
+            raise DecompError(f"a wide door's two door blocks are one metatile (0x{mid:03X}): the game couldn't tell "
+                              "which of them was walked into")
+        leaves.append((right, WIDE_RIGHT))
+    new = [{"map": name, "tileset": _tileset_of(maps, name, m), "metatile": m, "panel": list(panel) if panel else None,
+            "size": sz, "sound": sound, "banks": banks, "frames": [[t.tolist() for t in f] for f in fr]}
+           for m, sz in leaves]
+    for r in new:
+        if not _still_a_door(maps, r):
+            raise DecompError(f"metatile 0x{r['metatile']:03X} at the door isn't a door block (MB_ANIMATED_DOOR)")
     rec_path = maps.root / RECORD
     rec = json.loads(rec_path.read_text()) if rec_path.exists() else []
-    key = (_tileset_of(maps, name, mid), mid)
-    rec = [r for r in rec if (r["tileset"], r["metatile"]) != key and _still_a_door(maps, r)]
-    rec.append({"map": name, "tileset": key[0], "metatile": mid, "panel": list(panel) if panel else None,
-                "size": size, "sound": sound, "banks": banks, "frames": [[t.tolist() for t in f] for f in fr]})
+    keys = {(r["tileset"], r["metatile"]) for r in new}
+    rec = [r for r in rec if (r["tileset"], r["metatile"]) not in keys and _still_a_door(maps, r)] + new
     rec.sort(key=lambda r: (r["tileset"], r["metatile"]))  # the same file whatever order doors were added in
     maps.dp._backup(RECORD)
     rec_path.write_text(json.dumps(rec) + "\n")
     _write_header(maps, rec)
-    return {"metatile": mid, "tileset": key[0], "banks": banks, "size": size}
+    out = {"metatile": mid, "tileset": new[0]["tileset"], "banks": banks, "size": size}
+    if size == WIDE_LEFT:
+        out["right"] = leaves[1][0]
+    return out
+
+
+def _check_wide(maps, map_name: str, lay: dict) -> None:
+    """A wide door's frames go in 16 tile slots the game copies them to: the game's door code must know wide doors,
+    and the map's tilesets must leave those slots free."""
+    if "DOOR_WIDE_LEFT" not in (maps.root / DOOR_C).read_text():
+        raise DecompError(f"this game's {DOOR_C} has no wide doors (DOOR_WIDE_LEFT): only one-block-wide doors")
+    te = maps.tileset_editor
+    prim, sec, version = te.sides(lay)
+    slots = set(WIDE_SLOTS[version])
+    for side in (prim, sec):
+        used = {int(v) & 0x3FF for row in te._read_metas(side) for v in row} & slots
+        if used:
+            raise DecompError(f"{side.symbol} draws with tiles {min(used)}-{max(used)}, where the game copies a wide "
+                              f"door's frames ({min(slots)}-{max(slots)}): reserve them in the tileset")
 
 
 def _write_header(maps, rec: list[dict]) -> None:
     out = ["// Generated by pae (`pae door add`) from src/data/pae_doors.json: door animations. Do not edit by hand.",
            "#ifndef GUARD_PAE_DOORS_H", "#define GUARD_PAE_DOORS_H", ""]
-    entries = []
+    entries, arrays = [], {}  # tile data -> its array (a wide door's two blocks share theirs)
     for i, r in enumerate(rec):
         data = []
         for f in r["frames"]:
@@ -205,16 +249,21 @@ def _write_header(maps, rec: list[dict]) -> None:
                 px = np.array(t, np.uint8)
                 data += list((px[:, 0::2] | (px[:, 1::2] << 4)).astype(np.uint8).tobytes())
         size = r.get("size", 1)
-        # frames are 4 tiles apart for a small door, 8 for a tall one, and the game copies 8 tiles from the last
-        data += [0] * ((2 * 4 * size + 8) * 32 - len(data))
-        out.append(f"static const u8 ALIGNED(4) sPaeDoorTiles_{i}[{len(data)}] = {{ "
-                   + ", ".join(f"0x{v:02X}" for v in data) + " };")
+        # frames are 4 tiles apart for a small door, 8 for a tall one, 16 for a wide one, and the game copies 8 tiles
+        # from the last (16 for a wide one)
+        per = len(r["frames"][0])
+        data += [0] * ((2 * per + (16 if size >= WIDE_LEFT else 8)) * 32 - len(data))
+        tiles = arrays.get(bytes(data))
+        if tiles is None:
+            tiles = arrays[bytes(data)] = f"sPaeDoorTiles_{i}"
+            out.append(f"static const u8 ALIGNED(4) {tiles}[{len(data)}] = {{ "
+                       + ", ".join(f"0x{v:02X}" for v in data) + " };")
         # each block's four tiles, then four for the layer the game leaves empty (it reads them from the next block's
         # place for the block above a tall door)
         banks = r["banks"] + r["banks"][-4:]
         out.append(f"static const u8 sPaeDoorPalettes_{i}[] = {{ " + ", ".join(map(str, banks)) + " };")
         entries.append(f"{{ {r['metatile']}, &{r['tileset']}, {SOUNDS.get(r['sound'], 'DOOR_SOUND_NORMAL')}, {size}, "
-                       f"sPaeDoorTiles_{i}, sPaeDoorPalettes_{i} }},")
+                       f"{tiles}, sPaeDoorPalettes_{i} }},")
     out.append("")
     out.append("#define PAE_DOORS \\")
     out += [f"    {e} \\" for e in entries]
