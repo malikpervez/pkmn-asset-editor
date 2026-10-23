@@ -3,6 +3,7 @@
 * :func:`place` moves one event (an object by index or local id, a warp, a trigger, a sign) to another block.
 * :func:`route` finds a walk between blocks over what the map lets you walk on (collision 0, not water unless
   surfing; other objects' starting blocks are avoided if asked), shortest first and then with the fewest turns.
+  Sideways stairs are kept off: they move you diagonally, which a walk of single steps can't follow.
 * :func:`movement` turns it into movement commands (``walk_up`` …), and :func:`write_movement` puts them under a
   movement label in the map's script, replacing what was there up to its ``step_end``.
 
@@ -20,6 +21,7 @@ from .maps import EVENT_KINDS
 
 DIRS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
 WATER = re.compile(r"WATER|OCEAN|POND|DEEP|CURRENT|WATERFALL|PUDDLE_SURF", re.I)
+OFF = re.compile(r"SIDEWAYS_STAIRS", re.I)  # walkable, but not in single steps (they move you diagonally)
 
 
 def place(maps, map_name: str, kind: str, which: str, x: int, y: int, elevation: int | None = None) -> dict:
@@ -66,7 +68,7 @@ def walkable(maps, map_name: str, surf: bool = False, avoid_objects: bool = Fals
                 b = int(te.get_metatile(map_name, mid).get("behavior", 0))
                 beh[mid] = names[b] if b < len(names) else ""
             water = bool(WATER.search(beh[mid])) or (v >> 12) == 1
-            grid[y][x] = water if surf else not water
+            grid[y][x] = (water if surf else not water) and not OFF.search(beh[mid])
     if avoid_objects:
         for e in maps.get_map(map_name).get("object_events", []):
             ex, ey = int(e.get("x", -1)), int(e.get("y", -1))

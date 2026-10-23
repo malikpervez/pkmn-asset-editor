@@ -405,6 +405,14 @@ def test_place_path_and_connect(root):
     text = p.read_text()
     body = text.split("Town_Movement_Walk::\n")[1].split("step_end")[0]
     assert body.count("walk_") == 6 and "\tface_up\n" in body and "Town_Movement_Other::\n\tstep_end" in text
+    # sideways stairs (they move you diagonally) are kept off, like the wall
+    stairs = int(m.read_blocks(lay)[3, 1]) & 0x3FF
+    real = m.tileset_editor.behaviors
+    names = list(real("emerald"))
+    names[m.tileset_editor.get_metatile("Town", stairs)["behavior"]] = "MB_SIDEWAYS_STAIRS_LEFT_SIDE"
+    m.tileset_editor.behaviors = lambda version: names
+    assert not walk.walkable(m, "Town")[3][1] and not any(walk.walkable(m, "Town")[3])  # every block is that one
+    m.tileset_editor.behaviors = real
     a, back = m.connect("Town", "up", "Town_House1", -3)
     assert (a["direction"], a["offset"], back["direction"], back["offset"]) == ("up", -3, "down", 3)
     assert main(["map", "connect", "Town", "up", "Town_House1", "--align", "4,2", "-p", str(root)]) == 0
