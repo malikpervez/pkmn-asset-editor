@@ -202,6 +202,7 @@ pae map geometry MyTown --primary gTileset_MyTown_General --secondary gTileset_M
 pae map paint MyTown art/grid.txt art/legend.json --names art/names.json --border art/border.txt
 pae map connect MyTown up Route1 --align 14,24       # MyTown's column 14 meets Route1's 24 (both ways)
 pae door add MyTown 6 7 --panel 3,0,13,14             # the door you drew opens (its panel slides up)
+pae door add MyTown 9 7 --frames gate_door.png        # or drawn frames: 48x16, 48x32 (tall) or 96x32 (a double door)
 pae seam build MyTown                                 # neighbours with other tilesets drawn right (see below)
 pae map place MyTown warp 0 7 7                       # events where the new map has them
 pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Movement_ToLab
@@ -231,6 +232,11 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
 * **One kit for many maps**: maps that share a primary tileset (built the same in every map's spec, then each
   map's own secondary) can use each other's tiles at the joins; their seams copy only the secondary tiles and use
   the map's own palettes where the colours agree.
+* **Doors**: `pae door add` animates a door block, its panel sliding up or from three frames you drew side by side:
+  48x16 for a one-block door, 48x32 for a tall one (the block above too), 96x32 for a double door two blocks wide
+  (give its left door block; both open together, whichever is walked into). A double door needs the game's door
+  code to know them (`DOOR_WIDE_LEFT` in `src/field_door.c`) and 16 free tile slots for its frames (HnS layouts:
+  434-449; FRLG: 1008-1023).
 * **Events and cutscenes**: `pae map place` moves a warp, object, trigger or sign; `pae map path` walks between
   blocks around anything solid (shortest, then fewest turns) and writes the movement under a label in the map's
   script. For someone who follows, route them through the leader's start and add `--stop-short 1`.
@@ -239,6 +245,8 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
   `pae seam build` copies the neighbour's tiles and palettes into free slots, both ways, so each map sees the
   other right. Free slots come first from what the viewer's tilesets never use, then palette slots and secondary
   tiles the viewer's map never shows are borrowed (the game reloads those whenever you cross into another map).
+  Copied tiles take their colours wherever a slot has them, so the colours of several of the neighbour's palettes
+  share one slot when they fit (15 colours): a strip in three palettes may need only two slots.
   A map that already has a hand-made seam (for another neighbour) gets pae's beside it, in metatiles, tiles and
   palette slots the hand-made one doesn't take, when the game looks at every seam entry of a map.
 * **Maps with their own geometry** (`firered_geometry` in `map.json`, in that hack): pae shows and edits what the

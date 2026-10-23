@@ -188,6 +188,55 @@ def test_seams_and_doors(root, tmp_path):
         doors.add(m, "Town", 2, 1, frames_image=strip)
 
 
+def test_wide_door(root, tmp_path, monkeypatch):
+    """A double door (96x32 frames): its two door blocks open together, whichever of them is walked into."""
+    _, m, art, _ = _scratch(root, tmp_path)
+    spec = json.loads((art / "spec.json").read_text())
+    house = spec["metatiles"][3]
+    house.update(open=["0,1", "1,1"], behaviors={"0,1": "MB_DOOR", "1,1": "MB_DOOR"})
+    (art / "spec.json").write_text(json.dumps(spec))
+    names = tb.build(m, art / "spec.json")
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown",
+                   layout_version="hns")
+    tb.paint(m, "Town", "..HH\n..HH\n" + "....\n" * 6, {".": "grass", "H": "house"}, names)
+    m = DecompProject(root).maps
+    b = m.read_blocks(m.layout_of("Town"))
+    blocks = [(2 + i // 2, i % 2) for i in range(4)]  # the left column, then the right; each top block, then door
+    closed = [doors._block_rgb(m, "Town", int(b[y, x]) & 0x3FF) for x, y in blocks]
+    frame = np.zeros((32, 32, 4), np.uint8)
+    for j, (rgbs, _, _) in enumerate(closed):
+        x0, y0 = (j // 2) * 16, (j % 2) * 16
+        for q, t in enumerate(rgbs):
+            frame[y0 + (q // 2) * 8:y0 + (q // 2) * 8 + 8, x0 + (q % 2) * 8:x0 + (q % 2) * 8 + 8, :3] = t
+    frame[..., 3] = 255
+    strip = np.concatenate([frame, frame, frame], axis=1)
+    strip[20:32, 72:88, :3] = frame[0, 0, :3]  # the third frame: open across both door blocks
+    (root / "src/field_door.c").write_text(
+        "static const struct DoorGraphics sDoorAnimGraphicsTable[] =\n{\n    {},\n};\n")
+    with pytest.raises(DecompError, match="no wide doors"):
+        doors.add(m, "Town", 2, 1, frames_image=strip)
+    (root / "src/field_door.c").write_text("#define DOOR_WIDE_LEFT 3\n"
+                                           "static const struct DoorGraphics sDoorAnimGraphicsTable[] =\n{\n    {},\n};\n")
+    monkeypatch.setitem(doors.WIDE_SLOTS, "hns", range(16))  # slots the tileset draws with
+    with pytest.raises(DecompError, match="reserve them"):
+        doors.add(m, "Town", 2, 1, frames_image=strip)
+    monkeypatch.undo()
+    d = doors.add(m, "Town", 2, 1, frames_image=strip)
+    left, right = int(b[1, 2]) & 0x3FF, int(b[1, 3]) & 0x3FF
+    assert d["size"] == doors.WIDE_LEFT and (d["metatile"], d["right"]) == (left, right)
+    rec = json.loads((root / "src/data/pae_doors.json").read_text())
+    assert [(r["metatile"], r["size"]) for r in rec] == [(left, 3), (right, 4)]
+    assert len(rec[0]["frames"]) == 3 and len(rec[0]["frames"][2]) == 16 and len(rec[0]["banks"]) == 16
+    opened = np.array(rec[0]["frames"][2][14])  # the right door block's bottom-left tile: open, the doorway's colour
+    assert (opened == opened[0, 0]).all() and not (np.array(rec[0]["frames"][0][14]) == opened[0, 0]).all()
+    h = (root / "src/data/pae_doors.h").read_text()
+    assert h.count("sPaeDoorTiles_0[1536]") == 1 and "sPaeDoorTiles_1" not in h  # 3 frames of 16; shared
+    assert f"{{ {left}, &gTileset_NewTown, DOOR_SOUND_NORMAL, 3, sPaeDoorTiles_0, sPaeDoorPalettes_0 }}" in h
+    assert f"{{ {right}, &gTileset_NewTown, DOOR_SOUND_NORMAL, 4, sPaeDoorTiles_0, sPaeDoorPalettes_1 }}" in h
+    with pytest.raises(DecompError, match="isn't a door block"):
+        doors.add(m, "Town", 1, 1, frames_image=strip)  # grass, then the house's left door block
+
+
 def test_pattern_paint(root, tmp_path):
     proj, m, art, out = _scratch(root, tmp_path)
     names = json.loads((art / "names.json").read_text())
@@ -356,6 +405,14 @@ def test_place_path_and_connect(root):
     text = p.read_text()
     body = text.split("Town_Movement_Walk::\n")[1].split("step_end")[0]
     assert body.count("walk_") == 6 and "\tface_up\n" in body and "Town_Movement_Other::\n\tstep_end" in text
+    # sideways stairs (they move you diagonally) are kept off, like the wall
+    stairs = int(m.read_blocks(lay)[3, 1]) & 0x3FF
+    real = m.tileset_editor.behaviors
+    names = list(real("emerald"))
+    names[m.tileset_editor.get_metatile("Town", stairs)["behavior"]] = "MB_SIDEWAYS_STAIRS_LEFT_SIDE"
+    m.tileset_editor.behaviors = lambda version: names
+    assert not walk.walkable(m, "Town")[3][1] and not any(walk.walkable(m, "Town")[3])  # every block is that one
+    m.tileset_editor.behaviors = real
     a, back = m.connect("Town", "up", "Town_House1", -3)
     assert (a["direction"], a["offset"], back["direction"], back["offset"]) == ("up", -3, "down", 3)
     assert main(["map", "connect", "Town", "up", "Town_House1", "--align", "4,2", "-p", str(root)]) == 0
@@ -431,6 +488,56 @@ def test_paint_joins_with(root, tmp_path):
     assert b[2, 1] & 0x3FF == 512  # surrounded by path: its "+lily" piece
     assert b[2, 0] & 0x3FF == 1 and b[2, 2] & 0x3FF == 1  # its neighbours see it as path: no edge toward it
     assert b[1, 1] & 0x3FF == 2  # path#14: grass to the north, the lily cell below counts as path
+
+
+def test_seam_packs_copied_colours(root, tmp_path, monkeypatch):
+    """A neighbour's copied tiles take their colours wherever a slot has them: two of its palettes whose strip
+    colours fit in 15 share one slot, and the strip draws as it did."""
+    _, m, art, _ = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown",
+                   layout_version="hns")
+    tb.paint(m, "Town", "....\n" * 8, {".": "grass"}, names)
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["connections"] = [{"map": "MAP_TOWN_HOUSE1", "direction": "up", "offset": 0}]
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    m = DecompProject(root).maps
+    te = m.tileset_editor
+    for t in range(2, 12):  # the neighbour's blocks 1 (palette 1) and 2 (palette 2): three colours each
+        te.set_tile("Town_House1", t, [[1 + (x + y + t) % 3 for x in range(8)] for y in range(8)])
+    m = DecompProject(root).maps
+    real = seams._used
+
+    def one_free(maps, name):  # every palette slot but 12 taken, none to borrow
+        tiles, _, inf = real(maps, name)
+        return tiles, set(range(12)), inf
+    monkeypatch.setattr(seams, "_used", one_free)
+    monkeypatch.setattr(seams, "_spare", lambda maps, name, info: ([], []))
+    p = seams.plan(m, "Town", ["Town_House1"])
+    assert list(p["palettes"]) == [12]
+    slot = p["palettes"][12]
+    spal = m.tileset_editor.palettes("Town_House1")
+    for mt in p["metatiles"]:
+        src = m.tileset_editor.get_metatile("Town_House1", mt["mid"])["entries"]
+        for e, word in zip(src, mt["tiles"]):
+            want = np.array(te.get_tile("Town_House1", e["tile"]))
+            if not want.any():
+                continue
+            assert word >> 12 == 12
+            got = p["glyphs"][word & 0x3FF]
+            assert [[slot[v] for v in row] for row in got.tolist()] == \
+                [[spal[e["palette"]][v] for v in row] for row in want.tolist()]
+    # the slots a copied palette goes in: one with its colours already, one with room, a new one, or none
+    own = {0: [(0, 0, 0), (1, 1, 1), (2, 2, 2)] + [(0, 0, 0)] * 13}
+    cols = [(0, 0, 0), (2, 2, 2), (1, 1, 1), (5, 5, 5)] + [(9, 9, 9)] * 12
+    bank_colors, packed, free = {}, {}, [11, 12]
+    assert seams._pack({1, 2}, cols, own, bank_colors, packed, free) == 0
+    assert seams._pack({1, 3}, cols, own, bank_colors, packed, free) == 11 and packed == {11: 2}
+    big = [(0, 0, 0)] + [(k, 0, 0) for k in range(10, 25)]
+    assert seams._pack(set(range(1, 14)), big, own, bank_colors, packed, free) == 11 and packed == {11: 15}
+    assert seams._pack({14, 15}, big, own, bank_colors, packed, free) == 12
+    assert seams._pack(set(range(1, 16)), [(0, 0, 0)] + [(k, 1, 1) for k in range(15)], own, bank_colors, packed,
+                       free) is None
 
 
 def test_seams_share_the_kit(root, tmp_path):

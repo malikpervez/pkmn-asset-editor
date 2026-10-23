@@ -381,8 +381,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("y", type=int)
     how = q.add_mutually_exclusive_group(required=True)
     how.add_argument("--panel", help="the door panel inside the 16x16 block: x0,y0,x1,y1 (pixels)")
-    how.add_argument("--frames", help="three drawn frames side by side: 48x16, or 48x32 for a tall door (with the "
-                                      "block above)")
+    how.add_argument("--frames", help="three drawn frames side by side: 48x16, 48x32 for a tall door (with the "
+                                      "block above), or 96x32 for a wide one (X,Y its left door block)")
     q.add_argument("--sound", choices=["normal", "sliding"], default="normal")
     p = sub.add_parser("anim", help="source tree: tileset animations - water, flowers, waterfalls… (see `pae anim -h`)")
     asub = p.add_subparsers(dest="anim_cmd", required=True)
@@ -1429,8 +1429,9 @@ def _run(args) -> int:
             with Image.open(args.frames) as im:
                 image = np.array(im.convert("RGBA"))
         r = doors.add(m, args.name, args.x, args.y, panel, args.sound, frames_image=image)
-        print(f"door metatile 0x{r['metatile']:03X} of {r['tileset']} animates "
-              f"({'tall, ' if r['size'] == 2 else ''}palettes {r['banks']}); wrote {doors.HEADER}")
+        kind = "tall, " if r["size"] == 2 else f"wide, with 0x{r['right']:03X}, " if "right" in r else ""
+        print(f"door metatile 0x{r['metatile']:03X} of {r['tileset']} animates ({kind}palettes {r['banks']}); "
+              f"wrote {doors.HEADER}")
         return 0
     if args.cmd == "seam":
         from . import seams

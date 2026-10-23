@@ -12,7 +12,8 @@ strip's blocks are translated to.
 
 A neighbour's palette with the same colours as one the map shows uses the map's own, and when both maps have the
 same primary tileset its tiles are used as they are (only the secondary tiles are copied): maps built from one
-kit need few slots. Free slots: first those the map's tilesets never use. When those run out, palette slots and secondary tiles the map
+kit need few slots. Copied tiles take their colours wherever a slot has them, so the colours several of the
+neighbour's palettes use in the strip share a slot when they fit in one (15 colours). Free slots: first those the map's tilesets never use. When those run out, palette slots and secondary tiles the map
 never shows are borrowed: the game reloads every palette and the secondary tiles whenever you cross into another map
 (primary tiles are not reloaded when the primary tileset stays, so those are only taken when the tileset doesn't
 use them). "Shown" is the map's blocks, its border and what its scripts put with ``setmetatile``.
@@ -141,6 +142,30 @@ def _spare(maps, name: str, info: dict) -> tuple[list[int], list[int]]:
     return spare_tiles, [b for b in range(13) if b not in banks]
 
 
+def _pack(need: set[int], cols, own: dict, bank_colors: dict, packed: dict, free_banks: list) -> int | None:
+    """A palette slot for a bank whose tiles are copied, with its colours (``need``: its indices in ``cols``) on any
+    indices: one that has them all already (the map's own, or one filled before), else one filled colour by colour
+    with room for the ones it lacks, else a new one filled so (from ``free_banks``). None if there's no room."""
+    want = list(dict.fromkeys(tuple(cols[i]) for i in sorted(need)))
+    for slot, have in list(own.items()) + list(bank_colors.items()):
+        n = packed.get(slot, 15)  # a packed slot's colours past its last aren't set yet
+        if all(c in [tuple(h) for h in have[1:n + 1]] for c in want):
+            return slot
+    for slot, n in sorted(packed.items()):
+        have = [tuple(h) for h in bank_colors[slot][1:n + 1]]
+        lack = [c for c in want if c not in have]
+        if n + len(lack) <= 15:
+            bank_colors[slot][n + 1:n + 1 + len(lack)] = lack
+            packed[slot] = n + len(lack)
+            return slot
+    if not free_banks:
+        return None
+    slot = free_banks.pop(0)
+    bank_colors[slot] = [(0, 0, 0)] + want + [(0, 0, 0)] * (15 - len(want))
+    packed[slot] = len(want)
+    return slot
+
+
 def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> dict:
     """Adapters ``target`` needs to draw the strips of ``sources``; ``beside``: what a hand-made seam of the map
     already takes (see ``hand_made``)."""
@@ -159,6 +184,7 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
     free_banks += [b for b in spare_banks if b not in strict_banks]
     metas, glyphs = [], {}  # glyph pixels bytes -> slot
     bank_colors: dict[int, list] = {}  # slot -> colours loaded there
+    packed: dict[int, int] = {}  # slots filled colour by colour (_pack) -> how many colours they have
     # the map's own palettes (the banks it shows): a neighbour's palette with the same colours just uses them
     _, tte, tprim, _, _ = _context(maps, target)
     tpal = tte.palettes(target)
@@ -181,8 +207,11 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
             base = 0 if t < snpt else snpt
             arr, n = stiles[base]
             return arr[t - base] if t - base < min(n, len(arr)) else np.zeros((8, 8), np.uint8)
-        # which colour indices each bank needs, to share palette slots where the colours agree
+        # which colour indices each bank needs, to share palette slots where the colours agree. A bank some of whose
+        # tiles are used as they are (the same primary tileset) keeps its colours on their indices ("fixed"); the
+        # others' tiles are copied, so their pixels can take the colours wherever a slot has them
         need: dict[int, set[int]] = {}
+        fixed: set[int] = set()
         rows = {}
         for mid in mids:
             mt = ste.get_metatile(src, mid)
@@ -191,14 +220,26 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
                 px = pixels(e["tile"])
                 if px.any():
                     need.setdefault(e["palette"], set()).update(int(v) for v in np.unique(px) if v)
+                    if same_primary and e["tile"] < snpt:
+                        fixed.add(e["palette"])
         slot_of: dict[int, int] = {}
-        for bank in sorted(need, key=lambda b: -len(need[b])):
+        lut: dict[int, np.ndarray] = {}  # source bank -> its colour indices in its slot
+        for bank in sorted(need, key=lambda b: (b not in fixed, -len(need[b]))):
             cols = spal[bank]
+            lut[bank] = np.arange(16, dtype=np.uint8)
             for slot, have in list(own.items()) + list(bank_colors.items()):  # the same colours on these indices
-                if all(have[i] == cols[i] for i in need[bank]):
+                if all(i <= packed.get(slot, 15) and have[i] == cols[i] for i in need[bank]):
                     slot_of[bank] = slot
                     break
             else:
+                if bank not in fixed:
+                    slot = _pack(need[bank], cols, own, bank_colors, packed, free_banks)
+                    if slot is not None:
+                        have = own[slot] if slot in own else bank_colors[slot]
+                        for i in need[bank]:
+                            lut[bank][i] = next(j for j in range(1, 16) if have[j] == cols[i])
+                        slot_of[bank] = slot
+                        continue
                 if not free_banks:
                     raise DecompError(f"{target}: no free palette slot left for {src}'s palette {bank} "
                                       f"(the strip needs {len(need)} palettes; the map shows the others)")
@@ -217,7 +258,7 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
                     ent.append(e["tile"] | (int(e["hflip"]) << 10) | (int(e["vflip"]) << 11)
                                | (slot_of[e["palette"]] << 12))
                     continue
-                key = px.tobytes()
+                key = lut[e["palette"]][px].tobytes()
                 if key not in glyphs:
                     if not free_tiles:
                         raise DecompError(f"{target}: no free tile slot left for {src}'s strip")
