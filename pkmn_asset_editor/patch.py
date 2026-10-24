@@ -212,7 +212,7 @@ def make_bps(src: bytes, dst: bytes, metadata: bytes = b"") -> bytes:
     def plain(start: int, end: int) -> None:
         """[start, end) without moved data: SourceRead where unchanged, TargetRead where not."""
         nonlocal out
-        cut = min(end, m)
+        cut = max(start, min(end, m))  # past the original's end there is nothing to compare: all of it is new
         runs = [list(r) for r in _diff_runs(src[start:cut], dst[start:cut], cut - start, bridge=6)] if cut > start else []
         runs = [[s + start, e + start] for s, e in runs]
         if end > cut:
