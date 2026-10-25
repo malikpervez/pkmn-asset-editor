@@ -86,3 +86,19 @@ def test_bps_finds_moved_data():
     dst = rom(3)[:4096] + blob + rom(5)[:8192]
     patch = make_bps(src, dst)
     assert apply_bps(src, patch) == dst and len(patch) < 20_000
+
+
+def test_bps_target_bigger_than_source():
+    """Moved data past the end of the original: each gap there is stored once (a 16 MB FireRed to a 32 MB hack used
+    to store everything after 16 MB again for every moved block, and ran out of memory)."""
+    import random
+
+    from pkmn_asset_editor.patch import make_bps
+    random.seed(7)
+    blobs = [bytes(random.randrange(256) for _ in range(20_000)) for _ in range(3)]
+    new = [bytes(random.randrange(256) for _ in range(1_000)) for _ in range(3)]
+    src = bytes(random.randrange(256) for _ in range(65_536)) + b"".join(blobs)
+    dst = src[:65_536] + new[0] + blobs[0] + new[1] + blobs[1] + new[2] + blobs[2]
+    patch = make_bps(src, dst)
+    assert apply_bps(src, patch) == dst
+    assert len(patch) < 3_000 + 200  # the three new kilobytes, not the moved blobs again
