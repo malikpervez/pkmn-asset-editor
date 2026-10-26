@@ -462,6 +462,38 @@ def test_walks_keep_heights_and_one_way_edges(root):
     m.tileset_editor.behaviors = real
 
 
+def test_walks_know_the_metatiles_the_game_makes(root):
+    """Ids above a map's tilesets that the game makes for it (a seam's adapters, the metatiles its block fixes use:
+    rows for its layout in kanto_connection_seam.c) are walked as the game has them; others still stop the walk."""
+    m = DecompProject(root).maps
+    lay = m.layout_of("Town")
+    sym = seams._layout_symbol(m, "Town")
+    names = m.tileset_editor.behaviors("emerald")
+    water = names.index("MB_WATER")
+    (root / "src").mkdir(exist_ok=True)
+    (root / seams.SEAM_C).write_text(
+        "static const struct KantoSeamMetatile sTest_Metatiles[] = {\n"
+        f"    {{ .sourceLayout = &{sym}, .attributes = 0x{water:08X}u, .sourceMid = 1020, .tiles = {{ 0 }}, "
+        ".layoutVersion = LAYOUT_VERSION_EMERALD },\n"
+        "    { .sourceLayout = NULL },\n"
+        f"    {{ .sourceLayout = &{sym}, .attributes = 0x00000000u, .sourceMid = 1022, .tiles = {{ 0 }}, "
+        ".layoutVersion = LAYOUT_VERSION_EMERALD },\n"
+        "};\n\nstatic const struct KantoSeam sKantoSeams[] = {\n"
+        f"    {{ &{sym}, sTest_Metatiles, NULL, NULL, NULL, 1020, 3, 0, 0, 0, 0 }},\n}};\n")
+    assert seams.engine_metatiles(m, "Town") == {1020: (water, "emerald"), 1022: (0, "emerald")}
+    b = m.read_blocks(lay).copy()
+    b[:, :] = (b[0, 0] & 0x3FF) | (3 << 12)
+    b[1, 1], b[1, 2] = 1020 | (3 << 12), 1022 | (3 << 12)  # the game's water, and its plain ground
+    m.write_blocks("Town", b)
+    grid = walk.walkable(m, "Town")
+    assert not grid[1][1] and grid[1][2] and walk.walkable(m, "Town", surf=True)[1][1]
+    assert walk.walk(m, "Town", [(0, 1), (2, 1)])[1] == (2, 1)
+    b[1, 3] = 1021 | (3 << 12)  # the row leaves 1021 to the map, and its tilesets don't have it
+    m.write_blocks("Town", b)
+    with pytest.raises(DecompError, match="does not exist"):
+        walk.walkable(m, "Town")
+
+
 def test_place_path_and_connect(root):
     m = DecompProject(root).maps
     lay = m.layout_of("Town")

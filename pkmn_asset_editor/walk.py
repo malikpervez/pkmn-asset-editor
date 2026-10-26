@@ -67,9 +67,7 @@ def walkable(maps, map_name: str, surf: bool = False, avoid_objects: bool = Fals
     """A [height][width] grid of blocks one can walk on (or surf on, with ``surf``)."""
     lay = maps.layout_of(map_name)
     blocks = maps.read_blocks(lay)
-    te = maps.tileset_editor
-    names = te.behaviors(lay.get("layout_version", "emerald"))
-    beh: dict[int, str] = {}
+    behavior = _behaviors(maps, map_name, lay)
     h, w = blocks.shape
     grid = [[False] * w for _ in range(h)]
     for y in range(h):
@@ -77,12 +75,9 @@ def walkable(maps, map_name: str, surf: bool = False, avoid_objects: bool = Fals
             v = int(blocks[y, x])
             if (v >> 10) & 3:
                 continue
-            mid = v & 0x3FF
-            if mid not in beh:
-                b = int(te.get_metatile(map_name, mid).get("behavior", 0))
-                beh[mid] = names[b] if b < len(names) else ""
-            water = bool(WATER.search(beh[mid])) or (v >> 12) == 1
-            grid[y][x] = (water if surf else not water) and not OFF.search(beh[mid])
+            beh = behavior(v & 0x3FF)
+            water = bool(WATER.search(beh)) or (v >> 12) == 1
+            grid[y][x] = (water if surf else not water) and not OFF.search(beh)
     if avoid_objects:
         for e in maps.get_map(map_name).get("object_events", []):
             ex, ey = int(e.get("x", -1)), int(e.get("y", -1))
@@ -96,16 +91,10 @@ def steps(maps, map_name: str):
     one-way edge (see the module notes)."""
     lay = maps.layout_of(map_name)
     blocks = maps.read_blocks(lay)
-    te = maps.tileset_editor
-    names = te.behaviors(lay.get("layout_version", "emerald"))
-    beh: dict[int, str] = {}
+    of = _behaviors(maps, map_name, lay)
 
     def behavior(x, y):
-        mid = int(blocks[y, x]) & 0x3FF
-        if mid not in beh:
-            b = int(te.get_metatile(map_name, mid).get("behavior", 0))
-            beh[mid] = names[b] if b < len(names) else ""
-        return beh[mid]
+        return of(int(blocks[y, x]) & 0x3FF)
 
     def ok(a, b, d):
         ea, eb = int(blocks[a[1], a[0]]) >> 12, int(blocks[b[1], b[0]]) >> 12
@@ -113,6 +102,34 @@ def steps(maps, map_name: str):
             return False
         return behavior(*a) not in BLOCKED[d] and behavior(*b) not in BLOCKED[OPPOSITE[d]]
     return ok
+
+
+def _behaviors(maps, map_name: str, lay: dict):
+    """``behavior(metatile id)``: its behaviour's name, from the map's tilesets, or for an id above them that the
+    game makes for the map (its seams' adapters, its block fixes' metatiles: :func:`seams.engine_metatiles`) from
+    the game's own."""
+    te = maps.tileset_editor
+    version = lay.get("layout_version", "emerald")
+    cache: dict[int, str] = {}
+    made: dict | None = None
+
+    def behavior(mid: int) -> str:
+        nonlocal made
+        if mid not in cache:
+            try:
+                b, ver = int(te.get_metatile(map_name, mid).get("behavior", 0)), version
+            except DecompError:
+                if made is None:
+                    from .seams import engine_metatiles
+                    made = engine_metatiles(maps, map_name)
+                if mid not in made:
+                    raise
+                attr, ver = made[mid]
+                b = te._unpack_attr(attr, ver)["behavior"]
+            names = te.behaviors(ver)
+            cache[mid] = names[b] if b < len(names) else ""
+        return cache[mid]
+    return behavior
 
 
 def route(grid, start: tuple[int, int], goal: tuple[int, int], ok=None) -> list[str]:
