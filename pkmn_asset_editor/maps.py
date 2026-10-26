@@ -250,28 +250,37 @@ class MapEditor:
                 raise DecompError(f"unknown tileset {fields[k]} (not in src/data/tilesets/headers.h)")
         name = self.resolve(name)
         data = self.get_map(name)
-        # a new block file: the old one's block fixes (blockdata_overrides, blockdata_composition) point at it and
-        # would stop the build, so they go (a map's own geometry clears them with null: it inherits the layout's)
-        layout = self.layouts[data["layout"]]
-        old = self.layout_of(name)
-        new_blocks = fields.get("blockdata_filepath") not in (None, old.get("blockdata_filepath"))
-        fixes = [k for k in ("blockdata_overrides", "blockdata_composition") if old.get(k) is not None]
+        # a new block file: the old one's block fixes point at it and would stop the build, so they go
+        new_blocks = fields.get("blockdata_filepath") not in (None, self.layout_of(name).get("blockdata_filepath"))
         if isinstance(data.get("firered_geometry"), dict):
             data["firered_geometry"].update({k: v for k, v in fields.items() if v is not None})
-            if new_blocks:
-                for k in fixes:
-                    data["firered_geometry"][k] = None
+        else:
+            self.layouts[data["layout"]].update({k: v for k, v in fields.items() if v is not None})
+        self._save_geometry(name, data, drop_fixes=new_blocks)
+        return self.layout_of(name)
+
+    FIXES = ("blockdata_overrides", "blockdata_composition")
+
+    def _save_geometry(self, name: str, data: dict, drop_fixes: bool = False) -> None:
+        """Write the map's geometry back where it's kept (its map.json, or layouts.json). ``drop_fixes``: its block
+        fixes (``blockdata_overrides``, ``blockdata_composition``) go; a map's own geometry clears them with null,
+        since it inherits the layout's."""
+        geo = data.get("firered_geometry")
+        if isinstance(geo, dict):
+            old = self.layout_of(name)
+            if drop_fixes:
+                for k in self.FIXES:
+                    if old.get(k) is not None:
+                        geo[k] = None
             path = self.root / "data" / "maps" / name / "map.json"
             self.dp._backup(str(path.relative_to(self.root)))
             _dump(path, data)
             self.dp._changed = None
         else:
-            layout.update({k: v for k, v in fields.items() if v is not None})
-            if new_blocks:
-                for k in fixes:
-                    layout.pop(k, None)
+            if drop_fixes:
+                for k in self.FIXES:
+                    self.layouts[data["layout"]].pop(k, None)
             self._save_layouts()
-        return self.layout_of(name)
 
     def list_maps(self) -> list[dict]:
         return [dict(m) for m in self.maps.values()]
@@ -283,9 +292,32 @@ class MapEditor:
             w, h = layout.get("border_width", 2), layout.get("border_height", 2)
         else:
             w, h = layout["width"], layout["height"]
-        raw = path.read_bytes() if path.exists() else b""
-        arr = np.frombuffer(raw[: w * h * 2].ljust(w * h * 2, b"\0"), dtype="<u2").astype(np.int32)
-        return arr.reshape(h, w)
+        if which == "blockdata" and isinstance(layout.get("blockdata_composition"), dict):
+            arr = self._composed_blocks(layout["blockdata_composition"], w, h)
+        else:
+            raw = path.read_bytes() if path.exists() else b""
+            arr = np.frombuffer(raw[: w * h * 2].ljust(w * h * 2, b"\0"), dtype="<u2").astype(np.int32).reshape(h, w)
+        if which == "blockdata":  # the block fixes, as the game's build applies them (tools/mapjson)
+            arr = arr.copy()
+            for e in layout.get("blockdata_overrides") or []:
+                x, y = int(e["x"]), int(e["y"])
+                if 0 <= x < w and 0 <= y < h:
+                    arr[y, x] = int(e["value"])
+        return arr
+
+    def _composed_blocks(self, comp: dict, w: int, h: int) -> np.ndarray:
+        """A grid joined from rectangles of other block files over one fill word (``blockdata_composition``)."""
+        def words(path):
+            raw = (self.root / path).read_bytes()
+            return np.frombuffer(raw[: len(raw) // 2 * 2], dtype="<u2").astype(np.int32)
+        fill = comp["fill_source"]
+        arr = np.full((h, w), int(words(fill["filepath"])[int(fill["offset"]) // 2]), np.int32)
+        for p in comp.get("parts", []):
+            src = words(p["filepath"]).reshape(int(p["source_height"]), int(p["source_width"]))
+            sx, sy, pw, ph = int(p["source_x"]), int(p["source_y"]), int(p["width"]), int(p["height"])
+            arr[int(p["dest_y"]):int(p["dest_y"]) + ph, int(p["dest_x"]):int(p["dest_x"]) + pw] = \
+                src[sy:sy + ph, sx:sx + pw]
+        return arr
 
     def write_blocks(self, name: str, blocks: np.ndarray, which: str = "blockdata") -> None:
         layout = self.layout_of(name)
@@ -296,6 +328,10 @@ class MapEditor:
         self.dp._backup(str(path.relative_to(self.root)))
         path.write_bytes(np.ascontiguousarray(blocks, dtype="<u2").tobytes())
         self.dp._changed = None
+        if which == "blockdata" and any(layout.get(k) is not None for k in self.FIXES):
+            # the file holds the blocks as the game showed them (read_blocks applies the fixes): they're baked in
+            owner = layout.get("_geometry_map") or self.resolve(name)
+            self._save_geometry(owner, self.get_map(owner), drop_fixes=True)
 
     def resize(self, name: str, width: int, height: int, fill: int | None = None) -> list[str]:
         if not (1 <= width <= 1024 and 1 <= height <= 1024):
