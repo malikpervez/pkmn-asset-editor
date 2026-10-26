@@ -843,3 +843,26 @@ def test_seam_leaves_out_what_the_neighbours_tilesets_dont_have(root, tmp_path):
     p = seams.plan(m, "Town", ["Town_House1"])
     assert p["not_copied"] == [{"source": "Town_House1", "ids": [1020]}]
     assert all(e["mid"] != 1020 for e in p["metatiles"] if e)
+
+
+def test_new_geometry_files_drop_their_stale_aliases(root):
+    """The game's build emits a block file that is byte-for-byte another's as an alias it checks: a map's entries
+    that no longer name its files go when its geometry changes, and so do entries using a file pae writes."""
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["firered_geometry"] = {"width": 10, "height": 8, "primary_tileset": "gTileset_General",
+                                "secondary_tileset": "gTileset_Town", "blockdata_filepath": "data/layouts/Town/map.bin",
+                                "border_filepath": "data/layouts/Town/border.bin", "layout_version": "hns"}
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    entry = lambda src, owner: {"owner": "X", "source_filepath": src, "owner_filepath": owner, "bytes": 8, "sha256": ""}
+    aliases = {"Town_FireRedGeometry_Border": entry("data/layouts/Town/border.bin", "data/layouts/Other/border.bin"),
+               "Other_Layout_Blockdata": entry("data/layouts/Other/map.bin", "data/layouts/Town/map.bin"),
+               "Third_Layout_Border": entry("data/layouts/Third/border.bin", "data/layouts/Other/border.bin")}
+    path = root / "data/layouts/firered_geometry_payload_aliases.json"
+    path.write_text(json.dumps({"schema": "s", "aliases": aliases}, indent=2) + "\n")
+    m = DecompProject(root).maps
+    m.set_geometry("Town", secondary_tileset="gTileset_Town")  # the same files: nothing goes
+    assert set(json.loads(path.read_text())["aliases"]) == set(aliases)
+    m.set_geometry("Town", border_filepath="data/layouts/Town/new_border.bin")
+    assert set(json.loads(path.read_text())["aliases"]) == {"Other_Layout_Blockdata", "Third_Layout_Border"}
+    m.write_blocks("Town", m.read_blocks(m.layout_of("Town")))  # Town's block file, another's owner, is written
+    assert set(json.loads(path.read_text())["aliases"]) == {"Third_Layout_Border"}
