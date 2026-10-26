@@ -372,9 +372,6 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("name")
     q.add_argument("--skip", action="append", default=[], metavar="MAP",
                    help="leave this neighbour without seams either way (e.g. no room in it until it's rebuilt)")
-    q.add_argument("--only", action="append", default=[], metavar="MAP",
-                   help="pair the map with this neighbour alone, its others left as they are (e.g. an old map with no "
-                        "room for every neighbour's strip)")
     p = sub.add_parser("door", help="source tree: door animations for doors you drew")
     dsub = p.add_subparsers(dest="door_cmd", required=True)
     q = with_project(dsub.add_parser("add", help="animate the door at X,Y of a map (its panel slides up, or drawn "
@@ -1441,7 +1438,7 @@ def _run(args) -> int:
         m = getattr(proj, "maps", None)
         if m is None:
             raise ProjectError("seams need a pokeemerald-style source tree")
-        for r in seams.build(m, args.name, args.skip, args.only):
+        for r in seams.build(m, args.name, args.skip):
             print(f"{r['target']}: {r['adapters']} adapter metatiles for {', '.join(r['sources'])}; "
                   f"{r['glyphs']} tiles, palette slot(s) {', '.join(map(str, r['palettes']))}")
             for u in r["not_copied"]:

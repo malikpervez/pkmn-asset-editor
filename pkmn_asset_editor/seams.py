@@ -58,12 +58,6 @@ def _same_tilesets(a: dict, b: dict) -> bool:
         (b["primary_tileset"], b["secondary_tileset"], b.get("layout_version", "emerald"))
 
 
-def _joins(maps, target: str, source: str) -> bool:
-    """Whether ``target`` has a join to ``source`` (joins are one-way: each map lists its own)."""
-    sid = maps.get_map(source)["id"]
-    return any(c.get("map") == sid for c in maps.get_map(target).get("connections") or [])
-
-
 def strip(maps, target: str, source: str) -> set[int]:
     """Metatile ids of ``source`` in the strip ``target`` shows of it (empty if they aren't connected)."""
     tl, sl = maps.layout_of(target), maps.layout_of(source)
@@ -489,13 +483,10 @@ def existing_targets(maps) -> set[str]:
     return set(re.findall(r"\{\s*&(\w+)\s*,", body[1].split("};", 1)[0])) if len(body) == 2 else set()
 
 
-def build(maps, map_name: str, skip=(), only=()) -> list[dict]:
+def build(maps, map_name: str, skip=()) -> list[dict]:
     """Record seams between ``map_name`` and each neighbour with other tilesets, then regenerate the header.
     ``skip``: neighbours left without seams either way (e.g. one with no room for them until it's rebuilt); their
-    pairs are dropped from the record, and come back at a build that doesn't skip them.
-    ``only``: pair ``map_name`` with these neighbours alone, leaving its other neighbours as the record has them (e.g.
-    an old map with no room for every new neighbour's strip, that needs one of them). A pair is recorded the way a
-    map has a join: a neighbour that doesn't join ``map_name`` back draws no strip of it."""
+    pairs are dropped from the record, and come back at a build that doesn't skip them."""
     if not (maps.root / SEAM_C).exists():
         raise DecompError(f"this game has no {SEAM_C} (connection seams are a feature of that fork)")
     name = maps.resolve(map_name)
@@ -503,16 +494,13 @@ def build(maps, map_name: str, skip=(), only=()) -> list[dict]:
     record = json.loads(rec_path.read_text()) if rec_path.exists() else {}
     lay = maps.layout_of(name)
     skip = {maps.resolve(x) for x in skip}
-    only = {maps.resolve(x) for x in only}
     for c in maps.get_map(name).get("connections") or []:
         other = maps.map_by_id.get(c.get("map"))
         if other is None or c.get("direction") not in ("up", "down", "left", "right") or other in skip:
             continue
-        if (only and other not in only) or _same_tilesets(lay, maps.layout_of(other)):
+        if _same_tilesets(lay, maps.layout_of(other)):
             continue
         for t, s in ((name, other), (other, name)):
-            if not _joins(maps, t, s):
-                continue
             record.setdefault(t, [])
             if s not in record[t]:
                 record[t].append(s)
