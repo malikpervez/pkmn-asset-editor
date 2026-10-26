@@ -203,6 +203,21 @@ def test_seams_and_doors(root, tmp_path):
     assert seams.build(m, "Town", skip=["Town_House1"]) == []
     assert json.loads((root / "src/data/pae_seams.json").read_text()) == {}
     assert {x["target"] for x in seams.build(m, "Town")} == {"Town", "Town_House1"}
+    # --only: the map paired with that neighbour alone (with none of its neighbours: nothing recorded)
+    seams.build(m, "Town", skip=["Town_House1"])
+    assert seams.build(m, "Town", only=["Town"]) == []
+    assert {x["target"] for x in seams.build(m, "Town", only=["Town_House1"])} == {"Town", "Town_House1"}
+    # joins are one-way: a neighbour that doesn't join the map back draws no strip of it
+    seams.build(m, "Town", skip=["Town_House1"])
+    house["connections"] = []
+    (root / "data/maps/Town_House1/map.json").write_text(json.dumps(house))
+    m = DecompProject(root).maps
+    assert {x["target"] for x in seams.build(m, "Town")} == {"Town"}
+    assert json.loads((root / "src/data/pae_seams.json").read_text()) == {"Town": ["Town_House1"]}
+    house["connections"] = [{"map": "MAP_TOWN", "direction": "down", "offset": 0}]
+    (root / "data/maps/Town_House1/map.json").write_text(json.dumps(house))
+    m = DecompProject(root).maps
+    assert {x["target"] for x in seams.build(m, "Town")} == {"Town", "Town_House1"}
     (root / "src/field_door.c").write_text(
         "static const struct DoorGraphics sDoorAnimGraphicsTable[] =\n{\n    {},\n};\n")
     d = doors.add(m, "Town", 2, 1, (4, 4, 12, 16))

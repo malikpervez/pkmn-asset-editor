@@ -254,6 +254,9 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
   fill all 1024 metatile ids lends its adapters the top ids it never shows.
   A map that already has a hand-made seam (for another neighbour) gets pae's beside it, in metatiles, tiles and
   palette slots the hand-made one doesn't take, when the game looks at every seam entry of a map.
+  `--skip MAP` leaves a neighbour without seams either way (no room in it yet); `--only MAP` pairs the map with that
+  neighbour alone, its others left as they are (an old map with room for one new neighbour's strip but not all).
+  Joins are one-way: a map whose neighbour doesn't join it back gets that neighbour's strip, and not the other way.
 * **Maps with their own geometry** (`firered_geometry` in `map.json`, in that hack): pae shows and edits what the
   game builds, and `pae map geometry` changes it there.
 
