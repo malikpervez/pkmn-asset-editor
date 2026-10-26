@@ -210,6 +210,7 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
     free_banks += [b for b in spare_banks if b not in strict_banks]
     metas, glyphs = [], {}  # glyph pixels bytes -> slot
     approx = []  # copied palettes drawn in their nearest colours (no room for their own)
+    unknown = []  # blocks of a strip whose metatiles aren't in the neighbour's tilesets (not copied)
     bank_colors: dict[int, list] = {}  # slot -> colours loaded there
     packed: dict[int, int] = {}  # slots filled colour by colour (_pack) -> how many colours they have
     # the map's own palettes (the banks it shows): a neighbour's palette with the same colours just uses them
@@ -219,6 +220,12 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
            if b < len(tpal)}
     for src in sources:
         mids = sorted(strip(maps, target, src))
+        # a neighbour's block fixes can put its own hand-made seam's adapters on the map (ids above its tilesets'
+        # metatiles, drawn from kanto_connection_seam.c): they aren't copied, so they show as they did before
+        have = _used(maps, src)[2]["metatiles"]
+        if any(mid >= have for mid in mids):
+            unknown.append({"source": src, "ids": [mid for mid in mids if mid >= have]})
+            mids = [mid for mid in mids if mid < have]
         if not mids:
             continue
         slay, ste, sprim, ssec, sver = _context(maps, src)
@@ -325,7 +332,7 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
             "borrowed": {"palettes": sorted(b for b in bank_colors if b not in strict_banks),
                          "tiles": sum(1 for s in glyphs.values() if s not in strict_tiles),
                          "metatiles": borrowed_ids},
-            "approximated": approx}
+            "approximated": approx, "not_copied": unknown}
 
 
 def _c_glyphs(prefix: str, glyphs: dict) -> tuple[str, int]:
@@ -496,4 +503,5 @@ def build(maps, map_name: str, skip=()) -> list[dict]:
     maps.dp._changed = None
     return [{"target": p["target"], "adapters": sum(1 for m in p["metatiles"] if m), "glyphs": len(p["glyphs"]),
              "palettes": sorted(p["palettes"]), "sources": sorted({m["source"] for m in p["metatiles"] if m}),
-             "borrowed": p["borrowed"], "approximated": p["approximated"]} for p in plans]
+             "borrowed": p["borrowed"], "approximated": p["approximated"], "not_copied": p["not_copied"]}
+            for p in plans]

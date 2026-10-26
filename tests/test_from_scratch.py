@@ -817,3 +817,29 @@ def test_seam_borrows_metatile_ids_the_map_never_shows(root, tmp_path, monkeypat
     monkeypatch.setattr(seams, "_shown", lambda maps, name: None)  # can't tell what it shows: no room
     with pytest.raises(DecompError, match="don't fit"):
         seams.plan(m, "Town", ["Town_House1"])
+
+
+def test_seam_leaves_out_what_the_neighbours_tilesets_dont_have(root, tmp_path):
+    """A neighbour's block fixes can put ids above its tilesets' metatiles on the map (its own hand-made seam's
+    adapters): its strip is copied without them, and the plan says which."""
+    _, m, art, _ = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown",
+                   layout_version="hns")
+    tb.paint(m, "Town", "....\n" * 8, {".": "grass"}, names)
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["connections"] = [{"map": "MAP_TOWN_HOUSE1", "direction": "up", "offset": 0}]
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    m = DecompProject(root).maps
+    lay = m.layout_of("Town_House1")
+    h = lay["height"]
+    lays = json.loads((root / "data/layouts/layouts.json").read_text())
+    entry = next(x for x in lays["layouts"] if x["id"] == lay["id"])
+    raw = int(m.read_blocks(lay)[h - 1, 0])
+    entry["blockdata_overrides"] = [{"x": 0, "y": h - 1, "expected": raw, "value": 1020}]
+    (root / "data/layouts/layouts.json").write_text(json.dumps(lays))
+    m = DecompProject(root).maps
+    assert 1020 in seams.strip(m, "Town", "Town_House1")
+    p = seams.plan(m, "Town", ["Town_House1"])
+    assert p["not_copied"] == [{"source": "Town_House1", "ids": [1020]}]
+    assert all(e["mid"] != 1020 for e in p["metatiles"] if e)
