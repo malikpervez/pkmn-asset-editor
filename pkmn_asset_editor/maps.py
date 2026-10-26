@@ -231,6 +231,11 @@ class MapEditor:
             return self.layouts[lid]
         out = dict(self.layouts[lid])
         out.update({k: v for k, v in geo.items() if k in self.GEOMETRY_FIELDS})
+        for k in ("blockdata_overrides", "blockdata_composition"):  # as the game's build has them (null: none)
+            if k in geo:
+                out[k] = geo[k]
+            if out.get(k) is None:
+                out.pop(k, None)
         out["_geometry_map"] = self.resolve(name)
         return out
 
@@ -245,14 +250,26 @@ class MapEditor:
                 raise DecompError(f"unknown tileset {fields[k]} (not in src/data/tilesets/headers.h)")
         name = self.resolve(name)
         data = self.get_map(name)
+        # a new block file: the old one's block fixes (blockdata_overrides, blockdata_composition) point at it and
+        # would stop the build, so they go (a map's own geometry clears them with null: it inherits the layout's)
+        layout = self.layouts[data["layout"]]
+        old = self.layout_of(name)
+        new_blocks = fields.get("blockdata_filepath") not in (None, old.get("blockdata_filepath"))
+        fixes = [k for k in ("blockdata_overrides", "blockdata_composition") if old.get(k) is not None]
         if isinstance(data.get("firered_geometry"), dict):
             data["firered_geometry"].update({k: v for k, v in fields.items() if v is not None})
+            if new_blocks:
+                for k in fixes:
+                    data["firered_geometry"][k] = None
             path = self.root / "data" / "maps" / name / "map.json"
             self.dp._backup(str(path.relative_to(self.root)))
             _dump(path, data)
             self.dp._changed = None
         else:
-            self.layouts[data["layout"]].update({k: v for k, v in fields.items() if v is not None})
+            layout.update({k: v for k, v in fields.items() if v is not None})
+            if new_blocks:
+                for k in fixes:
+                    layout.pop(k, None)
             self._save_layouts()
         return self.layout_of(name)
 
