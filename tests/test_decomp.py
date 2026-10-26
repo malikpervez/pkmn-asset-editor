@@ -26,6 +26,15 @@ def link(proj, f):
     return a.palettes[0]["palette"] if a.palettes else None
 
 
+def test_index_is_made_when_first_read(repo):
+    p = DecompProject(repo)
+    assert "assets" not in p.__dict__ and "refs" not in p.__dict__  # opening the project doesn't index it
+    assert p.maps.maps and "assets" not in p.__dict__  # nor do the maps, until a tileset is asked for
+    assert p.assets and "refs" in p.__dict__ and "defines" in p.__dict__  # the first read makes the whole index
+    with pytest.raises(AttributeError):
+        p.no_such_attribute
+
+
 def test_index_and_palette_links(proj):
     assert isinstance(open_project(proj.root), DecompProject)
     assert link(proj, "graphics/pokemon/bulbasaur/anim_front.png") == "graphics/pokemon/bulbasaur/normal.pal"

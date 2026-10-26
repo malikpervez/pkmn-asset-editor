@@ -142,7 +142,7 @@ class MapEditor:
                 self.maps[name] = {"name": name, "group": g, "id": head.get("id", ""), "layout": head.get("layout", ""),
                                    "map_type": head.get("map_type", ""), "region": head.get("region", "")}
         self.map_by_id = {m["id"]: n for n, m in self.maps.items() if m["id"]}
-        self._parse_tilesets()
+        self._tilesets = None  # parsed when first asked for (it needs the project's index, which takes seconds)
         self._labels = None
 
     INLINE_DIR = Path(".pae") / "cache" / "inline"  # metatiles written out as C arrays, as .bin (read only)
@@ -167,11 +167,17 @@ class MapEditor:
             out[m.group(1)] = rel.as_posix()
         return out
 
-    def _parse_tilesets(self) -> None:
-        self.tilesets: dict[str, TilesetInfo] = {}
+    @property
+    def tilesets(self) -> dict[str, "TilesetInfo"]:
+        if self._tilesets is None:
+            self._tilesets = self._parse_tilesets()
+        return self._tilesets
+
+    def _parse_tilesets(self) -> dict[str, "TilesetInfo"]:
+        out: dict[str, TilesetInfo] = {}
         headers = self.root / "src" / "data" / "tilesets" / "headers.h"
         if not headers.exists():
-            return
+            return out
         sf = dict(self.dp.symbol_file)
         sf.update(self._inline_metatiles(sf))
         pal_files: dict[str, list[tuple[int, str]]] = {}
@@ -183,9 +189,10 @@ class MapEditor:
             body = m.group(2)
             field_ = lambda k: self.dp.resolve_symbol((re.search(rf"\.{k}\s*=\s*(\w+)", body) or [None, ""])[1] or "")
             pals = [f for _, f in sorted(pal_files.get(field_("palettes"), []))]
-            self.tilesets[m.group(1)] = TilesetInfo(
+            out[m.group(1)] = TilesetInfo(
                 m.group(1), (field_("isSecondary") or "FALSE") == "TRUE", sf.get(field_("tiles") or ""), pals,
                 sf.get(field_("metatiles") or ""), sf.get(field_("metatileAttributes") or ""))
+        return out
 
     def consts(self, version: str) -> tuple[int, int, int]:
         d = self.dp.defines

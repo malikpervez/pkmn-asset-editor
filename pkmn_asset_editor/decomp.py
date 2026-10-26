@@ -296,9 +296,23 @@ class DecompProject:
         self._git = None
         self._head_cache: dict[str, bytes | None] = {}
         self._changed: tuple[float, dict[str, str]] | None = None
-        self.reindex()
 
     # ------------------------------------------------------------------ indexing
+    # the index (the game's graphics, the references to them, its #defines) takes seconds on a big game, so it is
+    # made the first time something reads it: map, tileset and play commands mostly start without it
+    _INDEX = frozenset({"defines", "refs", "mk_args", "generated", "refs_by_file", "symbol_file", "aliases",
+                        "assets", "alias_of"})
+
+    def __getattr__(self, name: str):
+        if name in DecompProject._INDEX and "_indexing" not in self.__dict__:
+            self._indexing = True
+            try:
+                self.reindex()
+            finally:
+                del self._indexing
+            return self.__dict__[name]
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+
     def resolve_symbol(self, sym: str) -> str:
         """The symbol that holds ``sym``'s data: itself, or what its alias (chain) points to."""
         seen = set()
