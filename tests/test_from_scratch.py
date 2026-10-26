@@ -700,3 +700,65 @@ def test_tilesets_by_alias_and_inline_arrays(root):
     _, sec, version = te.sides(m.layout_of("Town_House1"))
     with pytest.raises(DecompError, match="C array"):
         te._write_metas(sec, version, te._read_metas(sec), [0] * 8)
+
+
+def test_seam_takes_nearest_colours_with_no_room(root, tmp_path, monkeypatch):
+    """With no palette slot free or to borrow, a neighbour's copied tiles take each colour's nearest in the slot
+    closest to them, and the plan says which palette was drawn so."""
+    _, m, art, _ = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown",
+                   layout_version="hns")
+    tb.paint(m, "Town", "....\n" * 8, {".": "grass"}, names)
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["connections"] = [{"map": "MAP_TOWN_HOUSE1", "direction": "up", "offset": 0}]
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    m = DecompProject(root).maps
+    real = seams._used
+
+    def none_free(maps, name):
+        tiles, _, inf = real(maps, name)
+        return tiles, set(range(13)), inf
+    monkeypatch.setattr(seams, "_used", none_free)
+    monkeypatch.setattr(seams, "_spare", lambda maps, name, info: ([], []))
+    monkeypatch.setattr(seams, "_pack", lambda *a: None)  # (nothing fits as it is)
+    p = seams.plan(m, "Town", ["Town_House1"])
+    assert p["approximated"] and not p["palettes"]
+    tpal = m.tileset_editor.palettes("Town")
+    for a in p["approximated"]:
+        assert a["source"] == "Town_House1" and a["slot"] < len(tpal)
+    # the nearest: each colour to its closest in the slot nearest overall
+    own = {0: [(0, 0, 0), (10, 10, 10), (200, 0, 0)] + [(0, 0, 0)] * 13,
+           1: [(0, 0, 0), (0, 0, 250), (90, 90, 90)] + [(0, 0, 0)] * 13}
+    cols = [(0, 0, 0), (12, 12, 12), (190, 5, 5)] + [(0, 0, 0)] * 13
+    assert seams._nearest({1, 2}, cols, own, {}, {}) == (0, {1: 1, 2: 2}, 12)
+
+
+def test_seam_borrows_metatile_ids_the_map_never_shows(root, tmp_path, monkeypatch):
+    """A map whose tilesets fill every metatile id still takes a seam: its adapters go in the top ids it never
+    shows, and an id it shows between them is an empty entry (the game draws the map's own metatile there)."""
+    _, m, art, _ = _scratch(root, tmp_path)
+    names = json.loads((art / "names.json").read_text())
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown",
+                   layout_version="hns")
+    tb.paint(m, "Town", "....\n" * 8, {".": "grass"}, names)
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["connections"] = [{"map": "MAP_TOWN_HOUSE1", "direction": "up", "offset": 0}]
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    m = DecompProject(root).maps
+    real_used, real_shown = seams._used, seams._shown
+
+    def full(maps, name):
+        tiles, banks, inf = real_used(maps, name)
+        return tiles, banks, dict(inf, metatiles=1024)
+    monkeypatch.setattr(seams, "_used", full)
+    monkeypatch.setattr(seams, "_shown", lambda maps, name: real_shown(maps, name) | {1022})
+    n = len(seams.strip(m, "Town", "Town_House1"))
+    p = seams.plan(m, "Town", ["Town_House1"])
+    ids = [p["first"] + i for i, e in enumerate(p["metatiles"]) if e]
+    assert len(ids) == n and 1022 not in ids and p["metatiles"][1022 - p["first"]] is None
+    assert p["first"] + len(p["metatiles"]) == 1024 and p["borrowed"]["metatiles"] == n
+    assert "{ .sourceLayout = NULL }," in seams.render_header([p])
+    monkeypatch.setattr(seams, "_shown", lambda maps, name: None)  # can't tell what it shows: no room
+    with pytest.raises(DecompError, match="don't fit"):
+        seams.plan(m, "Town", ["Town_House1"])

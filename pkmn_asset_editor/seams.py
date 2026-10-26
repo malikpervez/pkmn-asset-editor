@@ -13,10 +13,14 @@ strip's blocks are translated to.
 A neighbour's palette with the same colours as one the map shows uses the map's own, and when both maps have the
 same primary tileset its tiles are used as they are (only the secondary tiles are copied): maps built from one
 kit need few slots. Copied tiles take their colours wherever a slot has them, so the colours several of the
-neighbour's palettes use in the strip share a slot when they fit in one (15 colours). Free slots: first those the map's tilesets never use. When those run out, palette slots and secondary tiles the map
+neighbour's palettes use in the strip share a slot when they fit in one (15 colours). When no slot has room for a
+copied palette's colours, its tiles take each colour's nearest in the slot that has them closest (the strip is
+drawn a little off until the neighbour is rebuilt; ``build`` says which). Free slots: first those the map's tilesets never use. When those run out, palette slots and secondary tiles the map
 never shows are borrowed: the game reloads every palette and the secondary tiles whenever you cross into another map
 (primary tiles are not reloaded when the primary tileset stays, so those are only taken when the tileset doesn't
-use them). "Shown" is the map's blocks, its border and what its scripts put with ``setmetatile``.
+use them). Adapters go at the top of the metatile ids, above the map's tilesets' metatiles; a map whose tilesets
+fill every id lends them the top ids it never shows (one it shows between them stays its own). "Shown" is the map's
+blocks, its border, what its scripts put with ``setmetatile`` and the strips of neighbours with the same tilesets.
 """
 
 from __future__ import annotations
@@ -97,9 +101,14 @@ def _used(maps, name: str) -> tuple[set[int], set[int], dict]:
 
 
 def _shown(maps, name: str) -> set[int] | None:
-    """Metatile ids the map can show: its blocks, its border, what its scripts set (None if that can't be told)."""
+    """Metatile ids the map can show: its blocks, its border, what its scripts set, and the strips of neighbours with
+    the same tilesets (drawn with its metatiles as they are); None if that can't be told."""
     lay = maps.layout_of(name)
     mids = set(np.unique(maps.read_blocks(lay) & 0x3FF).tolist())
+    for c in maps.get_map(name).get("connections") or []:
+        other = maps.map_by_id.get(c.get("map"))
+        if other is not None and _same_tilesets(lay, maps.layout_of(other)):
+            mids |= strip(maps, name, other)
     try:
         mids |= set(np.unique(maps.read_blocks(lay, "border") & 0x3FF).tolist())
     except Exception:
@@ -166,6 +175,23 @@ def _pack(need: set[int], cols, own: dict, bank_colors: dict, packed: dict, free
     return slot
 
 
+def _nearest(need: set[int], cols, own: dict, bank_colors: dict, packed: dict) -> tuple[int, dict, int] | None:
+    """The slot whose colours are closest to a copied bank's (``need``: its indices in ``cols``), for when no slot
+    has room for them: (slot, {index: its nearest's index in the slot}, the farthest any colour is, in RGB steps)."""
+    best = None
+    for slot, have in list(own.items()) + list(bank_colors.items()):
+        n = packed.get(slot, 15)
+        if n < 1:
+            continue
+        cand = range(1, n + 1)
+        to = {i: min(cand, key=lambda j: sum((int(a) - int(b)) ** 2 for a, b in zip(cols[i], have[j])))
+              for i in need}
+        d = [sum((int(a) - int(b)) ** 2 for a, b in zip(cols[i], have[j])) for i, j in to.items()]
+        if best is None or sum(d) < best[0]:
+            best = (sum(d), slot, to, round(max(d) ** 0.5))
+    return None if best is None else best[1:]
+
+
 def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> dict:
     """Adapters ``target`` needs to draw the strips of ``sources``; ``beside``: what a hand-made seam of the map
     already takes (see ``hand_made``)."""
@@ -183,6 +209,7 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
     free_tiles += [t for t in spare_tiles if t not in strict_tiles]
     free_banks += [b for b in spare_banks if b not in strict_banks]
     metas, glyphs = [], {}  # glyph pixels bytes -> slot
+    approx = []  # copied palettes drawn in their nearest colours (no room for their own)
     bank_colors: dict[int, list] = {}  # slot -> colours loaded there
     packed: dict[int, int] = {}  # slots filled colour by colour (_pack) -> how many colours they have
     # the map's own palettes (the banks it shows): a neighbour's palette with the same colours just uses them
@@ -240,6 +267,15 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
                             lut[bank][i] = next(j for j in range(1, 16) if have[j] == cols[i])
                         slot_of[bank] = slot
                         continue
+                    near = _nearest(need[bank], cols, own, bank_colors, packed)
+                    if near is not None:
+                        slot, to, far = near
+                        for i, j in to.items():
+                            lut[bank][i] = j
+                        slot_of[bank] = slot
+                        approx.append({"source": src, "palette": bank, "slot": slot, "colours": len(to),
+                                       "farthest": far})
+                        continue
                 if not free_banks:
                     raise DecompError(f"{target}: no free palette slot left for {src}'s palette {bank} "
                                       f"(the strip needs {len(need)} palettes; the map shows the others)")
@@ -269,14 +305,27 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
                           "attr": int(mt["raw_attr"]), "version": VERSIONS.get(sver, "LAYOUT_VERSION_EMERALD")})
     if not metas:
         return {}
-    first = (beside["first"] if beside else 1024) - len(metas)  # below a hand-made seam's range
+    top = beside["first"] if beside else 1024  # below a hand-made seam's range
+    first = top - len(metas)
+    borrowed_ids = 0
     if first < info["metatiles"]:
-        raise DecompError(f"{target}: {len(metas)} adapters don't fit above its {info['metatiles']} metatiles")
+        # no room above its tilesets' metatiles: take the ids at the top it never shows, the ones it shows between
+        # them left as they are (an empty entry: the game draws the map's own metatile)
+        shown = _shown(maps, target)
+        free = [] if shown is None else [i for i in range(info["npm"], top) if i not in shown][-len(metas):]
+        if len(free) < len(metas):
+            raise DecompError(f"{target}: {len(metas)} adapters don't fit above its {info['metatiles']} metatiles "
+                              "(nor in the ids it never shows)")
+        first, at = free[0], dict(zip(free, metas))
+        metas = [at.get(i) for i in range(first, top)]
+        borrowed_ids = sum(1 for i in free if i < info["metatiles"])
     return {"target": target, "layout": _layout_symbol(maps, target), "first": first, "metatiles": metas,
             "glyphs": {slot: np.frombuffer(k, np.uint8).reshape(8, 8) for k, slot in glyphs.items()},
             "palettes": bank_colors,
             "borrowed": {"palettes": sorted(b for b in bank_colors if b not in strict_banks),
-                         "tiles": sum(1 for s in glyphs.values() if s not in strict_tiles)}}
+                         "tiles": sum(1 for s in glyphs.values() if s not in strict_tiles),
+                         "metatiles": borrowed_ids},
+            "approximated": approx}
 
 
 def _c_glyphs(prefix: str, glyphs: dict) -> tuple[str, int]:
@@ -308,13 +357,16 @@ def render_header(plans: list[dict]) -> str:
     out = ["// Generated by pae (`pae seam build`) from src/data/pae_seams.json: adapter metatiles for connection",
            "// strips across different tilesets. Do not edit by hand.", "#ifndef GUARD_PAE_SEAMS_H",
            "#define GUARD_PAE_SEAMS_H", ""]
-    layouts = sorted({p["layout"] for p in plans} | {m["source_layout"] for p in plans for m in p["metatiles"]})
+    layouts = sorted({p["layout"] for p in plans} | {m["source_layout"] for p in plans for m in p["metatiles"] if m})
     out += [f"extern const struct MapLayout {s};" for s in layouts] + [""]
     entries = []
     for p in plans:
         pre = f"sPaeSeam_{p['target']}"
         out.append(f"static const struct KantoSeamMetatile {pre}_Metatiles[] = {{")
         for m in p["metatiles"]:
+            if m is None:  # an id the map shows, between borrowed ones: its own metatile
+                out.append("    { .sourceLayout = NULL },")
+                continue
             out.append(f"    {{ .sourceLayout = &{m['source_layout']}, .attributes = 0x{m['attr']:08X}u, "
                        f".sourceMid = {m['mid']}, .tiles = {{ " + ", ".join(f"0x{t:04X}" for t in m["tiles"])
                        + f" }}, .layoutVersion = {m['version']} }},")
@@ -442,6 +494,6 @@ def build(maps, map_name: str, skip=()) -> list[dict]:
     (maps.root / HEADER).write_text(render_header(plans))
     _hook(maps)
     maps.dp._changed = None
-    return [{"target": p["target"], "adapters": len(p["metatiles"]), "glyphs": len(p["glyphs"]),
-             "palettes": sorted(p["palettes"]), "sources": sorted({m["source"] for m in p["metatiles"]}),
-             "borrowed": p["borrowed"]} for p in plans]
+    return [{"target": p["target"], "adapters": sum(1 for m in p["metatiles"] if m), "glyphs": len(p["glyphs"]),
+             "palettes": sorted(p["palettes"]), "sources": sorted({m["source"] for m in p["metatiles"] if m}),
+             "borrowed": p["borrowed"], "approximated": p["approximated"]} for p in plans]
