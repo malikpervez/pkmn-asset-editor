@@ -73,6 +73,36 @@ def test_new_blocks_drop_the_old_blocks_fixes(root):
     assert "blockdata_overrides" not in json.loads((root / "data/layouts/layouts.json").read_text())["layouts"][0]
 
 
+
+def test_blocks_are_read_as_the_game_builds_them(root):
+    """A layout's block fixes are applied when its blocks are read (as the game's build does: the composition's
+    rectangles over its fill word, then the overrides), and a write bakes them in, so they go."""
+    m = DecompProject(root).maps
+    lay = m.layout_of("Town")
+    raw = m.read_blocks(lay).copy()
+    lays = json.loads((root / "data/layouts/layouts.json").read_text())
+    lays["layouts"][0]["blockdata_overrides"] = [{"x": 1, "y": 2, "expected": int(raw[2, 1]), "value": 777}]
+    (root / "data/layouts/layouts.json").write_text(json.dumps(lays))
+    m = DecompProject(root).maps
+    got = m.read_blocks(m.layout_of("Town"))
+    assert got[2, 1] == 777 and (np.delete(got.ravel(), 2 * got.shape[1] + 1) ==
+                                 np.delete(raw.ravel(), 2 * raw.shape[1] + 1)).all()
+    # a composition: a fill word, with a rectangle of another block file over it
+    (root / "data/layouts/Town/part.bin").write_bytes(np.arange(4, dtype="<u2").tobytes())  # 2x2: 0 1 / 2 3
+    lays["layouts"][0]["blockdata_composition"] = {
+        "fill_source": {"filepath": "data/layouts/Town/part.bin", "offset": 6, "expected": 3},
+        "parts": [{"filepath": "data/layouts/Town/part.bin", "source_width": 2, "source_height": 2, "source_x": 0,
+                   "source_y": 0, "width": 2, "height": 1, "dest_x": 4, "dest_y": 0}]}
+    (root / "data/layouts/layouts.json").write_text(json.dumps(lays))
+    m = DecompProject(root).maps
+    got = m.read_blocks(m.layout_of("Town"))
+    assert got[0, 4] == 0 and got[0, 5] == 1 and got[0, 0] == 3 and got[2, 1] == 777
+    m.write_blocks("Town", got)
+    saved = json.loads((root / "data/layouts/layouts.json").read_text())["layouts"][0]
+    assert "blockdata_overrides" not in saved and "blockdata_composition" not in saved
+    assert (DecompProject(root).maps.read_blocks(m.layout_of("Town")) == got).all()
+
+
 def _scratch(root, tmp_path):
     proj = DecompProject(root)
     tb.new_tileset(proj, "gTileset_NewGeneral", secondary=False)
@@ -405,6 +435,31 @@ def test_seam_borrows_what_the_map_never_shows(root, tmp_path, monkeypatch):
     p = seams.plan(m, "Town", ["Town_House1"])
     assert p["palettes"] and p["borrowed"]["palettes"] == sorted(p["palettes"])
     assert 0 not in p["palettes"]
+
+
+
+def test_walks_keep_heights_and_one_way_edges(root):
+    """A walk keeps the game's rule for each step: not between two heights (elevations other than 0 and 15), and
+    not across a one-way edge (MB_IMPASSABLE_NORTH: not left going north, not entered going south)."""
+    m = DecompProject(root).maps
+    lay = m.layout_of("Town")
+    b = m.read_blocks(lay).copy()
+    b[:, :] = (b[0, 0] & 0x3FF) | (3 << 12)  # walkable everywhere, at height 3 ...
+    b[0:4, 2] = (b[0, 0] & 0x3FF) | (4 << 12)  # ... but a ridge at height 4 down column 2 ...
+    b[4, 2] = (b[0, 0] & 0x3FF) | (15 << 12)  # ... with a way over it at its foot (15: any height)
+    m.write_blocks("Town", b)
+    dirs, end = walk.walk(m, "Town", [(1, 1), (3, 1)])
+    assert end == (3, 1) and dirs == ["down", "down", "down", "right", "right", "up", "up", "up"]
+    real = m.tileset_editor.behaviors
+    names = list(real("emerald"))
+    names[m.tileset_editor.get_metatile("Town", int(b[0, 0]) & 0x3FF)["behavior"]] = "MB_IMPASSABLE_NORTH"
+    m.tileset_editor.behaviors = lambda version: names
+    # every block is one you can't leave going north, nor (its north side facing you) enter going south
+    assert walk.walk(m, "Town", [(3, 1), (6, 1)])[1] == (6, 1)  # sideways is fine
+    for a_, b_ in (((1, 3), (1, 1)), ((1, 1), (1, 3))):
+        with pytest.raises(DecompError, match="no way"):
+            walk.walk(m, "Town", [a_, b_])
+    m.tileset_editor.behaviors = real
 
 
 def test_place_path_and_connect(root):

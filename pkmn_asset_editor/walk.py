@@ -3,7 +3,10 @@
 * :func:`place` moves one event (an object by index or local id, a warp, a trigger, a sign) to another block.
 * :func:`route` finds a walk between blocks over what the map lets you walk on (collision 0, not water unless
   surfing; other objects' starting blocks are avoided if asked), shortest first and then with the fewest turns.
-  Sideways stairs are kept off: they move you diagonally, which a walk of single steps can't follow.
+  Sideways stairs are kept off: they move you diagonally, which a walk of single steps can't follow. A walk on a
+  map (:func:`walk`) also keeps the game's rules for each step (:func:`steps`): not between two heights (an
+  elevation other than 0 or 15 on both sides, and not the same), and not across a one-way edge (a block you can't
+  leave or enter that way, e.g. ``MB_IMPASSABLE_NORTH``: not left going north, not entered going south).
 * :func:`movement` turns it into movement commands (``walk_up`` …), and :func:`write_movement` puts them under a
   movement label in the map's script, replacing what was there up to its ``step_end``.
 
@@ -20,6 +23,17 @@ from .decomp import DecompError
 from .maps import EVENT_KINDS
 
 DIRS = {"up": (0, -1), "down": (0, 1), "left": (-1, 0), "right": (1, 0)}
+# blocks you can't leave going that way (src/metatile_behavior.c, MetatileBehavior_Is<Direction>Blocked)
+BLOCKED = {
+    "up": {"MB_IMPASSABLE_NORTH", "MB_IMPASSABLE_NORTHEAST", "MB_IMPASSABLE_NORTHWEST", "MB_IMPASSABLE_SOUTH_AND_NORTH",
+           "MB_TALL_GRASS_IMPASSABLE_NORTH", "MB_CAVE_IMPASSABLE_NORTH"},
+    "down": {"MB_IMPASSABLE_SOUTH", "MB_IMPASSABLE_SOUTHEAST", "MB_IMPASSABLE_SOUTHWEST", "MB_IMPASSABLE_SOUTH_AND_NORTH"},
+    "right": {"MB_IMPASSABLE_EAST", "MB_IMPASSABLE_NORTHEAST", "MB_IMPASSABLE_SOUTHEAST", "MB_IMPASSABLE_WEST_AND_EAST",
+              "MB_SECRET_BASE_BREAKABLE_DOOR"},
+    "left": {"MB_IMPASSABLE_WEST", "MB_IMPASSABLE_NORTHWEST", "MB_IMPASSABLE_SOUTHWEST", "MB_IMPASSABLE_WEST_AND_EAST",
+             "MB_SECRET_BASE_BREAKABLE_DOOR"},
+}
+OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
 WATER = re.compile(r"WATER|OCEAN|POND|DEEP|CURRENT|WATERFALL|PUDDLE_SURF", re.I)
 OFF = re.compile(r"SIDEWAYS_STAIRS", re.I)  # walkable, but not in single steps (they move you diagonally)
 
@@ -77,8 +91,33 @@ def walkable(maps, map_name: str, surf: bool = False, avoid_objects: bool = Fals
     return grid
 
 
-def route(grid, start: tuple[int, int], goal: tuple[int, int]) -> list[str]:
-    """Directions from start to goal (the goal itself may be a door or other blocked block)."""
+def steps(maps, map_name: str):
+    """The game's rule for one step on the map, ``ok(from, to, direction)``: not between two heights, not across a
+    one-way edge (see the module notes)."""
+    lay = maps.layout_of(map_name)
+    blocks = maps.read_blocks(lay)
+    te = maps.tileset_editor
+    names = te.behaviors(lay.get("layout_version", "emerald"))
+    beh: dict[int, str] = {}
+
+    def behavior(x, y):
+        mid = int(blocks[y, x]) & 0x3FF
+        if mid not in beh:
+            b = int(te.get_metatile(map_name, mid).get("behavior", 0))
+            beh[mid] = names[b] if b < len(names) else ""
+        return beh[mid]
+
+    def ok(a, b, d):
+        ea, eb = int(blocks[a[1], a[0]]) >> 12, int(blocks[b[1], b[0]]) >> 12
+        if ea != eb and ea not in (0, 15) and eb not in (0, 15):
+            return False
+        return behavior(*a) not in BLOCKED[d] and behavior(*b) not in BLOCKED[OPPOSITE[d]]
+    return ok
+
+
+def route(grid, start: tuple[int, int], goal: tuple[int, int], ok=None) -> list[str]:
+    """Directions from start to goal (the goal itself may be a door or other blocked block); ``ok(from, to,
+    direction)``, if given, says whether a step is allowed (:func:`steps`)."""
     h, w = len(grid), len(grid[0])
     if start == goal:
         return []
@@ -97,6 +136,8 @@ def route(grid, start: tuple[int, int], goal: tuple[int, int]) -> list[str]:
                 continue
             if (nx, ny) != goal and not grid[ny][nx]:
                 continue
+            if ok is not None and not ok(pos, (nx, ny), d):
+                continue
             turn = int(last is not None and d != last)
             heapq.heappush(q, (cost + 100 + turn, turns + turn, (nx, ny), d, path + [d]))
     raise DecompError(f"no way to walk from {start} to {goal}")
@@ -112,9 +153,10 @@ def walk(maps, map_name: str, points: list[tuple[int, int]], surf: bool = False,
     if len(points) < 2:
         raise DecompError("give at least two blocks: where the walk starts and where it goes")
     grid = walkable(maps, map_name, surf, avoid_objects)
+    ok = steps(maps, map_name)
     dirs: list[str] = []
     for a, b in zip(points, points[1:]):
-        dirs += route(grid, a, b)
+        dirs += route(grid, a, b, ok)
     if stop_short:
         dirs = dirs[:max(0, len(dirs) - stop_short)]
     x, y = points[0]
