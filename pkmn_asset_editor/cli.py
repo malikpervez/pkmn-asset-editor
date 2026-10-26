@@ -1441,6 +1441,9 @@ def _run(args) -> int:
         for r in seams.build(m, args.name, args.skip):
             print(f"{r['target']}: {r['adapters']} adapter metatiles for {', '.join(r['sources'])}; "
                   f"{r['glyphs']} tiles, palette slot(s) {', '.join(map(str, r['palettes']))}")
+            for a in r["approximated"]:
+                print(f"  note: no room for {a['source']}'s palette {a['palette']}: its {a['colours']} colours are "
+                      f"drawn as their nearest in slot {a['slot']} (at most {a['farthest']} RGB steps off)")
         print(f"wrote {seams.HEADER} (from {seams.RECORD})")
         return 0
     if args.cmd == "tileset":
