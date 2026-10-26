@@ -257,9 +257,37 @@ class MapEditor:
         else:
             self.layouts[data["layout"]].update({k: v for k, v in fields.items() if v is not None})
         self._save_geometry(name, data, drop_fixes=new_blocks)
+        self._drop_aliases(name)
         return self.layout_of(name)
 
     FIXES = ("blockdata_overrides", "blockdata_composition")
+
+    ALIASES = "data/layouts/firered_geometry_payload_aliases.json"
+
+    def _drop_aliases(self, name: str | None = None, files=()) -> None:
+        """The game's build (this fork's tools/mapjson) emits a block or border file that is byte-for-byte another's
+        as an alias of it, by a list (``ALIASES``) it checks: an entry whose file changed stops the build ("Stale or
+        unequal FireRed geometry alias"). Drop the entries of a map (``name``) that no longer name its files, and any
+        that use one of ``files`` (written just now) as their source or owner."""
+        path = self.root / self.ALIASES
+        if not path.exists():
+            return
+        data = json.loads(path.read_text())
+        aliases = data.get("aliases") or {}
+        mine = {}
+        if name is not None:
+            lay = self.layout_of(name)
+            for kind, key in (("Border", "border_filepath"), ("Blockdata", "blockdata_filepath")):
+                for label in (f"{self.resolve(name)}_FireRedGeometry_{kind}", f"{lay.get('name')}_{kind}"):
+                    mine[label] = lay.get(key)
+        files = {str(f) for f in files}
+        keep = {k: a for k, a in aliases.items()
+                if not (k in mine and a.get("source_filepath") != mine[k])
+                and a.get("source_filepath") not in files and a.get("owner_filepath") not in files}
+        if len(keep) != len(aliases):
+            data["aliases"] = keep
+            self.dp._backup(self.ALIASES)
+            path.write_text(json.dumps(data, indent=2) + "\n")
 
     def _save_geometry(self, name: str, data: dict, drop_fixes: bool = False) -> None:
         """Write the map's geometry back where it's kept (its map.json, or layouts.json). ``drop_fixes``: its block
@@ -328,6 +356,7 @@ class MapEditor:
         self.dp._backup(str(path.relative_to(self.root)))
         path.write_bytes(np.ascontiguousarray(blocks, dtype="<u2").tobytes())
         self.dp._changed = None
+        self._drop_aliases(files=[layout[f"{which}_filepath"]])
         if which == "blockdata" and any(layout.get(k) is not None for k in self.FIXES):
             # the file holds the blocks as the game showed them (read_blocks applies the fixes): they're baked in
             owner = layout.get("_geometry_map") or self.resolve(name)
