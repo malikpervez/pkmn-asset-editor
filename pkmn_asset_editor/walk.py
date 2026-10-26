@@ -34,7 +34,8 @@ BLOCKED = {
              "MB_SECRET_BASE_BREAKABLE_DOOR"},
 }
 OPPOSITE = {"up": "down", "down": "up", "left": "right", "right": "left"}
-WATER = re.compile(r"WATER|OCEAN|POND|DEEP|CURRENT|WATERFALL|PUDDLE_SURF", re.I)
+# (not DEEP: deep water says WATER, and deep sand and the deep south warp, a gangway's end, are land)
+WATER = re.compile(r"WATER|OCEAN|POND|CURRENT|WATERFALL|PUDDLE_SURF", re.I)
 OFF = re.compile(r"SIDEWAYS_STAIRS", re.I)  # walkable, but not in single steps (they move you diagonally)
 
 

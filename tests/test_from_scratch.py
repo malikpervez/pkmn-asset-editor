@@ -898,3 +898,12 @@ def test_new_geometry_files_drop_their_stale_aliases(root):
     assert set(json.loads(path.read_text())["aliases"]) == {"Other_Layout_Blockdata", "Third_Layout_Border"}
     m.write_blocks("Town", m.read_blocks(m.layout_of("Town")))  # Town's block file, another's owner, is written
     assert set(json.loads(path.read_text())["aliases"]) == {"Third_Layout_Border"}
+
+
+def test_walks_know_water_from_land_named_deep():
+    """Deep water is water; deep sand, the deep south warp (a gangway's end) and Mossdeep's Gym warp are land."""
+    for b in ("MB_DEEP_WATER", "MB_SEMI_DEEP_WATER", "MB_POND_WATER", "MB_OCEAN_WATER", "MB_INTERIOR_DEEP_WATER",
+              "MB_WATERFALL", "MB_EASTWARD_CURRENT"):
+        assert walk.WATER.search(b), b
+    for b in ("MB_DEEP_SAND", "MB_DEEP_SOUTH_WARP", "MB_MOSSDEEP_GYM_WARP", "MB_NORMAL", "MB_PUDDLE"):
+        assert not walk.WATER.search(b), b
