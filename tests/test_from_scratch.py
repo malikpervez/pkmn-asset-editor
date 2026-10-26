@@ -49,6 +49,30 @@ def test_geometry_of_a_map_with_its_own(root):
         m.set_geometry("Town", secondary_tileset="gTileset_Nope")
 
 
+def test_new_blocks_drop_the_old_blocks_fixes(root):
+    """The old block file's fixes go with it: a map's own geometry clears the layout's (null), a layout drops its own."""
+    lays = json.loads((root / "data/layouts/layouts.json").read_text())
+    lays["layouts"][0]["blockdata_overrides"] = [{"x": 1, "y": 1, "expected": 1, "value": 2}]
+    (root / "data/layouts/layouts.json").write_text(json.dumps(lays))
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["firered_geometry"] = {"width": 10, "height": 8, "primary_tileset": "gTileset_General",
+                                "secondary_tileset": "gTileset_Town", "blockdata_filepath": "data/layouts/Town/map.bin",
+                                "border_filepath": "data/layouts/Town/border.bin", "layout_version": "hns"}
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    m = DecompProject(root).maps
+    m.set_geometry("Town", secondary_tileset="gTileset_Town")  # the same blocks: the fixes stay
+    assert "blockdata_overrides" not in json.loads((root / "data/maps/Town/map.json").read_text())["firered_geometry"]
+    m.set_geometry("Town", blockdata_filepath="data/layouts/Town/new.bin")
+    geo = json.loads((root / "data/maps/Town/map.json").read_text())["firered_geometry"]
+    assert "blockdata_overrides" in geo and geo["blockdata_overrides"] is None
+    assert m.layout_of("Town").get("blockdata_overrides") is None
+    town.pop("firered_geometry")
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    m = DecompProject(root).maps
+    m.set_geometry("Town", blockdata_filepath="data/layouts/Town/other.bin")
+    assert "blockdata_overrides" not in json.loads((root / "data/layouts/layouts.json").read_text())["layouts"][0]
+
+
 def _scratch(root, tmp_path):
     proj = DecompProject(root)
     tb.new_tileset(proj, "gTileset_NewGeneral", secondary=False)
