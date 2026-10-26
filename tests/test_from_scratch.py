@@ -652,7 +652,8 @@ def test_seam_packs_copied_colours(root, tmp_path, monkeypatch):
 
 
 def test_seams_share_the_kit(root, tmp_path):
-    """Two maps with the same primary tileset: the strip uses the primary's tiles and the map's own palettes."""
+    """Two maps with the same primary tileset: the primary's metatiles need no adapter (a block with none is drawn as
+    the map's own, the same metatile); the neighbour's own (secondary) ones are copied, in the map's own palettes."""
     proj, m, art, _ = _scratch(root, tmp_path)
     names = json.loads((art / "names.json").read_text())
     tb.new_tileset(proj, "gTileset_NewTown2", secondary=True)
@@ -673,9 +674,8 @@ def test_seams_share_the_kit(root, tmp_path):
     m = DecompProject(root).maps
     p = seams.plan(m, "Town", ["Town_House1"])
     assert p["palettes"] == {}  # the neighbour's palettes are the map's own
-    grass_tiles = {e & 0x3FF for mt in p["metatiles"] if mt["mid"] == 0 for e in mt["tiles"]}
-    assert grass_tiles and max(grass_tiles) < 512  # primary tiles used as they are
-    house = [mt for mt in p["metatiles"] if mt["mid"] >= 512]
+    assert not [mt for mt in p["metatiles"] if mt and mt["mid"] < 512]  # the primary's: drawn as they are
+    house = [mt for mt in p["metatiles"] if mt and mt["mid"] >= 512]
     assert house and any((e & 0x3FF) >= 512 for mt in house for e in mt["tiles"])  # its secondary tiles copied
 
 

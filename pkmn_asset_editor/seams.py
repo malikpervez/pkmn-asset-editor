@@ -261,7 +261,10 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
         for bank in sorted(need, key=lambda b: (b not in fixed, -len(need[b]))):
             cols = spal[bank]
             lut[bank] = np.arange(16, dtype=np.uint8)
-            for slot, have in list(own.items()) + list(bank_colors.items()):  # the same colours on these indices
+            slots = list(own.items()) + list(bank_colors.items())
+            if same_primary and bank in own:  # the same bank first: then its metatiles may need no adapter at all
+                slots.insert(0, (bank, own[bank]))
+            for slot, have in slots:  # the same colours on these indices
                 if all(i <= packed.get(slot, 15) and have[i] == cols[i] for i in need[bank]):
                     slot_of[bank] = slot
                     break
@@ -291,6 +294,12 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
                 slot_of[bank] = slot
         for mid in mids:
             mt = rows[mid]
+            if same_primary and mid < snpm and all(
+                    not pixels(e["tile"]).any() or (e["tile"] < snpt and slot_of[e["palette"]] == e["palette"])
+                    for e in mt["entries"]):
+                # one of the primary's metatiles, drawn from the primary's tiles in palettes the map has on the same
+                # banks: the map draws it as it is (a block with no adapter is kept), so it needs none
+                continue
             ent = []
             for e in mt["entries"]:
                 px = pixels(e["tile"])
