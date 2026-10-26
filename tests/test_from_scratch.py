@@ -437,6 +437,31 @@ def test_seam_borrows_what_the_map_never_shows(root, tmp_path, monkeypatch):
     assert 0 not in p["palettes"]
 
 
+
+def test_walks_keep_heights_and_one_way_edges(root):
+    """A walk keeps the game's rule for each step: not between two heights (elevations other than 0 and 15), and
+    not across a one-way edge (MB_IMPASSABLE_NORTH: not left going north, not entered going south)."""
+    m = DecompProject(root).maps
+    lay = m.layout_of("Town")
+    b = m.read_blocks(lay).copy()
+    b[:, :] = (b[0, 0] & 0x3FF) | (3 << 12)  # walkable everywhere, at height 3 ...
+    b[0:4, 2] = (b[0, 0] & 0x3FF) | (4 << 12)  # ... but a ridge at height 4 down column 2 ...
+    b[4, 2] = (b[0, 0] & 0x3FF) | (15 << 12)  # ... with a way over it at its foot (15: any height)
+    m.write_blocks("Town", b)
+    dirs, end = walk.walk(m, "Town", [(1, 1), (3, 1)])
+    assert end == (3, 1) and dirs == ["down", "down", "down", "right", "right", "up", "up", "up"]
+    real = m.tileset_editor.behaviors
+    names = list(real("emerald"))
+    names[m.tileset_editor.get_metatile("Town", int(b[0, 0]) & 0x3FF)["behavior"]] = "MB_IMPASSABLE_NORTH"
+    m.tileset_editor.behaviors = lambda version: names
+    # every block is one you can't leave going north, nor (its north side facing you) enter going south
+    assert walk.walk(m, "Town", [(3, 1), (6, 1)])[1] == (6, 1)  # sideways is fine
+    for a_, b_ in (((1, 3), (1, 1)), ((1, 1), (1, 3))):
+        with pytest.raises(DecompError, match="no way"):
+            walk.walk(m, "Town", [a_, b_])
+    m.tileset_editor.behaviors = real
+
+
 def test_place_path_and_connect(root):
     m = DecompProject(root).maps
     lay = m.layout_of("Town")
