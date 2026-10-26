@@ -239,7 +239,9 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
   434-449; FRLG: 1008-1023).
 * **Events and cutscenes**: `pae map place` moves a warp, object, trigger or sign; `pae map path` walks between
   blocks around anything solid (shortest, then fewest turns) and writes the movement under a label in the map's
-  script. For someone who follows, route them through the leader's start and add `--stop-short 1`.
+  script. For someone who follows, route them through the leader's start and add `--stop-short 1`. Blocks whose
+  metatiles the game makes itself (in forks with `kanto_connection_seam.c`: seam adapters, block fixes) are walked
+  as the game has them.
 * **Seams** (forks with `kanto_connection_seam.c`, like the FireRed Kanto/Johto hack): when two connected maps use
   different tilesets, the strip of the neighbour the game shows at the edge would be drawn with the wrong tiles.
   `pae seam build` copies the neighbour's tiles and palettes into free slots, both ways, so each map sees the

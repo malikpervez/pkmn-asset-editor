@@ -441,6 +441,32 @@ def hand_made(maps, layout: str) -> dict | None:
     return {"first": int(first), "count": int(count), "tiles": tiles, "banks": banks}
 
 
+def engine_metatiles(maps, map_name: str) -> dict[int, tuple[int, str]]:
+    """The metatiles the game makes for a map above its tilesets' own: the adapters of its seams (hand-made and
+    pae's) and the ones its block fixes use (the dual layouts' in kanto_connection_seam.c). id -> (attributes, the
+    layout version they're in), from the seam rows for the map's layout; ids a row leaves to the map (a NULL source)
+    are left out."""
+    import re
+    sym = _layout_symbol(maps, maps.resolve(map_name))
+    texts = [(maps.root / rel).read_text() for rel in (SEAM_C, HEADER) if (maps.root / rel).exists()]
+    version_of = {v: k for k, v in VERSIONS.items()}
+    out: dict[int, tuple[int, str]] = {}
+    for text in texts:
+        for array, first in re.findall(rf"\{{\s*&{sym}\s*,\s*(\w+)\s*,\s*\w+\s*,\s*\w+\s*,\s*\w+\s*,\s*(\d+)\s*,",
+                                       text):
+            body = next((m.group(1) for t in texts
+                         for m in [re.search(rf"\b{array}\[\]\s*=\s*\{{(.*?)\n\}};", t, re.DOTALL)] if m), "")
+            entries = [line for line in body.split("\n") if ".sourceLayout" in line]
+            for i, line in enumerate(entries):
+                attr = re.search(r"\.attributes\s*=\s*(0x[0-9A-Fa-f]+|\d+)", line)
+                if "NULL" in line.split(".sourceLayout", 1)[1].split(",", 1)[0] or not attr:
+                    continue
+                ver = re.search(r"\.layoutVersion\s*=\s*(\w+)", line)
+                out.setdefault(int(first) + i, (int(attr.group(1), 0), version_of.get(ver.group(1) if ver else "",
+                                                                                         "frlg")))
+    return out
+
+
 def _several_per_layout(maps) -> bool:
     """Whether the game looks at every seam entry of a layout (needed to add pae's beside a hand-made one)."""
     p = maps.root / SEAM_C
