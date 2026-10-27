@@ -183,3 +183,20 @@ def test_clock_env(monkeypatch):
     assert "PAE_RTC" not in pt.clock_env()
     with pytest.raises(pt.PlaytestError, match="time of day"):
         pt.clock_env("25:00")
+
+
+def test_sessions_have_their_own_scratch_save(tmp_path):
+    """Two plays in one project at once (two terminals, a script beside the live server) each play on their own
+    scratch save, so neither loads or saves over the other; closing a session removes its own."""
+    a, b = pt.PlaySession(tmp_path), pt.PlaySession(tmp_path)
+    assert a.scratch != b.scratch and a.scratch.parent == b.scratch.parent == tmp_path / ".pae" / "cache"
+    a.scratch.parent.mkdir(parents=True)
+    a.scratch.write_bytes(b"a")
+    b.scratch.write_bytes(b"b")
+    a.close()
+    assert not a.scratch.exists() and b.scratch.read_bytes() == b"b"
+    given = tmp_path / "mine.sav"
+    given.write_bytes(b"x")
+    c = pt.PlaySession(tmp_path, scratch=given)
+    c.close()
+    assert given.exists()  # a scratch save someone passed in is theirs to keep

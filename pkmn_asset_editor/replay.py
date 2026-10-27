@@ -17,6 +17,7 @@ Tests live in ``pae_tests/`` in the project (commit them): ``NAME.json`` (start,
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import time
@@ -182,7 +183,7 @@ class ReplayTests:
         test = self.load(name)
         own = session is None
         if own:
-            session = PlaySession(self.root, self.cache_dir, self.log, scratch=self.cache_dir / "replay.sav")
+            session = PlaySession(self.root, self.cache_dir, self.log, scratch=self.cache_dir / f"replay-{os.getpid()}.sav")
         t0 = time.time()
         res = {"name": name, "ran": time.strftime("%Y-%m-%d %H:%M"), "checks": []}
         try:
@@ -236,7 +237,7 @@ class ReplayTests:
         names = names or [t["name"] for t in self.list()]
         if not names:
             return []
-        session = PlaySession(self.root, self.cache_dir, self.log, scratch=self.cache_dir / "replay.sav")
+        session = PlaySession(self.root, self.cache_dir, self.log, scratch=self.cache_dir / f"replay-{os.getpid()}.sav")
         try:
             return [self.run(n, session) for n in names]
         finally:
@@ -247,7 +248,7 @@ class ReplayTests:
         test = self.load(name)
         own = session is None
         if own:
-            session = PlaySession(self.root, self.cache_dir, self.log, scratch=self.cache_dir / "replay.sav")
+            session = PlaySession(self.root, self.cache_dir, self.log, scratch=self.cache_dir / f"replay-{os.getpid()}.sav")
         try:
             self._replay(session, name, test)
             test["expect"] = self._observe(session, test.get("watch", {}))
