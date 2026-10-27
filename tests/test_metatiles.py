@@ -35,6 +35,21 @@ def test_info_and_behaviors(proj):
     assert names[0x10] == "MB_WATER" and names[0x11] == "MB_DOOR"
 
 
+def test_frlg_behaviors_from_defines(proj):
+    """A FireRed header lists its behaviours as #defines (MB_FRLG_X 0x..), not an enum: they're read, named like
+    Emerald's (water, one-way edges and spin tiles mean the same on both kinds of map), and the header's own
+    spelling is still taken when setting one."""
+    te = proj.maps.tileset_editor
+    (te.root / "include" / "constants" / "metatile_behaviors_frlg.h").write_text(
+        "#define MB_FRLG_NORMAL 0x00\n//\n#define MB_FRLG_POND_WATER 0x10\n"
+        "#define MB_FRLG_IMPASSABLE_EAST 0x30\n#define MB_FRLG_SPIN_RIGHT 0x54 // spinner\n")
+    names = te.behaviors("frlg")
+    assert names[0] == "MB_NORMAL" and names[0x10] == "MB_POND_WATER"
+    assert names[0x30] == "MB_IMPASSABLE_EAST" and names[0x54] == "MB_SPIN_RIGHT" and names[1] == "0x01"
+    assert te._behavior_value("MB_FRLG_SPIN_RIGHT", "frlg") == te._behavior_value("MB_SPIN_RIGHT", "frlg") == 0x54
+    assert te.behaviors("emerald")[0x10] == "MB_WATER"  # Emerald's names are kept apart
+
+
 def test_metatile_roundtrip(proj):
     te = proj.maps.tileset_editor
     mt = te.get_metatile("Town", 512)  # first secondary metatile

@@ -149,8 +149,18 @@ class TilesetEditor:
         if key not in self._behaviors:
             names: list[str] = []
             f = self.root / "include" / "constants" / ("metatile_behaviors_frlg.h" if key == "frlg" else "metatile_behaviors.h")
-            if f.exists():
-                body = re.search(r"enum\s*\w*\s*\{(.*?)\}", strip_comments(f.read_text()), re.S)
+            text = strip_comments(f.read_text()) if f.exists() else ""
+            defines = re.findall(r"^\s*#\s*define\s+MB_FRLG_(\w+)\s+(0x[0-9A-Fa-f]+|\d+)\s*$", text, re.M)
+            if defines:
+                # FireRed's own behaviours as #defines (MB_FRLG_X 0x..), named like Emerald's (MB_X) so the same
+                # names (water, ledges, one-way edges, spin tiles) mean the same thing on both kinds of map
+                for name, val in defines:
+                    value = int(val, 0)
+                    while len(names) <= value:
+                        names.append(f"0x{len(names):02X}")
+                    names[value] = f"MB_{name}"
+            elif text:
+                body = re.search(r"enum\s*\w*\s*\{(.*?)\}", text, re.S)
                 value = 0
                 for item in (body.group(1).split(",") if body else []):
                     item = item.strip()
@@ -237,6 +247,7 @@ class TilesetEditor:
         if isinstance(behavior, int) or str(behavior).isdigit():
             return int(behavior)
         names = self.behaviors(version)
+        behavior = str(behavior).replace("MB_FRLG_", "MB_", 1)  # FireRed's header spelling of the same name
         if behavior not in names:
             raise DecompError(f"unknown behavior {behavior}")
         return names.index(behavior)
