@@ -58,6 +58,11 @@ def _same_tilesets(a: dict, b: dict) -> bool:
         (b["primary_tileset"], b["secondary_tileset"], b.get("layout_version", "emerald"))
 
 
+def _same_primary(a: dict, b: dict) -> bool:
+    return (a["primary_tileset"], a.get("layout_version", "emerald")) == \
+        (b["primary_tileset"], b.get("layout_version", "emerald"))
+
+
 def strip(maps, target: str, source: str) -> set[int]:
     """Metatile ids of ``source`` in the strip ``target`` shows of it (empty if they aren't connected)."""
     tl, sl = maps.layout_of(target), maps.layout_of(source)
@@ -102,13 +107,20 @@ def _used(maps, name: str) -> tuple[set[int], set[int], dict]:
 
 def _shown(maps, name: str) -> set[int] | None:
     """Metatile ids the map can show: its blocks, its border, what its scripts set, and the strips of neighbours with
-    the same tilesets (drawn with its metatiles as they are); None if that can't be told."""
+    the same tilesets (drawn with its metatiles as they are), or with the same primary tileset (their primary
+    metatiles are drawn as they are, in the primary's palettes); None if that can't be told."""
     lay = maps.layout_of(name)
+    npm = maps.consts(maps.tileset_editor.sides(lay)[2])[0]
     mids = set(np.unique(maps.read_blocks(lay) & 0x3FF).tolist())
     for c in maps.get_map(name).get("connections") or []:
         other = maps.map_by_id.get(c.get("map"))
-        if other is not None and _same_tilesets(lay, maps.layout_of(other)):
+        if other is None:
+            continue
+        olay = maps.layout_of(other)
+        if _same_tilesets(lay, olay):
             mids |= strip(maps, name, other)
+        elif _same_primary(lay, olay):
+            mids |= {mid for mid in strip(maps, name, other) if mid < npm}
     try:
         mids |= set(np.unique(maps.read_blocks(lay, "border") & 0x3FF).tolist())
     except Exception:

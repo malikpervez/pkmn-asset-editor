@@ -389,7 +389,7 @@ def test_animated_tiles(root, tmp_path):
     assert f"TILE_OFFSET_4BPP({first})), {n} * TILE_SIZE_4BPP" in text
     assert (root / "data/tilesets/primary/new_general/anim/pond/2.png").exists()
     # more art before it: the build moves the run and the code follows
-    spec["metatiles"].insert(1, {"name": "grass_b", "tileset": "primary", "image": "ground.png", "x": 32})
+    spec["metatiles"].insert(3, {"name": "grass_b", "tileset": "primary", "image": "ground.png", "x": 32})
     spec["metatiles"].insert(1, {"name": "path_b", "tileset": "primary", "image": "house.png", "x": 0, "y": 0})
     (art / "spec.json").write_text(json.dumps(spec))
     out2 = tb.build(DecompProject(root).maps, art / "spec.json")
@@ -677,6 +677,36 @@ def test_seams_share_the_kit(root, tmp_path):
     assert not [mt for mt in p["metatiles"] if mt and mt["mid"] < 512]  # the primary's: drawn as they are
     house = [mt for mt in p["metatiles"] if mt and mt["mid"] >= 512]
     assert house and any((e & 0x3FF) >= 512 for mt in house for e in mt["tiles"])  # its secondary tiles copied
+
+
+def test_seam_keeps_the_palettes_of_a_shared_primarys_strip(root, tmp_path):
+    """A neighbour with the same primary tileset but another secondary: its strip's primary metatiles are drawn as
+    the map's own, in the primary's palettes, so those palettes are shown, not spare (not lent to other seams)."""
+    proj, m, art, _ = _scratch(root, tmp_path)
+    spec = json.loads((art / "spec.json").read_text())
+    spec["palettes"]["primary"] = ["p.pal", "p.pal"]
+    spec["metatiles"].insert(3, {"name": "grass_b", "tileset": "primary", "image": "ground.png", "x": 0, "banks": [1]})
+    (art / "spec.json").write_text(json.dumps(spec))
+    names = tb.build(m, art / "spec.json")
+    tb.new_tileset(proj, "gTileset_NewTown2", secondary=True)
+    m = DecompProject(root).maps
+    spec["secondary"] = "gTileset_NewTown2"
+    (art / "spec2.json").write_text(json.dumps(spec))
+    names2 = tb.build(m, art / "spec2.json")
+    for name, sec, nm, rows in (("Town", "gTileset_NewTown", names, "....\n" * 8),
+                                ("Town_House1", "gTileset_NewTown2", names2, "..HH\n..HH\n" + "bbbb\n" * 6)):
+        m.set_geometry(name, primary_tileset="gTileset_NewGeneral", secondary_tileset=sec, layout_version="hns")
+        tb.paint(m, name, rows, {".": "grass", "b": "grass_b", "H": "house"}, nm)
+    town = json.loads((root / "data/maps/Town/map.json").read_text())
+    town["connections"] = [{"map": "MAP_TOWN_HOUSE1", "direction": "up", "offset": 0}]
+    (root / "data/maps/Town/map.json").write_text(json.dumps(town))
+    (root / "src/kanto_connection_seam.c").write_text(
+        '#include "global.h"\n#include "kanto_connection_seam.h"\n\n'
+        'static const struct KantoSeam sKantoSeams[] = {\n};\n')
+    m = DecompProject(root).maps
+    _, spare_banks = seams._spare(m, "Town", {"npt": 512})
+    assert 5 in spare_banks  # (it can tell)
+    assert 0 not in spare_banks and 1 not in spare_banks  # Town draws only grass, but House1's strip draws grass_b
 
 
 def test_seams_beside_a_hand_made_one(root, tmp_path):
