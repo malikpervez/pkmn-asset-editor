@@ -605,6 +605,7 @@ pae play PetalburgCity --state "FLAG_BADGE01_GET, VAR_PETALBURG_GYM_STATE=2, ITE
 pae checkpoint import before-gym ~/emerald.sav       # use a save from your emulator / flash cart
 pae play --from before-gym                           # continue it where it was saved
 pae play --from before-gym --show-flag FLAG_BADGE01_GET --show-var VAR_PETALBURG_GYM_STATE   # the story state it has
+pae play --from before-gym --show-trainer TRAINER_ROXANNE_1   # whether a trainer has been beaten
 
 # items, moves, TMs, shops, levels, new Pokémon
 pae item set ITEM_SUPER_POTION --price 600

@@ -173,6 +173,19 @@ def test_play_shows_flags_and_vars(tmp_path, capsys):
     assert "flag FLAG_BADGE01_GET = True" in out and "var VAR_PETALBURG_GYM_STATE = 2" in out
 
 
+def test_flag_and_var_names_must_be_flags_and_vars():
+    """A trainer's name is a number too (its ID), and reading it as a flag reads some other flag: refuse it, and point
+    at --show-trainer. Region-prefixed names (JOHTO_FLAG_...) and plain numbers are fine."""
+    pt._check_names(["FLAG_BADGE01_GET", "JOHTO_FLAG_HIDE_TOTODILEBALL", "0x50", "12"], "FLAG")
+    pt._check_names(["VAR_RESULT", "JOHTO_VAR_STARTER_MON"], "VAR")
+    with pytest.raises(pt.PlaytestError, match="--show-trainer"):
+        pt._check_names(["TRAINER_BURGLAR_LEWIS"], "FLAG")
+    with pytest.raises(pt.PlaytestError, match="isn't a variable"):
+        pt._check_names(["FLAG_BADGE01_GET"], "VAR")
+    with pytest.raises(pt.PlaytestError, match="isn't a flag"):
+        pt._check_names(["ITEM_POTION"], "FLAG")
+
+
 def test_clock_env(monkeypatch):
     monkeypatch.delenv("PAE_CLOCK", raising=False)
     env = pt.clock_env()  # noon (UTC) unless told otherwise: the same tint on every computer

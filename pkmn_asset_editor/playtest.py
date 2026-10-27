@@ -686,11 +686,13 @@ class PlaySession:
     # -- reading story progress (for replay tests)
     def flags(self, names: list[str]) -> dict[str, bool]:
         g = self._require()
+        _check_names(names, "FLAG")
         v = self.constants.values(names, game_version(g.rom)) if names else {}
         return {n: bool(g.call("FlagGet", v[n]) & 0xFF) for n in names}
 
     def vars(self, names: list[str]) -> dict[str, int]:
         g = self._require()
+        _check_names(names, "VAR")
         v = self.constants.values(names, game_version(g.rom)) if names else {}
         return {n: g.call("VarGet", v[n]) & 0xFFFF for n in names}
 
@@ -855,6 +857,19 @@ GAME_VERSIONS = {"BPE": "EMERALD", "BPR": "FIRERED", "BPG": "LEAFGREEN", "AXV": 
 
 
 _TRAINER_ALIASES: dict[str, dict[str, str]] = {}
+
+
+def _check_names(names: list[str], kind: str) -> None:
+    """Flags are read by number, so any constant would do: a trainer's (TRAINER_X is its ID) reads whichever flag has
+    that number, and answers wrongly without a word. Names must say what they are (FLAG_ or VAR_ in them, as in
+    FLAG_BADGE01_GET or JOHTO_VAR_STARTER_MON), or be plain numbers."""
+    what = {"FLAG": "flag", "VAR": "variable"}[kind]
+    for n in names:
+        if f"{kind}_" in n.upper() or re.fullmatch(r"0[xX][0-9a-fA-F]+|\d+", n.strip()):
+            continue
+        hint = (" A trainer's battle is asked for with --show-trainer (or \"trainers\" in a replay test)."
+                if "TRAINER_" in n.upper() else "")
+        raise PlaytestError(f"{n} isn't a {what}: {what} names have {kind}_ in them.{hint}")
 
 
 def game_trainer(root: Path, name: str) -> str:
