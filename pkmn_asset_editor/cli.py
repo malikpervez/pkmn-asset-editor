@@ -435,6 +435,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--scale", type=int, default=2)
     p.add_argument("--show-flag", action="append", default=[], help="print this flag's value at the end (repeatable)")
     p.add_argument("--show-var", action="append", default=[], help="print this variable's value at the end (repeatable)")
+    p.add_argument("--show-trainer", action="append", default=[],
+                   help="print whether this trainer has been beaten at the end (repeatable)")
 
     p = sub.add_parser("test", help="source tree: replay tests - play something once, replay it after every change")
     tsub = p.add_subparsers(dest="test_cmd", required=True)
@@ -913,6 +915,8 @@ def _run(args) -> int:
                 print(f"flag {name} = {value}")
             for name, value in proj.play.vars(args.show_var).items():
                 print(f"var {name} = {value}")
+            for name, value in (proj.play.trainers_beaten(args.show_trainer) if args.show_trainer else {}).items():
+                print(f"trainer {name} = {value}")
             if args.save_as:
                 print(f"saved checkpoint {proj.play.save_checkpoint(args.save_as)['name']}")
         except PlaytestError as e:
