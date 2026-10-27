@@ -23,6 +23,7 @@ import struct
 import subprocess
 import threading
 import time
+from itertools import count
 from pathlib import Path
 
 from PIL import Image
@@ -30,6 +31,8 @@ from PIL import Image
 KEYS = {"A": 1, "B": 2, "SELECT": 4, "START": 8, "RIGHT": 16, "LEFT": 32, "UP": 64, "DOWN": 128, "R": 256, "L": 512}
 NATIVE = Path(__file__).with_name("native") / "pae_mgba.c"
 
+
+_SESSIONS = count()  # play sessions made by this process (their scratch saves' names)
 
 class PlaytestError(RuntimeError):
     pass
@@ -313,7 +316,9 @@ class Game:
             raise PlaytestError(why)
         self.emu.frames(240)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.emu.save_state(state)
+        part = state.with_name(f"{state.name}.{os.getpid()}.part")  # whole or not at all: another play may load it
+        self.emu.save_state(part)
+        os.replace(part, state)
         self.log(f"booted into the overworld in {time.time() - t0:.1f}s (cached)")
 
     def seed_random(self) -> None:
@@ -388,7 +393,9 @@ class PlaySession:
         self.game: Game | None = None
         self._stamp = None
         self.where: dict = {}
-        self.scratch = Path(scratch) if scratch else self.cache_dir / "session.sav"
+        # the save the emulator plays on: this session's own, so two plays in one project at once (two terminals,
+        # a script beside the live server) don't load or save over each other
+        self.scratch = Path(scratch) if scratch else self.cache_dir / f"session-{os.getpid()}-{next(_SESSIONS)}.sav"
         self._constants: Constants | None = None
         self.lock = threading.RLock()  # live play runs frames from another thread
         # what happened since start(), so it can be saved as a replay test (see replay.py)
@@ -815,6 +822,8 @@ class PlaySession:
         if self.game is not None:
             self.game.close()
             self.game = None
+        if self.scratch.name.startswith(("session-", "replay-")):  # this process's own, so nobody else's
+            self.scratch.unlink(missing_ok=True)
 
 
 def save_gif(frames: list[Image.Image], path, scale: int = 2, ms: int = 66) -> None:
