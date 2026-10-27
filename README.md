@@ -819,7 +819,7 @@ sheet of the results, then run `pae check`."*
 | `pae tileset new SYMBOL --primary\|--secondary / build SPEC / spec` | tilesets from scratch |
 | `pae seam build MAP` · `pae door add MAP X Y --panel x0,y0,x1,y1` | connection strips across tilesets · door animations |
 | `pae map connect MAP up OTHER --align A,B` · `pae map place MAP KIND WHICH X Y` | join maps edge to edge (both ways) · move an event |
-| `pae map path MAP X,Y X,Y … [--stop-short N] [--then CMD…] [--write LABEL]` | walking movements around what's solid, for cutscenes |
+| `pae map path MAP X,Y X,Y … [--avoid-objects] [--avoid-sight] [--stop-short N] [--then CMD…] [--write LABEL]` | walking movements around what's solid, for cutscenes; `--avoid-sight` keeps off trainers' lines of sight (for a play-through's walks) |
 | `pae text check [MAP] / preview MAP LABEL -o PNG` | dialogue in the game's font |
 | `pae trainer list [Q] / show ID / set ID --mon … --field Key=Value` | trainer teams |
 | `pae wild show MAP / set MAP KIND SLOT… [--rate N]` | wild Pokémon (`land`, `water`, `rock_smash`, `fishing`) |

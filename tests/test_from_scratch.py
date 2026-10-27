@@ -494,6 +494,36 @@ def test_walks_know_the_metatiles_the_game_makes(root):
         walk.walkable(m, "Town")
 
 
+def test_walks_keep_off_trainers_lines_of_sight(root):
+    """With avoid_sight a walk keeps off the blocks a trainer sees: out the ways they face, as far as their sight,
+    up to a wall; a trainer who walks about, from every block of their range. Objects that aren't trainers that
+    look for you (TRAINER_TYPE_NONE, or FireRed's falling boulders, which keep a flag in the field) see nothing."""
+    m = DecompProject(root).maps
+    b = m.read_blocks(m.layout_of("Town")).copy()
+    b[:, :] = b[0, 0] & ~0x0C00  # walkable everywhere
+    m.write_blocks("Town", b)
+    data = m.get_map("Town")
+    hero = data["object_events"][0]
+    trainer = dict(hero, local_id="LOCALID_TOWN_TRAINER", x=3, y=0, trainer_type="TRAINER_TYPE_NORMAL",
+                   trainer_sight_or_berry_tree_id="3", movement_type="MOVEMENT_TYPE_FACE_DOWN_AND_LEFT")
+    boulder = dict(hero, local_id="LOCALID_TOWN_BOULDER", x=7, y=0, trainer_type="FLAG_HIDE_HERO",
+                   trainer_sight_or_berry_tree_id="0")
+    data["object_events"] = [hero, trainer, boulder]
+    m.save_map("Town", data)
+    assert walk.sight(m, "Town") == {(3, 1), (3, 2), (3, 3), (2, 0), (1, 0), (0, 0)}
+    assert walk.walk(m, "Town", [(1, 2), (5, 2)])[0] == ["right"] * 4  # straight through his line
+    dirs, end = walk.walk(m, "Town", [(1, 2), (5, 2)], avoid_sight=True)
+    assert end == (5, 2) and len(dirs) == 8 and "down" in dirs  # round the foot of it
+    b[2, 3] |= 1 << 10  # a wall in his line: he sees no further
+    m.write_blocks("Town", b)
+    assert {p for p in walk.sight(m, "Town") if p[0] == 3} == {(3, 1)}
+    trainer.update(movement_type="MOVEMENT_TYPE_WALK_UP_AND_DOWN", movement_range_x=0, movement_range_y=1,
+                   trainer_sight_or_berry_tree_id="1", y=4)
+    m.save_map("Town", data)
+    assert walk.sight(m, "Town") == {(3, 3), (3, 4), (3, 5), (3, 6)}  # one block on from 3,3, 3,4 and 3,5
+    assert main(["map", "path", "Town", "1,4", "5,4", "--avoid-sight", "--avoid-objects", "-p", str(root)]) == 0
+
+
 def test_place_path_and_connect(root):
     m = DecompProject(root).maps
     lay = m.layout_of("Town")

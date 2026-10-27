@@ -2,7 +2,8 @@
 
 * :func:`place` moves one event (an object by index or local id, a warp, a trigger, a sign) to another block.
 * :func:`route` finds a walk between blocks over what the map lets you walk on (collision 0, not water unless
-  surfing; other objects' starting blocks are avoided if asked), shortest first and then with the fewest turns.
+  surfing; other objects' starting blocks are avoided if asked, and so are trainers' lines of sight: :func:`sight`),
+  shortest first and then with the fewest turns.
   Sideways stairs are kept off: they move you diagonally, which a walk of single steps can't follow. A walk on a
   map (:func:`walk`) also keeps the game's rules for each step (:func:`steps`): not between two heights (an
   elevation other than 0 or 15 on both sides, and not the same), and not across a one-way edge (a block you can't
@@ -64,8 +65,9 @@ def place(maps, map_name: str, kind: str, which: str, x: int, y: int, elevation:
     return {"kind": key, "index": idx, "from": old, "to": (int(x), int(y))}
 
 
-def walkable(maps, map_name: str, surf: bool = False, avoid_objects: bool = False):
-    """A [height][width] grid of blocks one can walk on (or surf on, with ``surf``)."""
+def walkable(maps, map_name: str, surf: bool = False, avoid_objects: bool = False, avoid_sight: bool = False):
+    """A [height][width] grid of blocks one can walk on (or surf on, with ``surf``); with ``avoid_objects``, not
+    other objects' starting blocks, and with ``avoid_sight``, not the blocks trainers see (:func:`sight`)."""
     lay = maps.layout_of(map_name)
     blocks = maps.read_blocks(lay)
     behavior = _behaviors(maps, map_name, lay)
@@ -84,7 +86,60 @@ def walkable(maps, map_name: str, surf: bool = False, avoid_objects: bool = Fals
             ex, ey = int(e.get("x", -1)), int(e.get("y", -1))
             if 0 <= ey < h and 0 <= ex < w:
                 grid[ey][ex] = False
+    if avoid_sight:
+        for x, y in sight(maps, map_name, grid):
+            grid[y][x] = False
     return grid
+
+
+# trainer types that look for you (TRAINER_TYPE_NONE doesn't; FireRed's falling boulders keep a flag in the field)
+SEEING = {"TRAINER_TYPE_NORMAL": None, "TRAINER_TYPE_BURIED": None, "TRAINER_TYPE_SEE_ALL_DIRECTIONS": "all"}
+
+
+def _facings(movement_type: str) -> list[str]:
+    """The ways a trainer with this movement type can face: FACE_DOWN_AND_LEFT faces down and left, WALK_IN_PLACE_UP
+    and WALK_UP_AND_DOWN their way(s); anything else (looking or wandering about) all four."""
+    m = re.match(r"MOVEMENT_TYPE_(?:FACE|WALK_IN_PLACE|WALK)_((?:UP|DOWN|LEFT|RIGHT)(?:_(?:AND_)?(?:UP|DOWN|LEFT|RIGHT))*)$",
+                 movement_type or "")
+    if not m:
+        return list(DIRS)
+    return [d for d in DIRS if d.upper() in m.group(1).split("_")]
+
+
+def sight(maps, map_name: str, grid=None) -> set[tuple[int, int]]:
+    """The blocks the map's trainers see from where they stand: straight out the ways they can face, as far as their
+    sight (``trainer_sight_or_berry_tree_id``), up to the first block one can't walk on (``grid``, by default the
+    map's :func:`walkable`). A trainer who walks about (``WALK_*``, ``WANDER_*``) is looked out for from every block
+    of their range (``movement_range_x``/``_y``; at least one block round them for a wanderer, whose range 0 means
+    no limit). The game also stops a trainer's look at other objects and heights; this keeps clear of both."""
+    if grid is None:
+        grid = walkable(maps, map_name)
+    h, w = len(grid), len(grid[0])
+    seen: set[tuple[int, int]] = set()
+    for e in maps.get_map(map_name).get("object_events", []):
+        tt, mt = e.get("trainer_type", ""), e.get("movement_type", "")
+        try:
+            far = int(e.get("trainer_sight_or_berry_tree_id") or 0)
+        except ValueError:
+            far = 0
+        if tt not in SEEING or far <= 0:
+            continue
+        x0, y0 = int(e.get("x", 0)), int(e.get("y", 0))
+        ways = list(DIRS) if SEEING[tt] == "all" else _facings(mt)
+        rx = ry = 0
+        if "WANDER" in mt or mt.startswith("MOVEMENT_TYPE_WALK_") and "IN_PLACE" not in mt:
+            rx = max(int(e.get("movement_range_x") or 0), 1 if "WANDER" in mt else 0)
+            ry = max(int(e.get("movement_range_y") or 0), 1 if "WANDER" in mt else 0)
+        for ox in range(x0 - rx, x0 + rx + 1):
+            for oy in range(y0 - ry, y0 + ry + 1):
+                for d in ways:
+                    dx, dy = DIRS[d]
+                    for k in range(1, far + 1):
+                        x, y = ox + dx * k, oy + dy * k
+                        if not (0 <= x < w and 0 <= y < h) or not grid[y][x]:
+                            break
+                        seen.add((x, y))
+    return seen
 
 
 def steps(maps, map_name: str):
@@ -166,11 +221,11 @@ def movement(directions: list[str], fast: bool = False) -> list[str]:
 
 
 def walk(maps, map_name: str, points: list[tuple[int, int]], surf: bool = False, avoid_objects: bool = False,
-         stop_short: int = 0) -> tuple[list[str], tuple[int, int]]:
+         stop_short: int = 0, avoid_sight: bool = False) -> tuple[list[str], tuple[int, int]]:
     """Directions through ``points`` in order (and where they end)."""
     if len(points) < 2:
         raise DecompError("give at least two blocks: where the walk starts and where it goes")
-    grid = walkable(maps, map_name, surf, avoid_objects)
+    grid = walkable(maps, map_name, surf, avoid_objects, avoid_sight)
     ok = steps(maps, map_name)
     dirs: list[str] = []
     for a, b in zip(points, points[1:]):

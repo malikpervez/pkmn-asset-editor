@@ -335,6 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("points", nargs="+", help="x,y blocks to walk through in order (the first is where it starts)")
     q.add_argument("--surf", action="store_true", help="walk on water instead of land")
     q.add_argument("--avoid-objects", action="store_true", help="don't walk through other objects' starting blocks")
+    q.add_argument("--avoid-sight", action="store_true", help="keep off trainers' lines of sight (where they'd see you "
+                                                              "and battle)")
     q.add_argument("--fast", action="store_true", help="walk_fast_* instead of walk_*")
     q.add_argument("--stop-short", type=int, default=0, help="stop this many steps before the end (to follow)")
     q.add_argument("--then", nargs="*", default=[], help="commands to add after the walk (e.g. walk_in_place_faster_up)")
@@ -1030,7 +1032,7 @@ def _run(args) -> int:
                 pts = [tuple(int(v) for v in p.split(",")) for p in args.points]
             except ValueError:
                 raise ProjectError("blocks are x,y (e.g. 14,9)")
-            dirs, end = walk(m, args.name, pts, args.surf, args.avoid_objects, args.stop_short)
+            dirs, end = walk(m, args.name, pts, args.surf, args.avoid_objects, args.stop_short, args.avoid_sight)
             cmds = movement(dirs, args.fast) + list(args.then)
             if args.write:
                 write_movement(m, args.name, args.write, cmds)
