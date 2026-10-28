@@ -42,7 +42,9 @@ BUILD_SPEC = """\
                                             //  a list, one for each block (row by row)
      "over_rows": 1,                        // the top rows are drawn over the player (layer NORMAL)
      "behaviors": {"2,3": "MB_ANIMATED_DOOR"}, "solid": true, "open": ["2,3"],  // a door: walkable
-     "banks": [7, 8], "row_banks": {"3": [1]}}  // palettes it may use (all its rows / one row)
+     "banks": [7, 8], "row_banks": {"3": [1]}},  // palettes it may use (all its rows / one row)
+    {"name": "office", "image": "office.png", "w": 6, "h": 9, "ground": "grass", "solid": true,
+     "dedupe": true}                        // blocks the same as another "dedupe" entry's share its metatile
   ]
 }
 Edge variants for `pae map paint`: name metatiles "path#0" ... "path#15" (the number says which neighbours are path
@@ -190,6 +192,7 @@ def build(maps, spec_path) -> dict:
     metas: dict[str, list] = {"primary": [], "secondary": []}
     attrs: dict[str, list] = {"primary": [], "secondary": []}
     names: dict[str, dict] = {}
+    shared: dict[tuple, int] = {}  # the blocks of "dedupe" entries, by what they hold: one metatile for each
     images: dict[str, np.ndarray] = {}
     anims = []
     for a in spec.get("animations", []):
@@ -315,10 +318,16 @@ def build(maps, spec_path) -> dict:
                     layer = te._layer_value(m["layer"])
                 beh = behaviors.get(f"{bx},{by}", m.get("behavior", 0))
                 attr = te._pack_attr(0, te._behavior_value(beh, version), layer, version)
+                base = 0 if where == "primary" else npm
+                key = (where, tuple(row), attr)
+                if m.get("dedupe") and key in shared:
+                    ids.append(shared[key])
+                    continue
                 metas[where].append(row)
                 attrs[where].append(attr)
-                base = 0 if where == "primary" else npm
                 ids.append(base + len(metas[where]) - 1)
+                if m.get("dedupe"):
+                    shared[key] = ids[-1]
         if m.get("name") in names:
             raise DecompError(f"two metatiles are named {m['name']}")
         open_ = [int(a) + int(b) * w for a, b in (c.split(",") for c in m.get("open", []))]

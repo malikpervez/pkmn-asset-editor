@@ -170,6 +170,31 @@ def test_build_and_paint(root, tmp_path):
                  json.dumps(legend))), "--names", str(art / "names.json"), "-p", str(root)]) == 0
 
 
+
+def test_dedupe_shares_the_same_blocks(root, tmp_path):
+    proj, m, art, out = _scratch(root, tmp_path)
+    # a 4x2 block: two of the house side by side; as "dedupe" entries (twice) its blocks are only the house's four
+    pair = np.concatenate([np.array(Image.open(art / "house.png"))] * 2, axis=1)
+    Image.fromarray(pair, "RGBA").save(art / "pair.png")
+    spec = json.loads((art / "spec.json").read_text())
+    plain = spec["metatiles"][-1]
+    spec["metatiles"] += [
+        {"name": "pair", "image": "pair.png", "w": 4, "h": 2, "ground": "grass", "solid": True, "dedupe": True},
+        {"name": "pair2", "image": "pair.png", "w": 4, "h": 2, "ground": "grass", "solid": True, "dedupe": True},
+        {"name": "pair3", "image": "pair.png", "w": 4, "h": 2, "ground": "grass", "solid": True}]
+    (art / "spec.json").write_text(json.dumps(spec))
+    tb.build(m, art / "spec.json")
+    names = json.loads((art / "names.json").read_text())["metatiles"]
+    assert names[plain["name"]]["ids"] == [512, 513, 514, 515]  # the house (no door here: own blocks, not shared)
+    assert names["pair"]["ids"] == [516, 517, 516, 517, 518, 519, 518, 519]
+    assert names["pair2"]["ids"] == names["pair"]["ids"]
+    assert names["pair3"]["ids"] == list(range(520, 528))  # not marked: its own, as before
+    m.set_geometry("Town", primary_tileset="gTileset_NewGeneral", secondary_tileset="gTileset_NewTown")
+    te = m.tileset_editor
+    assert te.get_metatile("Town", 516)["entries"] == te.get_metatile("Town", 512)["entries"]
+    assert te.get_metatile("Town", 518)["entries"] == te.get_metatile("Town", 514)["entries"]
+    assert te.get_metatile("Town", 518)["behavior"] == 0  # the house's door block has a behaviour; this doesn't
+
 def _w(p, text):
     p.write_text(text)
     return p
