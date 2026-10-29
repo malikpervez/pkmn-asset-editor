@@ -1446,7 +1446,9 @@ def _run(args) -> int:
             raise ProjectError("seams need a pokeemerald-style source tree")
         for r in seams.build(m, args.name, args.skip):
             print(f"{r['target']}: {r['adapters']} adapter metatiles for {', '.join(r['sources'])}; "
-                  f"{r['glyphs']} tiles, palette slot(s) {', '.join(map(str, r['palettes']))}")
+                  f"{r['glyphs']} tiles"
+                  + (f" (and {r['reused']} of its own)" if r.get("reused") else "")
+                  + f", palette slot(s) {', '.join(map(str, r['palettes']))}")
             for u in r["not_copied"]:
                 ids = u["ids"]
                 print(f"  note: {len(ids)} of {u['source']}'s strip blocks are metatiles its tilesets don't have "

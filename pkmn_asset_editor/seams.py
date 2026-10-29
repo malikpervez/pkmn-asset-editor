@@ -15,7 +15,8 @@ same primary tileset its tiles are used as they are (only the secondary tiles ar
 kit need few slots. Copied tiles take their colours wherever a slot has them, so the colours several of the
 neighbour's palettes use in the strip share a slot when they fit in one (15 colours). When no slot has room for a
 copied palette's colours, its tiles take each colour's nearest in the slot that has them closest (the strip is
-drawn a little off until the neighbour is rebuilt; ``build`` says which). Free slots: first those the map's tilesets never use. When those run out, palette slots and secondary tiles the map
+drawn a little off until the neighbour is rebuilt; ``build`` says which). A copied tile with the same pixels as one of
+the map's own (flipped or not) uses that one: the map loads it anyway. Free slots: first those the map's tilesets never use. When those run out, palette slots and secondary tiles the map
 never shows are borrowed: the game reloads every palette and the secondary tiles whenever you cross into another map
 (primary tiles are not reloaded when the primary tileset stays, so those are only taken when the tileset doesn't
 use them). Adapters go at the top of the metatile ids, above the map's tilesets' metatiles; a map whose tilesets
@@ -163,6 +164,31 @@ def _spare(maps, name: str, info: dict) -> tuple[list[int], list[int]]:
     return spare_tiles, [b for b in range(13) if b not in banks]
 
 
+def _own_tiles(maps, name: str, skip: set[int]) -> dict[bytes, tuple[int, int, int]]:
+    """The map's own tiles (its tilesets', but those in ``skip`` or that animate) by their pixels in each flip:
+    pixels -> (slot, hflip, vflip) that draw them."""
+    lay, te, prim, sec, version = _context(maps, name)
+    npt = maps.consts(version)[1]
+    skip = set(skip) | set(range(434, 450)) | set(range(1008, 1024)) | {0}  # (door animation slots)
+    from .tileset_anims import TilesetAnims
+    try:
+        for a in TilesetAnims(maps).for_map(name):
+            for sl in a.slots:
+                skip |= set(range(sl.dest, sl.dest + a.count))
+    except DecompError:
+        pass
+    out: dict[bytes, tuple[int, int, int]] = {}
+    for side, base in ((prim, 0), (sec, npt)):
+        arr, _ = te.read_tiles(side)
+        for i in range(min(te._tile_count(side), len(arr))):
+            if base + i in skip:
+                continue
+            t = arr[i]
+            for h, v, px in ((0, 0, t), (1, 0, t[:, ::-1]), (0, 1, t[::-1]), (1, 1, t[::-1, ::-1])):
+                out.setdefault(np.ascontiguousarray(px).tobytes(), (base + i, h, v))
+    return out
+
+
 def _pack(need: set[int], cols, own: dict, bank_colors: dict, packed: dict, free_banks: list) -> int | None:
     """A palette slot for a bank whose tiles are copied, with its colours (``need``: its indices in ``cols``) on any
     indices: one that has them all already (the map's own, or one filled before), else one filled colour by colour
@@ -220,7 +246,10 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
     strict_tiles, strict_banks = set(free_tiles), set(free_banks)
     free_tiles += [t for t in spare_tiles if t not in strict_tiles]
     free_banks += [b for b in spare_banks if b not in strict_banks]
-    metas, glyphs = [], {}  # glyph pixels bytes -> slot
+    metas, glyphs = [], {}  # glyph pixels bytes -> (slot, hflip, vflip)
+    mine = _own_tiles(maps, target, beside["tiles"] if beside else set())
+    taken: set[int] = set()  # slots given to copied tiles (no longer the map's own there)
+    reused: set[int] = set()  # the map's own slots copied tiles use (not free any more)
     approx = []  # copied palettes drawn in their nearest colours (no room for their own)
     unknown = []  # blocks of a strip whose metatiles aren't in the neighbour's tilesets (not copied)
     bank_colors: dict[int, list] = {}  # slot -> colours loaded there
@@ -324,10 +353,19 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
                     continue
                 key = lut[e["palette"]][px].tobytes()
                 if key not in glyphs:
-                    if not free_tiles:
-                        raise DecompError(f"{target}: no free tile slot left for {src}'s strip")
-                    glyphs[key] = free_tiles.pop(0)
-                ent.append(glyphs[key] | (int(e["hflip"]) << 10) | (int(e["vflip"]) << 11)
+                    hit = mine.get(key)
+                    if hit and hit[0] not in taken:  # the map has these pixels already
+                        glyphs[key] = hit
+                        reused.add(hit[0])
+                    else:
+                        while free_tiles and free_tiles[0] in reused:
+                            free_tiles.pop(0)
+                        if not free_tiles:
+                            raise DecompError(f"{target}: no free tile slot left for {src}'s strip")
+                        glyphs[key] = (free_tiles.pop(0), 0, 0)
+                        taken.add(glyphs[key][0])
+                slot, h, v = glyphs[key]
+                ent.append(slot | ((int(e["hflip"]) ^ h) << 10) | ((int(e["vflip"]) ^ v) << 11)
                            | (slot_of[e["palette"]] << 12))
             metas.append({"source": src, "source_layout": _layout_symbol(maps, src), "mid": mid, "tiles": ent,
                           "attr": int(mt["raw_attr"]), "version": VERSIONS.get(sver, "LAYOUT_VERSION_EMERALD")})
@@ -348,10 +386,12 @@ def plan(maps, target: str, sources: list[str], beside: dict | None = None) -> d
         metas = [at.get(i) for i in range(first, top)]
         borrowed_ids = sum(1 for i in free if i < info["metatiles"])
     return {"target": target, "layout": _layout_symbol(maps, target), "first": first, "metatiles": metas,
-            "glyphs": {slot: np.frombuffer(k, np.uint8).reshape(8, 8) for k, slot in glyphs.items()},
+            "glyphs": {slot: np.frombuffer(k, np.uint8).reshape(8, 8) for k, (slot, _, _) in glyphs.items()
+                       if slot in taken},  # (the copied ones; the reused are the map's own)
+            "reused": len(reused),
             "palettes": bank_colors,
             "borrowed": {"palettes": sorted(b for b in bank_colors if b not in strict_banks),
-                         "tiles": sum(1 for s in glyphs.values() if s not in strict_tiles),
+                         "tiles": sum(1 for s in taken if s not in strict_tiles),
                          "metatiles": borrowed_ids},
             "approximated": approx, "not_copied": unknown}
 
@@ -549,6 +589,7 @@ def build(maps, map_name: str, skip=()) -> list[dict]:
     _hook(maps)
     maps.dp._changed = None
     return [{"target": p["target"], "adapters": sum(1 for m in p["metatiles"] if m), "glyphs": len(p["glyphs"]),
+             "reused": p["reused"],
              "palettes": sorted(p["palettes"]), "sources": sorted({m["source"] for m in p["metatiles"] if m}),
              "borrowed": p["borrowed"], "approximated": p["approximated"], "not_copied": p["not_copied"]}
             for p in plans]
