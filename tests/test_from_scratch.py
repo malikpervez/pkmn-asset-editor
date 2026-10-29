@@ -731,7 +731,22 @@ def test_seams_share_the_kit(root, tmp_path):
     assert p["palettes"] == {}  # the neighbour's palettes are the map's own
     assert not [mt for mt in p["metatiles"] if mt and mt["mid"] < 512]  # the primary's: drawn as they are
     house = [mt for mt in p["metatiles"] if mt and mt["mid"] >= 512]
-    assert house and any((e & 0x3FF) >= 512 for mt in house for e in mt["tiles"])  # its secondary tiles copied
+    assert house and any((e & 0x3FF) >= 512 for mt in house for e in mt["tiles"])  # its secondary tiles
+    # built from the same art as the map's secondary: each of its tiles is one the map has, used as it is (flipped
+    # where it's drawn so), so none is copied
+    assert p["glyphs"] == {} and p["reused"] > 0
+    te = m.tileset_editor
+
+    def drawn(name, tile, hflip, vflip):  # the 8x8 pixels an entry draws on the map
+        _, _, prim, sec, _ = seams._context(m, name)
+        side, i = (prim, tile) if tile < 512 else (sec, tile - 512)
+        px = te.read_tiles(side)[0][i]
+        return px[::-1 if vflip else 1, ::-1 if hflip else 1]
+    for mt in house:
+        for e, t in zip(te.get_metatile("Town_House1", mt["mid"])["entries"], mt["tiles"]):
+            if t:
+                assert (drawn("Town", t & 0x3FF, t >> 10 & 1, t >> 11 & 1)
+                        == drawn("Town_House1", e["tile"], e["hflip"], e["vflip"])).all()
 
 
 def test_seam_keeps_the_palettes_of_a_shared_primarys_strip(root, tmp_path):

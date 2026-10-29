@@ -248,7 +248,9 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
   other right. Free slots come first from what the viewer's tilesets never use, then palette slots and secondary
   tiles the viewer's map never shows are borrowed (the game reloads those whenever you cross into another map).
   Copied tiles take their colours wherever a slot has them, so the colours of several of the neighbour's palettes
-  share one slot when they fit (15 colours): a strip in three palettes may need only two slots.
+  share one slot when they fit (15 colours): a strip in three palettes may need only two slots. A neighbour's tile
+  with the same pixels as one of the viewer's own (flipped or not) isn't copied: the adapter uses the viewer's, which
+  is loaded anyway, so maps built from the same art need few slots.
   When no slot has room left, a palette's tiles take each colour's nearest in the closest slot, and `pae seam build`
   says which (the strip looks a little off until the neighbour shares the viewer's tilesets). A map whose tilesets
   fill all 1024 metatile ids lends its adapters the top ids it never shows.
