@@ -1007,3 +1007,77 @@ def test_walks_know_water_from_land_named_deep():
         assert walk.WATER.search(b), b
     for b in ("MB_DEEP_SAND", "MB_DEEP_SOUTH_WARP", "MB_MOSSDEEP_GYM_WARP", "MB_NORMAL", "MB_PUDDLE"):
         assert not walk.WATER.search(b), b
+
+
+def test_lights_glow_at_night(root, tmp_path):
+    """A spec's "lights" give palette colours the game's light bit (.pla beside the .pal), with a bank's own light
+    colour in its colour 0; a bank written without lights loses its .pla, a spec without "lights" leaves them."""
+    proj, m, art, out = _scratch(root, tmp_path)
+    spec = json.loads((art / "spec.json").read_text())
+    npp = m.consts("emerald")[2]
+
+    def pla(bank):
+        found = sorted(root.glob(f"data/tilesets/*/new_*/palettes/{bank:02d}.pla"))
+        return [[ln for ln in p.read_text().splitlines() if not ln.startswith("#")] for p in found]
+
+    spec["lights"] = {"0": [5, 4], str(npp): {"colours": [1], "light": [248, 200, 120]}}
+    (art / "spec.json").write_text(json.dumps(spec))
+    out = tb.build(m, art / "spec.json")
+    assert out["lights"] == {"0": [4, 5], str(npp): [0, 1]}
+    assert pla(0) == [["4", "5"]] and pla(npp) == [["0", "1"]]
+    assert all(len(ln) < 64 for p in root.glob("data/tilesets/*/*/palettes/*.pla")
+               for ln in p.read_text().splitlines())  # what gbagfx reads
+    sec = m.tilesets["gTileset_NewTown"]
+    pal = root / sec.palettes[npp]
+    assert pal.read_text().split("\n")[3].strip() == "248 200 120"  # the light colour, in colour 0
+    spec["lights"] = {"0": [4]}
+    (art / "spec.json").write_text(json.dumps(spec))
+    tb.build(m, art / "spec.json")
+    assert pla(0) == [["4"]] and pla(npp) == []
+    del spec["lights"]
+    (art / "spec.json").write_text(json.dumps(spec))
+    tb.build(m, art / "spec.json")
+    assert pla(0) == [["4"]]  # left as it was
+    for bad, why in (({"3": [1]}, "isn't one of the palettes"), ({"0": [0]}, "indices 1-15"),
+                     ({"0": [16]}, "indices 1-15"), ({"x": [1]}, "not a palette bank"),
+                     ({"0": {"colours": [1], "light": [1, 2]}}, r"\[r, g, b\]")):
+        spec["lights"] = bad
+        (art / "spec.json").write_text(json.dumps(spec))
+        with pytest.raises(DecompError, match=why):
+            tb.build(m, art / "spec.json")
+    assert sec.secondary
+
+
+def test_night_lights_on_a_map(root):
+    m = DecompProject(root).maps
+    with pytest.raises(DecompError, match="no light sprite"):
+        walk.lights(m, "Town", [(1, 1, "ball")])
+    consts = root / "include/constants/event_objects.h"
+    consts.parent.mkdir(parents=True, exist_ok=True)
+    consts.write_text((consts.read_text() if consts.exists() else "") + "#define OBJ_EVENT_GFX_LIGHT_SPRITE 241\n")
+    before = m.get_map("Town")["object_events"]
+    assert walk.lights(m, "Town") == []
+    got = walk.lights(m, "Town", [(1, 1, "ball"), (2, 3, "mart"), (1, 1, "ball")])
+    assert got == [{"x": 1, "y": 1, "kind": "ball"}, {"x": 2, "y": 3, "kind": "mart"}]
+    objs = m.get_map("Town")["object_events"]
+    assert objs[:len(before)] == before and len(objs) == len(before) + 2  # after the others: their ids stay
+    assert objs[-1]["graphics_id"] == "OBJ_EVENT_GFX_LIGHT_SPRITE" and objs[-1]["trainer_sight_or_berry_tree_id"] == "2"
+    walk.lights(m, "Town", [(3, 3, "center")])  # replaces them
+    assert walk.lights(m, "Town") == [{"x": 3, "y": 3, "kind": "center"}]
+    with pytest.raises(DecompError, match="one of ball"):
+        walk.lights(m, "Town", [(1, 1, "torch")])
+    with pytest.raises(DecompError, match="is off Town"):
+        walk.lights(m, "Town", [(999, 1, "ball")])
+    assert main(["map", "lights", "Town", "1,2", "3,4:mart", "-p", str(root)]) == 0
+    assert walk.lights(DecompProject(root).maps, "Town") == [{"x": 1, "y": 2, "kind": "ball"},
+                                                           {"x": 3, "y": 4, "kind": "mart"}]
+    assert main(["map", "lights", "Town", "--clear", "-p", str(root)]) == 0
+    assert DecompProject(root).maps.get_map("Town")["object_events"] == before
+    # an object after a light would change its local id when the lights are set: refused
+    data = m.get_map("Town")
+    walk.lights(m, "Town", [(1, 1, "ball")])
+    data = m.get_map("Town")
+    data["object_events"].append(dict(before[0], local_id="LOCALID_LATE"))
+    m.save_map("Town", data)
+    with pytest.raises(DecompError, match="aren't its last objects"):
+        walk.lights(m, "Town", [])

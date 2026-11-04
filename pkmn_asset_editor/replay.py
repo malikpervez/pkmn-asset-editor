@@ -160,7 +160,7 @@ class ReplayTests:
         if save is not None and not save.exists():
             raise PlaytestError(f"{save.name} is missing (the save this test starts from)")
         session.start(st.get("map"), st.get("x"), st.get("y"), state=st.get("state") or None,
-                      script=st.get("script"), save_file=save)
+                      script=st.get("script"), save_file=save, clock=st.get("clock"))
         for step in test.get("steps", []):
             op = step.get("op")
             if op == "press":

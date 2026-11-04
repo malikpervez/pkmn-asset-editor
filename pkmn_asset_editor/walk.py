@@ -1,6 +1,8 @@
 """Moving events and walking routes for scripts.
 
 * :func:`place` moves one event (an object by index or local id, a warp, a trigger, a sign) to another block.
+* :func:`lights` lists or sets a map's night lights: glows the game draws round a block after dark (an object with
+  the light sprite; no one stands there), after every other object so their local ids stay the same.
 * :func:`route` finds a walk between blocks over what the map lets you walk on (collision 0, not water unless
   surfing; other objects' starting blocks are avoided if asked, and so are trainers' lines of sight: :func:`sight`),
   shortest first and then with the fewest turns.
@@ -63,6 +65,58 @@ def place(maps, map_name: str, kind: str, which: str, x: int, y: int, elevation:
         ev["elevation"] = int(elevation)
     maps.save_map(name, data)
     return {"kind": key, "index": idx, "from": old, "to": (int(x), int(y))}
+
+
+LIGHT_GFX = "OBJ_EVENT_GFX_LIGHT_SPRITE"
+# what the light sprite draws (its LIGHT_TYPE_*, kept in the object's trainer_sight_or_berry_tree_id)
+LIGHT_KINDS = {"ball": 0, "center": 1, "mart": 2}
+MAX_OBJECTS = 64  # OBJECT_EVENT_TEMPLATES_COUNT
+
+
+def lights(maps, map_name: str, spots: list[tuple[int, int, str]] | None = None) -> list[dict]:
+    """A map's night lights. ``spots`` None: list them; a list of (x, y, kind): they become the map's lights (an
+    empty list: none). ``kind`` is one of LIGHT_KINDS: "ball" a round glow round the block (it flickers), "center"
+    and "mart" the game's own lit sign pictures. Lights go after every other object, so those keep their local ids;
+    the game shows them at night only. Returns the lights the map has (after the change)."""
+    name = maps.resolve(map_name)
+    data = maps.get_map(name)
+    objs = data.get("object_events", [])
+    kind_of = {v: k for k, v in LIGHT_KINDS.items()}
+
+    def listed(o):
+        return {"x": o["x"], "y": o["y"], "kind": kind_of.get(int(str(o.get("trainer_sight_or_berry_tree_id", 0)), 0),
+                                                             "ball")}
+
+    have = [o for o in objs if o.get("graphics_id") == LIGHT_GFX]
+    if spots is None:
+        return [listed(o) for o in have]
+    consts = maps.root / "include" / "constants" / "event_objects.h"
+    if not re.search(rf"#define\s+{LIGHT_GFX}\b", consts.read_text() if consts.exists() else ""):
+        raise DecompError(f"this game has no light sprite ({LIGHT_GFX} in include/constants/event_objects.h)")
+    rest = [o for o in objs if o.get("graphics_id") != LIGHT_GFX]
+    if have and objs[:len(rest)] != rest:
+        raise DecompError(f"{name}'s lights aren't its last objects; move the others before them first, so no local "
+                          "id changes")
+    blocks = maps.read_blocks(maps.layout_of(name))
+    h, w = blocks.shape
+    seen, new = set(), []
+    for x, y, kind in spots:
+        if kind not in LIGHT_KINDS:
+            raise DecompError(f"a light is one of {', '.join(LIGHT_KINDS)} (not {kind})")
+        if not (0 <= x < w and 0 <= y < h):
+            raise DecompError(f"({x},{y}) is off {name} ({w}x{h} blocks)")
+        if (x, y) in seen:
+            continue
+        seen.add((x, y))
+        new.append({"type": "object", "graphics_id": LIGHT_GFX, "x": int(x), "y": int(y), "elevation": 0,
+                    "movement_type": "MOVEMENT_TYPE_NONE", "movement_range_x": 0, "movement_range_y": 0,
+                    "trainer_type": "TRAINER_TYPE_NONE", "trainer_sight_or_berry_tree_id": str(LIGHT_KINDS[kind]),
+                    "script": "NULL", "flag": "0"})
+    if len(rest) + len(new) > MAX_OBJECTS:
+        raise DecompError(f"{name} would have {len(rest) + len(new)} objects; the game takes {MAX_OBJECTS}")
+    data["object_events"] = rest + new
+    maps.save_map(name, data)
+    return [listed(o) for o in new]
 
 
 def walkable(maps, map_name: str, surf: bool = False, avoid_objects: bool = False, avoid_sight: bool = False):
