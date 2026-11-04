@@ -237,6 +237,16 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
   of a light colour glows. `pae map lights MAP 27,11 31,11` puts a round glow round those blocks after dark (the
   game's light sprite; `x,y:center` / `x,y:mart` its lit sign pictures), after the map's other objects so no local
   id moves; with no blocks it lists them, `--clear` takes them away. To see it, replay at night (below).
+* **A map at night**: `pae map render MAP --night -o night.png` draws the map as the game shows it after dark: every
+  colour darkened as the game does it (red and green x 0.456, blue x 0.615, in the GBA's 5 bits), the lit colours
+  halfway to their light and the glows blended over it (close to the game's; it flickers them). The tiles match a
+  screenshot of the game at 22:00 exactly. `pae world render --night` does a whole region. To choose what to light,
+  `pae map colours MAP` lists every colour on the map (bank:index, its colour, how many pixels, on which blocks,
+  whether it's lit) and `pae map colours MAP --bank 9 -o sheet.png` draws each building or lamp in that bank once,
+  then once per colour with that colour in magenta (`*`: lit): light only a colour that shows on glass, lamps or
+  signs alone, on every map using that tileset. `pae tileset lights gTileset_X 9:13,14 7:6@232,200,248` sets the
+  colours that glow on any tileset, also ones `tileset build` doesn't make (as the palette's `.pla`; `@r,g,b` a light
+  colour of its own, in its colour 0); with no banks it lists them, `--clear 9` takes a bank's away.
 * **One kit for many maps**: maps that share a primary tileset (built the same in every map's spec, then each
   map's own secondary) can use each other's tiles at the joins; their seams copy only the secondary tiles and use
   the map's own palettes where the colours agree.
@@ -832,6 +842,7 @@ sheet of the results, then run `pae check`."*
 | `pae map connect MAP up OTHER --align A,B` · `pae map place MAP KIND WHICH X Y` | join maps edge to edge (both ways) · move an event |
 | `pae map path MAP X,Y X,Y … [--avoid-objects] [--avoid-sight] [--stop-short N] [--then CMD…] [--write LABEL]` | walking movements around what's solid, for cutscenes; `--avoid-sight` keeps off trainers' lines of sight (for a play-through's walks) |
 | `pae map lights MAP [X,Y[:center\|:mart] …] [--clear]` | a map's glows at night (list, set or take away) |
+| `pae map render MAP --night` · `pae map colours MAP [--bank B -o PNG]` · `pae tileset lights SYMBOL [BANK:I,J[@R,G,B] …] [--clear B]` | a map at night · where each colour is used · the colours that glow at night, on any tileset |
 | `pae text check [MAP] / preview MAP LABEL -o PNG` | dialogue in the game's font |
 | `pae trainer list [Q] / show ID / set ID --mon … --field Key=Value` | trainer teams |
 | `pae wild show MAP / set MAP KIND SLOT… [--rate N]` | wild Pokémon (`land`, `water`, `rock_smash`, `fishing`) |

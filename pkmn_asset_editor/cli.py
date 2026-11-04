@@ -287,6 +287,14 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("--scale", type=int, default=1)
     q.add_argument("--no-events", action="store_true")
     q.add_argument("--grid", action="store_true")
+    q.add_argument("--night", action="store_true", help="as the game shows it after dark (games with day/night "
+                                                        "tinting): its lit colours and the glows of its lights")
+    q = with_project(msub.add_parser("colours", help="where each colour is used on a map (to pick night lights)"))
+    q.add_argument("name")
+    q.add_argument("--bank", type=int, help="only this palette bank")
+    q.add_argument("-o", "--out", help="with --bank: each piece of the map in that bank (a building, a lamp) once, "
+                                       "then once per colour of the bank in magenta (* = lit at night)")
+    q.add_argument("--scale", type=float, default=1.0, help="the pictures' scale")
     q = with_project(msub.add_parser("metatiles", help="render the metatiles a map can use (with ids)"))
     q.add_argument("name")
     q.add_argument("-o", "--out", required=True)
@@ -374,6 +382,13 @@ def main(argv: list[str] | None = None) -> int:
                                                      "(`pae tileset spec` shows the format)"))
     q.add_argument("spec")
     with_project(tsub2.add_parser("spec", help="show the build spec format"))
+    q = with_project(tsub2.add_parser("lights", help="list or set a tileset's colours that glow at night (any tileset; "
+                                                      "one `tileset build` makes takes its spec's \"lights\")"))
+    q.add_argument("symbol", help="gTileset_Name")
+    q.add_argument("banks", nargs="*", help="BANK:I,J (colour indices 1-15 of that palette bank), or "
+                                            "BANK:I,J@R,G,B with a light colour of its own (kept in its colour 0); "
+                                            "they replace those banks' lights")
+    q.add_argument("--clear", type=int, action="append", default=[], help="take a bank's lights away")
     p = sub.add_parser("seam", help="source tree: draw neighbouring maps right across different tilesets "
                                      "(connection seams; this fork's kanto_connection_seam.c)")
     ssub2 = p.add_subparsers(dest="seam_cmd", required=True)
@@ -614,6 +629,7 @@ def main(argv: list[str] | None = None) -> int:
     q = with_project(wsub2.add_parser("render", help="a picture of a whole area (Hoenn, Kanto…)"))
     q.add_argument("--area", type=int, default=0, help="0 = the biggest")
     q.add_argument("--scale", type=float, default=0.25, help="0.25 = 4 pixels per block")
+    q.add_argument("--night", action="store_true", help="as the game shows it after dark")
     q.add_argument("-o", "--out", required=True)
     q = with_project(wsub2.add_parser("region", help="the town map picture"))
     q.add_argument("-o", "--out", required=True)
@@ -947,8 +963,20 @@ def _run(args) -> int:
                 if args.query.lower() in (x["name"] + x["id"] + region).lower():
                     print(f"{x['name']:<44} {x['id']:<48} {x['group'].replace('gMapGroup_', ''):<28} {region}".rstrip())
         elif args.map_cmd == "render":
-            m.render(args.name, events=not args.no_events, grid=args.grid, scale=args.scale).save(args.out)
+            m.render(args.name, events=not args.no_events, grid=args.grid, scale=args.scale,
+                     night=args.night).save(args.out)
             print(f"wrote {args.out}")
+        elif args.map_cmd == "colours":
+            rows = [r for r in m.colours(args.name) if args.bank is None or r["bank"] == args.bank]
+            for r in rows:
+                mts = ", ".join(f"{t:#05x}" for t in r["metatiles"][:6]) + ("…" if len(r["metatiles"]) > 6 else "")
+                print(f"{r['bank']:>2}:{r['colour']:<2} {'#%02x%02x%02x' % r['rgb']}  {r['pixels']:>7} px  "
+                      f"{len(r['metatiles']):>3} blocks ({mts}){'  lit' if r['lit'] else ''}")
+            if args.out:
+                if args.bank is None:
+                    raise ProjectError("give --bank for the pictures")
+                m.colour_sheet(args.name, args.bank, args.scale).save(args.out)
+                print(f"wrote {args.out}")
         elif args.map_cmd == "metatiles":
             m.metatile_sheet(args.name, 2).save(args.out)
             print(f"wrote {args.out}")
@@ -1170,7 +1198,7 @@ def _run(args) -> int:
         cmd = args.world_cmd
         if cmd == "render":
             area = w.layout()["areas"][args.area]
-            w.render_area(area, args.scale).save(args.out)
+            w.render_area(area, args.scale, night=args.night).save(args.out)
             print(f"wrote {args.out} ({len(area['maps'])} maps)")
             return 0
         if cmd == "region":
@@ -1492,6 +1520,19 @@ def _run(args) -> int:
         if args.tileset_cmd == "new":
             r = tb.new_tileset(proj, args.symbol, args.secondary, args.dir)
             print(f"created {r['symbol']} in {r['folder']}")
+            return 0
+        if args.tileset_cmd == "lights":
+            sets = {}
+            try:
+                for a in args.banks:
+                    bank, _, rest = a.partition(":")
+                    cols, _, light = rest.partition("@")
+                    sets[int(bank)] = ([int(c) for c in cols.split(",") if c],
+                                       tuple(int(v) for v in light.split(",")) if light else None)
+            except ValueError:
+                raise ProjectError("a bank's lights are BANK:I,J or BANK:I,J@R,G,B (e.g. 9:13,14 or 7:6@232,200,248)")
+            for b, cols in m.tileset_lights(args.symbol, sets, args.clear).items():
+                print(f"{b:>2}: {' '.join(map(str, cols))}")
             return 0
         r = tb.build(m, args.spec)
         for k, sym in r["tilesets"].items():

@@ -24,6 +24,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from . import night as nightmod
 from .decomp import DecompError, strip_comments
 from .gfx import Layout, image_to_tiles, load_png, pad_palette, read_jasc
 
@@ -59,6 +60,7 @@ class Atlas:
     num_primary: int
     num_secondary: int
     behaviors: list[int] = field(default_factory=list)
+    where: np.ndarray | None = None  # (rows*16, 128): each pixel's palette bank * 16 + colour index
 
     @property
     def count(self) -> int:
@@ -67,6 +69,10 @@ class Atlas:
     def tiles(self) -> np.ndarray:
         rows = self.image.shape[0] // 16
         return self.image.reshape(rows, 16, 8, 16, 4).transpose(0, 2, 1, 3, 4).reshape(rows * 8, 16, 16, 4)
+
+    def where_tiles(self) -> np.ndarray:
+        rows = self.where.shape[0] // 16
+        return self.where.reshape(rows, 16, 8, 16).transpose(0, 2, 1, 3).reshape(rows * 8, 16, 16)
 
 
 def _upper_snake(name: str) -> str:
@@ -431,6 +437,7 @@ class MapEditor:
     def atlas(self, primary: str, secondary: str, version: str = "emerald") -> Atlas:
         prim, sec = self.tilesets.get(primary), self.tilesets.get(secondary)
         files = [f for t in (prim, sec) if t for f in [t.tiles, t.metatiles, t.attributes, *t.palettes] if f]
+        files += [str(nightmod.pla_of(Path(f))) for t in (prim, sec) if t for f in t.palettes if f]
         stamp = tuple((f, (self.root / f).stat().st_mtime) for f in files if (self.root / f).exists())
         key = (primary, secondary, version)
         hit = self._atlas_cache.get(key)
@@ -451,6 +458,7 @@ class MapEditor:
         n = len(metas)
         rows = -(-n // 8)
         img = np.zeros((rows * 16, 128, 4), np.uint8)
+        where = np.zeros((rows * 16, 128), np.uint8)
         backdrop = pal[0, 0]
         for m in range(n):
             if npm > len(pm) and len(pm) <= m < npm:
@@ -459,6 +467,7 @@ class MapEditor:
             cell = np.zeros((16, 16, 4), np.uint8)
             cell[..., :3] = backdrop
             cell[..., 3] = 255
+            cw = np.zeros((16, 16), np.uint8)  # the backdrop: bank 0, colour 0
             for layer in (0, 1):
                 for q in range(4):
                     v = int(metas[m, layer * 4 + q])
@@ -471,19 +480,50 @@ class MapEditor:
                     ys, xs = (q // 2) * 8, (q % 2) * 8
                     mask = px != 0
                     cell[ys:ys + 8, xs:xs + 8, :3][mask] = pal[bank][px[mask]]
+                    cw[ys:ys + 8, xs:xs + 8][mask] = (bank << 4) | px[mask]
             img[y0:y0 + 16, x0:x0 + 16] = cell
+            where[y0:y0 + 16, x0:x0 + 16] = cw
         behaviors = self._attrs_of(prim, version)[:npm]
         behaviors += [0] * (npm - len(behaviors)) + self._attrs_of(sec, version)[: len(sm)]
-        atlas = Atlas(img, npm, len(sm), behaviors)
+        atlas = Atlas(img, npm, len(sm), behaviors, where)
         self._atlas_cache[key] = (stamp, atlas)
         return atlas
 
     def layout_atlas(self, layout: dict) -> Atlas:
         return self.atlas(layout["primary_tileset"], layout["secondary_tileset"], layout.get("layout_version", "emerald"))
 
-    def render(self, name: str, events: bool = True, grid: bool = False, scale: int = 1) -> Image.Image:
+    def palette_files(self, layout: dict) -> list[tuple[str | None, str | None]]:
+        """The 16 palette banks a layout draws with: (tileset symbol, its palette file) for each."""
+        npm, npt, npp = self.consts(layout.get("layout_version", "emerald"))
+        prim, sec = self.tilesets.get(layout["primary_tileset"]), self.tilesets.get(layout["secondary_tileset"])
+        out = []
+        for b in range(16):
+            ts, sym = (prim, layout["primary_tileset"]) if b < npp else (sec, layout["secondary_tileset"])
+            out.append((sym, ts.palettes[b]) if ts is not None and b < len(ts.palettes) else (None, None))
+        return out
+
+    def palette_lut(self, layout: dict, night: bool = False) -> np.ndarray:
+        """(256, 3): the colour of bank * 16 + index, by day or as the game shows it at night (night.py)."""
+        lut = np.zeros((256, 3), np.uint8)
+        for b, (_sym, f) in enumerate(self.palette_files(layout)):
+            if f is None:
+                continue
+            try:
+                cols = pad_palette(read_jasc(self.root / f), 16)[:16]
+            except (OSError, ValueError):
+                continue
+            if night:
+                cols = nightmod.night_palette(cols, nightmod.read_lights(self.root / f))
+            lut[b * 16:(b + 1) * 16] = np.array(cols, np.uint8)
+        return lut
+
+    def render(self, name: str, events: bool = True, grid: bool = False, scale: int = 1,
+               night: bool = False) -> Image.Image:
+        """The map's picture; ``night``: as the game shows it after dark, its lit colours and glows too (night.py)."""
         layout = self.layout_of(name)
-        return self._compose(layout, self.read_blocks(layout), self.get_map(name) if events else None, grid, scale)
+        data = self.get_map(name)
+        return self._compose(layout, self.read_blocks(layout), data if events else None, grid, scale,
+                             night=data if night else None)
 
     def render_head(self, name: str, events: bool = True, scale: int = 1) -> Image.Image | None:
         """The map as it is in the last commit (None for a map that is new)."""
@@ -500,7 +540,17 @@ class MapEditor:
         blocks = np.frombuffer(blk[: w * h * 2].ljust(w * h * 2, b"\0"), dtype="<u2").astype(np.int32).reshape(h, w)
         return self._compose(layout, blocks, data if events else None, False, scale)
 
-    def _compose(self, layout: dict, blocks: np.ndarray, data: dict | None, grid: bool, scale: int) -> Image.Image:
+    def where(self, layout: dict, blocks: np.ndarray) -> np.ndarray:
+        """(h*16, w*16): each pixel of the map's picture as its palette bank * 16 + colour index (undefined blocks:
+        bank 0, colour 0)."""
+        wt = self.layout_atlas(layout).where_tiles()
+        ids = blocks & 0x3FF
+        safe = np.where(ids < len(wt), ids, 0)
+        h, w = blocks.shape
+        return wt[safe].transpose(0, 2, 1, 3).reshape(h * 16, w * 16)
+
+    def _compose(self, layout: dict, blocks: np.ndarray, data: dict | None, grid: bool, scale: int,
+                 night: dict | None = None) -> Image.Image:
         atlas = self.layout_atlas(layout)
         tiles = atlas.tiles()
         ids = blocks & 0x3FF
@@ -508,12 +558,16 @@ class MapEditor:
         safe = np.where(ok, ids, 0)
         h, w = blocks.shape
         img = tiles[safe].transpose(0, 2, 1, 3, 4).reshape(h * 16, w * 16, 4).copy()
+        if night is not None:
+            img[..., :3] = self.palette_lut(layout, night=True)[self.where(layout, blocks)]
         if not ok.all():
             bad = np.repeat(np.repeat(~ok, 16, 0), 16, 1)
             img[bad] = (255, 0, 255, 255)
         im = Image.fromarray(img, "RGBA")
+        if night is not None:
+            nightmod.draw_glows(im, night, self.root)
         if data is not None:
-            self._draw_events(im, data)
+            self._draw_events(im, data, night=night is not None)
         if grid:
             from PIL import ImageDraw
             d = ImageDraw.Draw(im)
@@ -525,7 +579,7 @@ class MapEditor:
             im = im.resize((im.width * scale, im.height * scale), Image.NEAREST)
         return im
 
-    def _draw_events(self, im: Image.Image, data: dict) -> None:
+    def _draw_events(self, im: Image.Image, data: dict, night: bool = False) -> None:
         from PIL import ImageDraw
         d = ImageDraw.Draw(im)
         colors = {"warp_events": (230, 40, 40), "coord_events": (40, 160, 230), "bg_events": (200, 60, 200)}
@@ -537,7 +591,14 @@ class MapEditor:
                        fill=colors[kind] + (255,))
         for i, e in enumerate(data.get("object_events", [])):
             x, y = int(e.get("x", 0)) * 16, int(e.get("y", 0)) * 16
+            if e.get("graphics_id") == nightmod.LIGHT_GFX:  # a glow: nothing by day, drawn with the night picture
+                d.text((x + 1, y + 1), f"L{i}", fill=(255, 240, 120, 255))
+                continue
             spr = self.object_sprite(e.get("graphics_id", ""))
+            if spr is not None and night:
+                a = np.array(spr)
+                a[..., :3] = nightmod.night_rgb(a)
+                spr = Image.fromarray(a, "RGBA")
             if spr is not None:
                 im.alpha_composite(spr, (x + (16 - spr.width) // 2, max(0, y + 16 - spr.height)))
             else:
@@ -1075,6 +1136,144 @@ class MapEditor:
         db[dy:dy + hh, dx:dx + ww] = sb[:hh, :ww]
         self.write_blocks(dest, db)
         return notes
+
+    def colours(self, name: str) -> list[dict]:
+        """Where each colour is used on a map: per palette bank and index, its colour, whether it is lit at night,
+        how many pixels of the map show it and on which blocks (metatile ids). For picking light colours: a colour
+        to light shows only on glass, lamps or signs."""
+        layout = self.layout_of(name)
+        blocks = self.read_blocks(layout)
+        wmap = self.where(layout, blocks)
+        files = self.palette_files(layout)
+        lut = self.palette_lut(layout)
+        mt = np.repeat(np.repeat(blocks & 0x3FF, 16, 0), 16, 1)
+        out = []
+        for v in np.unique(wmap):
+            b, c = int(v) >> 4, int(v) & 15
+            if c == 0:
+                continue
+            sym, f = files[b]
+            mask = wmap == v
+            out.append({"bank": b, "colour": c, "rgb": tuple(int(x) for x in lut[v]), "tileset": sym,
+                        "lit": f is not None and c in nightmod.read_lights(self.root / f),
+                        "pixels": int(mask.sum()), "metatiles": sorted(int(m) for m in np.unique(mt[mask]))})
+        return out
+
+    def colour_sheet(self, name: str, bank: int, scale: float = 1.0, most: int = 12) -> Image.Image:
+        """Each piece of the map that shows palette ``bank`` (blocks next to each other that use it: a building, a
+        lamp), once, as it is and then once per colour of the bank with that colour in magenta and the rest dimmed:
+        to see which colours are glass, lamps or signs. The biggest ``most`` pieces; lit colours are marked."""
+        from PIL import ImageDraw
+        layout = self.layout_of(name)
+        blocks = self.read_blocks(layout)
+        wmap = self.where(layout, blocks)
+        base = np.array(self._compose(layout, blocks, None, False, 1), np.uint8)[..., :3]
+        lut = self.palette_lut(layout)
+        _sym, f = self.palette_files(layout)[bank]
+        lit = set(nightmod.read_lights(self.root / f)) if f else set()
+        h, w = blocks.shape
+        wb = wmap.reshape(h, 16, w, 16).transpose(0, 2, 1, 3)
+        uses = (((wb >> 4) == bank) & ((wb & 15) != 0)).any(axis=(2, 3))
+        seen = np.zeros_like(uses)
+        pieces, keys = [], set()
+        for y0 in range(h):
+            for x0 in range(w):
+                if not uses[y0, x0] or seen[y0, x0]:
+                    continue
+                stack, cells = [(y0, x0)], []
+                seen[y0, x0] = True
+                while stack:
+                    y, x = stack.pop()
+                    cells.append((y, x))
+                    for ny, nx in ((y + 1, x), (y - 1, x), (y, x + 1), (y, x - 1)):
+                        if 0 <= ny < h and 0 <= nx < w and uses[ny, nx] and not seen[ny, nx]:
+                            seen[ny, nx] = True
+                            stack.append((ny, nx))
+                ys, xs = [c[0] for c in cells], [c[1] for c in cells]
+                top, left, bottom, right = min(ys), min(xs), max(ys) + 1, max(xs) + 1
+                key = tuple(map(tuple, (blocks[top:bottom, left:right] & 0x3FF).tolist()))
+                if key in keys:
+                    continue  # the same building again
+                keys.add(key)
+                pieces.append((len(cells), top, left, bottom, right))
+        pieces = sorted(pieces, reverse=True)[:most]
+        dim = (base.astype(np.uint16) * 2 // 5).astype(np.uint8)
+        gap, label = 6, 12
+        rows = []
+        for _n, top, left, bottom, right in pieces:
+            sl = (slice(top * 16, bottom * 16), slice(left * 16, right * 16))
+            wcut = wmap[sl]
+            here = sorted({int(v) & 15 for v in np.unique(wcut) if int(v) >> 4 == bank and int(v) & 15})
+            panels = [(None, base[sl])]
+            for c in here:
+                pic = dim[sl].copy()
+                pic[wcut == bank * 16 + c] = (255, 0, 255)
+                panels.append((c, pic))
+            rows.append(panels)
+        if not rows:
+            return Image.new("RGB", (200, 20), (24, 24, 28))
+        sw = lambda a: max(1, int(a.shape[1] * scale))
+        sh = lambda a: max(1, int(a.shape[0] * scale))
+        width = max(sum(sw(p) + gap for _c, p in r) for r in rows)
+        height = sum(max(sh(p) for _c, p in r) + label + gap for r in rows)
+        sheet = Image.new("RGB", (width, height), (24, 24, 28))
+        d = ImageDraw.Draw(sheet)
+        y = 0
+        for r in rows:
+            x = 0
+            for c, p in r:
+                im = Image.fromarray(p).resize((sw(p), sh(p)), Image.NEAREST)
+                sheet.paste(im, (x, y + label))
+                if c is not None:
+                    rgb = tuple(int(v) for v in lut[bank * 16 + c])
+                    d.rectangle([x, y + 1, x + 9, y + 10], fill=rgb, outline=(255, 255, 255))
+                    d.text((x + 12, y), f"{c}{'*' if c in lit else ''}", fill=(255, 255, 120) if c in lit else (230, 230, 230))
+                x += sw(p) + gap
+            y += max(sh(p) for _c, p in r) + label + gap
+        return sheet
+
+    def tileset_lights(self, symbol: str, sets: dict[int, tuple[list[int], tuple[int, int, int] | None]] | None = None,
+                       clear: list[int] | None = None) -> dict[int, list[int]]:
+        """A tileset's light colours (night.py), by palette bank: list them, or set some banks' (``sets``: bank ->
+        (colour indices 1-15, a light colour of its own or None), written as the palette's .pla, the light colour
+        into its colour 0) and clear others'. For tilesets ``tileset build`` doesn't make: one it builds from a spec
+        takes the spec's "lights" when built again."""
+        ts = self.tilesets.get(symbol)
+        if ts is None:
+            raise DecompError(f"no tileset {symbol}")
+        pals = list(ts.palettes)
+        for b in list((sets or {})) + list(clear or []):
+            if not 0 <= b < len(pals) or not str(pals[b]).endswith(".pal"):
+                raise DecompError(f"{symbol} has no JASC palette in bank {b}")
+        for b, (cols, light) in (sets or {}).items():
+            if not cols or not all(isinstance(c, int) and 1 <= c <= 15 for c in cols):
+                raise DecompError(f"bank {b}: light colours are indices 1-15 (not {cols})")
+            idx = sorted(set(cols))
+            if light is not None:
+                if b == 0:
+                    raise DecompError("bank 0's colour 0 is the map's backdrop: give bank 0 no light colour")
+                if len(light) != 3 or not all(0 <= int(v) <= 255 for v in light):
+                    raise DecompError(f"bank {b}: a light colour is r,g,b (0-255)")
+                rel = pals[b]
+                cur = pad_palette(read_jasc(self.root / rel), 16)[:16]
+                cur[0] = tuple(int(v) for v in light)
+                from .gfx import write_jasc
+                self.dp._backup(rel)
+                write_jasc(self.root / rel, cur)
+                idx = [0] + idx
+            rel = str(nightmod.pla_of(Path(pals[b])))
+            self.dp._backup(rel)
+            (self.root / rel).write_text(nightmod.pla_text(idx))
+        for b in clear or []:
+            rel = str(nightmod.pla_of(Path(pals[b])))
+            if (self.root / rel).exists():
+                self.dp._backup(rel)
+                (self.root / rel).unlink()
+        if sets or clear:
+            self._atlas_cache.clear()
+            self.dp._changed = None
+        return {b: nightmod.read_lights(self.root / p) for b, p in enumerate(pals)
+                if str(p).endswith(".pal") and nightmod.read_lights(self.root / p)}
 
     def metatile_sheet(self, name: str, scale: int = 1) -> Image.Image:
         """Atlas of the map's metatiles with id labels, for choosing what to paint."""
