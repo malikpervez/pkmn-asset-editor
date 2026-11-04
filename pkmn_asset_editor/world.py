@@ -168,13 +168,13 @@ class World:
                 return False
         return True
 
-    def render_area(self, area: dict, scale: float = 0.25) -> Image.Image:
+    def render_area(self, area: dict, scale: float = 0.25, night: bool = False) -> Image.Image:
         """One picture of a whole area (scale 0.25 = 4 pixels per block)."""
         px = max(1, int(16 * scale))
         out = Image.new("RGB", (area["w"] * px, area["h"] * px), (24, 24, 30))
         for r in area["maps"]:
             try:
-                im = self.maps.render(r["name"], events=False)
+                im = self.maps.render(r["name"], events=False, night=night)
             except Exception:  # noqa: BLE001 - a broken map shouldn't stop the whole picture
                 continue
             out.paste(im.convert("RGB").resize((r["w"] * px, r["h"] * px), Image.BOX), (r["x"] * px, r["y"] * px))
