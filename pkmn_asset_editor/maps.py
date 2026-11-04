@@ -17,6 +17,7 @@ from __future__ import annotations
 import io
 import json
 import re
+import os
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -1264,11 +1265,13 @@ class MapEditor:
             rel = str(nightmod.pla_of(Path(pals[b])))
             self.dp._backup(rel)
             (self.root / rel).write_text(nightmod.pla_text(idx))
+            os.utime(self.root / pals[b])  # make rebuilds a palette when its .pal changes, not its .pla
         for b in clear or []:
             rel = str(nightmod.pla_of(Path(pals[b])))
             if (self.root / rel).exists():
                 self.dp._backup(rel)
                 (self.root / rel).unlink()
+                os.utime(self.root / pals[b])
         if sets or clear:
             self._atlas_cache.clear()
             self.dp._changed = None

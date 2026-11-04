@@ -106,6 +106,8 @@ def test_light_colours_on_any_tileset(root):
     assert all(len(ln) < 64 for ln in pla.read_text().splitlines())  # what gbagfx reads
     assert read_jasc(root / ts.palettes[8])[0] == (232, 200, 248)  # the light colour, in colour 0
     assert night.read_lights(root / ts.palettes[7]) == [1, 3]
+    pal7 = root / ts.palettes[7]
+    assert pal7.stat().st_mtime >= night.pla_of(pal7).stat().st_mtime  # so make rebuilds the palette
     assert m.tileset_lights("gTileset_Town", clear=[7]) == {8: [0, 2]}
     for bad, why in (({0: ([1], (1, 2, 3))}, "backdrop"), ({7: ([0], None)}, "indices 1-15"),
                      ({7: ([16], None)}, "indices 1-15"), ({7: ([1], (1, 2))}, "r,g,b"), ({20: ([1], None)}, "no JASC")):
