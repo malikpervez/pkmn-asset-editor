@@ -1275,6 +1275,142 @@ class MapEditor:
         return {b: nightmod.read_lights(self.root / p) for b, p in enumerate(pals)
                 if str(p).endswith(".pal") and nightmod.read_lights(self.root / p)}
 
+    def rebank(self, name: str, from_bank: int, to_bank: int, blocks=(), on: tuple[int, int] | None = None,
+               metatiles=(), colours=None, tiles=None, except_colours=None) -> dict:
+        """Draw some of a map's tiles with another palette bank that holds the same colours: so window glass can glow
+        at night (its bank's copy lit) while a roof in the same colours stays dark. The metatiles are the map's
+        blocks at ``blocks`` (x, y), the ones that show ``on`` (bank, colour) and ``metatiles`` (ids); in each, the
+        entries drawn with ``from_bank`` (and, given ``colours``, whose tile shows one of them in that bank, but none
+        of ``except_colours``: a roof's own colour, so a roof next to the glass stays; given ``tiles``, only those
+        tiles) are drawn with ``to_bank``. Door blocks are left as they are (their animation
+        draws with the bank it was made with). Refused if ``to_bank`` doesn't hold the same colour as ``from_bank``
+        wherever a moved tile uses one, so nothing changes by day. A metatile is shared by every map on its tileset:
+        check the others hold the same colours in ``to_bank`` too."""
+        for b in (from_bank, to_bank):
+            if not 0 <= int(b) < 13:
+                raise DecompError(f"bank {b}: a map's palette banks are 0-12")
+        if from_bank == to_bank:
+            raise DecompError("give two different banks")
+        lay = self.layout_of(name)
+        raw = self.read_blocks(lay)
+        bl = raw & 0x3FF
+        h, w = bl.shape
+        ids = {int(m) for m in metatiles}
+        for x, y in blocks:
+            if not (0 <= x < w and 0 <= y < h):
+                raise DecompError(f"({x},{y}) is off {name} ({w}x{h} blocks)")
+            ids.add(int(bl[y, x]))
+        if on is not None:
+            hit = (self.where(lay, raw) == on[0] * 16 + on[1]).reshape(h, 16, w, 16).any(axis=(1, 3))
+            ids |= {int(v) for v in np.unique(bl[hit])}
+        if not ids:
+            raise DecompError("no blocks: give blocks, --on or metatiles")
+        te = self.tileset_editor
+        names = te.behaviors(lay.get("layout_version", "emerald"))
+        lut = self.palette_lut(lay).astype(int)
+        want = set(colours) if colours is not None else None
+        keep = set(except_colours or ())
+        pixel_cache: dict[int, set[int]] = {}
+
+        def used(tile: int) -> set[int]:
+            if tile not in pixel_cache:
+                pixel_cache[tile] = {int(v) for row in te.get_tile(name, tile) for v in row} - {0}
+            return pixel_cache[tile]
+
+        moved, doors, plan = [], [], []
+        for mid in sorted(ids):
+            md = te.get_metatile(name, mid)
+            if md["behavior"] < len(names) and names[md["behavior"]] == "MB_ANIMATED_DOOR":
+                doors.append(mid)
+                continue
+            entries, changed = md["entries"], False
+            for e in entries:
+                if e["palette"] != from_bank or (tiles is not None and e["tile"] not in tiles):
+                    continue
+                u = used(e["tile"])
+                if (want is not None and not (u & want)) or (u & keep):
+                    continue
+                bad = [c for c in u if (lut[from_bank * 16 + c] != lut[to_bank * 16 + c]).any()]
+                if bad:
+                    raise DecompError(f"bank {to_bank} doesn't hold bank {from_bank}'s colour {bad[0]} (metatile "
+                                      f"0x{mid:03X}, tile {e['tile']}): copy the palette first (tileset copy-bank)")
+                e["palette"], changed = to_bank, True
+            if changed:
+                plan.append((mid, entries))
+        for mid, entries in plan:
+            te.set_metatile(name, mid, entries=entries)
+            moved.append(mid)
+        if moved:
+            self._atlas_cache.clear()
+        return {"metatiles": moved, "doors": doors}
+
+    def recolour(self, name: str, bank: int, colour: int, to: int, blocks=(), metatiles=(),
+                 on: tuple[int, int] | None = None) -> dict:
+        """Repaint colour ``colour`` as ``to`` in the tiles the chosen metatiles draw with ``bank`` (the map's blocks
+        at ``blocks``, the ones showing ``on``, ``metatiles`` by id): for two colours of a bank alike by day, one lit
+        at night and one not, so a roof or a bike in the glass's colour stops glowing. Refused when the two aren't
+        the same colour in that bank (nothing may change by day), or when a tile is also drawn by another metatile
+        (or with another bank) on the map's tilesets."""
+        if not (1 <= colour <= 15 and 1 <= to <= 15) or colour == to:
+            raise DecompError("give two different colours, 1-15")
+        lay = self.layout_of(name)
+        raw = self.read_blocks(lay)
+        bl = raw & 0x3FF
+        h, w = bl.shape
+        ids = {int(m) for m in metatiles}
+        for x, y in blocks:
+            if not (0 <= x < w and 0 <= y < h):
+                raise DecompError(f"({x},{y}) is off {name} ({w}x{h} blocks)")
+            ids.add(int(bl[y, x]))
+        if on is not None:
+            hit = (self.where(lay, raw) == on[0] * 16 + on[1]).reshape(h, 16, w, 16).any(axis=(1, 3))
+            ids |= {int(v) for v in np.unique(bl[hit])}
+        if not ids:
+            raise DecompError("no blocks: give blocks, --on or metatiles")
+        lut = self.palette_lut(lay).astype(int)
+        if (lut[bank * 16 + colour] != lut[bank * 16 + to]).any():
+            raise DecompError(f"bank {bank}'s colours {colour} and {to} aren't the same colour: by day it would change")
+        te = self.tileset_editor
+        tiles = set()
+        for mid in ids:
+            for e in te.get_metatile(name, mid)["entries"]:
+                if e["palette"] == bank and any(v == colour for row in te.get_tile(name, e["tile"]) for v in row):
+                    tiles.add(e["tile"])
+        # every metatile of the map's tilesets that draws one of those tiles must be chosen, and with this bank
+        prim, sec, _version = te.sides(lay)
+        count = len(self._metatiles_of(self.tilesets.get(lay["primary_tileset"]))) if prim else 0
+        all_ids = list(range(min(count, sec.metatile_base))) + \
+            list(range(sec.metatile_base, sec.metatile_base + len(self._metatiles_of(self.tilesets.get(
+                lay["secondary_tileset"])))))
+        for mid in all_ids:
+            for e in te.get_metatile(name, mid)["entries"]:
+                if e["tile"] in tiles and (mid not in ids or e["palette"] != bank):
+                    how = "" if mid not in ids else " with bank %d" % e["palette"]
+                    raise DecompError(f"tile {e['tile']} is also drawn by metatile 0x{mid:03X}{how}: repainting it "
+                                      "would change that too")
+        for t in sorted(tiles):
+            px = [[to if v == colour else v for v in row] for row in te.get_tile(name, t)]
+            te.set_tile(name, t, px)
+        if tiles:
+            self._atlas_cache.clear()
+        return {"tiles": sorted(tiles), "metatiles": sorted(ids)}
+
+    def copy_bank(self, src: str, src_bank: int, dst: str, dst_bank: int) -> None:
+        """Copy one tileset's palette bank (its 16 colours) into another's (or the same tileset's) bank: a copy a
+        tile can be drawn with (rebank), whose light colours can differ."""
+        a, b = self.tilesets.get(src), self.tilesets.get(dst)
+        if a is None or b is None:
+            raise DecompError(f"no tileset {src if a is None else dst}")
+        for ts, bank in ((a, src_bank), (b, dst_bank)):
+            if not 0 <= bank < len(ts.palettes) or not str(ts.palettes[bank]).endswith(".pal"):
+                raise DecompError(f"{ts.symbol} has no JASC palette in bank {bank}")
+        from .gfx import write_jasc
+        cols = pad_palette(read_jasc(self.root / a.palettes[src_bank]), 16)[:16]
+        self.dp._backup(b.palettes[dst_bank])
+        write_jasc(self.root / b.palettes[dst_bank], cols)
+        self._atlas_cache.clear()
+        self.dp._changed = None
+
     def metatile_sheet(self, name: str, scale: int = 1) -> Image.Image:
         """Atlas of the map's metatiles with id labels, for choosing what to paint."""
         from PIL import ImageDraw

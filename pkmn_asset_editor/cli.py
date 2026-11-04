@@ -345,6 +345,30 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("spots", nargs="*", help="x,y blocks (x,y:center or x,y:mart for the game's lit sign pictures; "
                                             "the default is a round glow); they replace the map's lights")
     q.add_argument("--clear", action="store_true", help="take all of the map's lights away")
+    q.add_argument("--on", action="append", default=[], metavar="BANK:COLOUR",
+                   help="also a round glow on every block that shows this colour (e.g. 8:14, a street lamp's glass)")
+    q.add_argument("--adopt", metavar="GFX", help="turn the map's objects drawn as GFX (a port's lamp sprites, "
+                                                  "shown day and night) into glows where they stand")
+    q = with_project(msub.add_parser("rebank", help="draw some tiles with a copy of their palette in another bank "
+                                                     "(window glass that glows at night where its roof doesn't)"))
+    q.add_argument("name")
+    q.add_argument("blocks", nargs="*", help="x,y blocks whose metatiles change")
+    q.add_argument("--from", dest="from_bank", type=int, required=True, help="the bank the tiles are drawn with now")
+    q.add_argument("--to", dest="to_bank", type=int, required=True, help="the bank holding the same colours")
+    q.add_argument("--on", metavar="BANK:COLOUR", help="also every block that shows this colour")
+    q.add_argument("--metatiles", default="", help="also these metatile ids (e.g. 0x2ad,0x2ae)")
+    q.add_argument("--colours", default="", help="only tiles that show one of these colours of the bank")
+    q.add_argument("--tiles", default="", help="only these tile ids")
+    q.add_argument("--except-colours", default="", help="but not tiles that show any of these (a roof's own colour)")
+    q = with_project(msub.add_parser("recolour", help="repaint one colour as another alike in some blocks' tiles (a "
+                                                       "roof or a bike in the lit glass's colour, onto its unlit twin)"))
+    q.add_argument("name")
+    q.add_argument("blocks", nargs="*", help="x,y blocks whose tiles change")
+    q.add_argument("--bank", type=int, required=True)
+    q.add_argument("--colour", type=int, required=True, help="the colour index to repaint")
+    q.add_argument("--to", type=int, required=True, help="the index of the same colour to paint it as")
+    q.add_argument("--on", metavar="BANK:COLOUR", help="also every block that shows this colour")
+    q.add_argument("--metatiles", default="", help="also these metatile ids (e.g. 0x3ee,0x3ef)")
     q = with_project(msub.add_parser("path", help="a walk between blocks as movement commands (around what's solid)"))
     q.add_argument("name")
     q.add_argument("points", nargs="+", help="x,y blocks to walk through in order (the first is where it starts)")
@@ -389,6 +413,11 @@ def main(argv: list[str] | None = None) -> int:
                                             "BANK:I,J@R,G,B with a light colour of its own (kept in its colour 0); "
                                             "they replace those banks' lights")
     q.add_argument("--clear", type=int, action="append", default=[], help="take a bank's lights away")
+    q = with_project(tsub2.add_parser("copy-bank", help="copy one palette bank's colours into another (for rebank)"))
+    q.add_argument("src", help="gTileset_From")
+    q.add_argument("src_bank", type=int)
+    q.add_argument("dst", help="gTileset_To (may be the same)")
+    q.add_argument("dst_bank", type=int)
     p = sub.add_parser("seam", help="source tree: draw neighbouring maps right across different tilesets "
                                      "(connection seams; this fork's kanto_connection_seam.c)")
     ssub2 = p.add_subparsers(dest="seam_cmd", required=True)
@@ -966,6 +995,30 @@ def _run(args) -> int:
             m.render(args.name, events=not args.no_events, grid=args.grid, scale=args.scale,
                      night=args.night).save(args.out)
             print(f"wrote {args.out}")
+        elif args.map_cmd == "rebank":
+            num = lambda s: [int(v, 0) for v in s.split(",") if v.strip()]
+            try:
+                blocks = [tuple(int(v) for v in b.split(",")) for b in args.blocks]
+                on = tuple(int(v) for v in args.on.split(":")) if args.on else None
+                mts, cols, tls = num(args.metatiles), num(args.colours), num(args.tiles)
+                keep = num(args.except_colours)
+            except ValueError:
+                raise ProjectError("blocks are x,y; --on BANK:COLOUR; --metatiles, --colours, --tiles comma lists")
+            r = m.rebank(args.name, args.from_bank, args.to_bank, blocks, on, mts, cols or None, tls or None, keep)
+            print(f"{len(r['metatiles'])} metatiles now draw bank {args.from_bank}'s tiles with bank {args.to_bank}: "
+                  + ", ".join(f"0x{v:03x}" for v in r["metatiles"]))
+            if r["doors"]:
+                print("  left as they are (door blocks): " + ", ".join(f"0x{v:03x}" for v in r["doors"]))
+        elif args.map_cmd == "recolour":
+            try:
+                blocks = [tuple(int(v) for v in b.split(",")) for b in args.blocks]
+                on = tuple(int(v) for v in args.on.split(":")) if args.on else None
+                mts = [int(v, 0) for v in args.metatiles.split(",") if v.strip()]
+            except ValueError:
+                raise ProjectError("blocks are x,y; --on BANK:COLOUR; --metatiles a comma list")
+            r = m.recolour(args.name, args.bank, args.colour, args.to, blocks, mts, on)
+            print(f"{len(r['tiles'])} tiles of {len(r['metatiles'])} metatiles: bank {args.bank}'s colour "
+                  f"{args.colour} is now {args.to} there")
         elif args.map_cmd == "colours":
             rows = [r for r in m.colours(args.name) if args.bank is None or r["bank"] == args.bank]
             for r in rows:
@@ -1063,9 +1116,14 @@ def _run(args) -> int:
             print(f"moved {args.kind} {r['index']} from {r['from']} to {r['to']}")
         elif args.map_cmd == "lights":
             from .walk import lights
+            from .walk import adopt_lights, blocks_showing
+            if args.adopt:
+                made = adopt_lights(m, args.name, args.adopt)
+                print(f"{len(made)} of {args.name}'s objects drawn as {args.adopt} are glows now")
+                return 0
             spots = None
-            if args.spots or args.clear:
-                if args.spots and args.clear:
+            if args.spots or args.clear or args.on:
+                if (args.spots or args.on) and args.clear:
                     raise ProjectError("give the lights, or --clear, not both")
                 try:
                     spots = []
@@ -1073,8 +1131,11 @@ def _run(args) -> int:
                         xy, _, kind = sp.partition(":")
                         x, y = (int(v) for v in xy.split(","))
                         spots.append((x, y, kind or "ball"))
+                    for on in args.on:
+                        bank, colour = (int(v) for v in on.split(":"))
+                        spots += [(x, y, "ball") for x, y in blocks_showing(m, args.name, bank, colour)]
                 except ValueError:
-                    raise ProjectError("a light is x,y or x,y:kind (e.g. 14,9 or 20,11:mart)")
+                    raise ProjectError("a light is x,y or x,y:kind (e.g. 14,9 or 20,11:mart); --on is BANK:COLOUR")
             for lt in lights(m, args.name, spots):
                 print(f"{lt['x']},{lt['y']} {lt['kind']}")
         elif args.map_cmd == "path":
@@ -1520,6 +1581,10 @@ def _run(args) -> int:
         if args.tileset_cmd == "new":
             r = tb.new_tileset(proj, args.symbol, args.secondary, args.dir)
             print(f"created {r['symbol']} in {r['folder']}")
+            return 0
+        if args.tileset_cmd == "copy-bank":
+            m.copy_bank(args.src, args.src_bank, args.dst, args.dst_bank)
+            print(f"{args.dst} bank {args.dst_bank} = {args.src} bank {args.src_bank}")
             return 0
         if args.tileset_cmd == "lights":
             sets = {}

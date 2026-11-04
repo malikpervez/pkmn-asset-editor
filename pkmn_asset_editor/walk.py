@@ -119,6 +119,37 @@ def lights(maps, map_name: str, spots: list[tuple[int, int, str]] | None = None)
     return [listed(o) for o in new]
 
 
+def adopt_lights(maps, map_name: str, gfx: str) -> list[dict]:
+    """Every object on the map drawn as ``gfx`` (a port's lamp sprite, shown day and night) becomes a light where it
+    stands: a round glow after dark, nothing by day. Each keeps its place in the list (its local id) and its flag;
+    returns the lights made."""
+    name = maps.resolve(map_name)
+    consts = maps.root / "include" / "constants" / "event_objects.h"
+    if not re.search(rf"#define\s+{LIGHT_GFX}\b", consts.read_text() if consts.exists() else ""):
+        raise DecompError(f"this game has no light sprite ({LIGHT_GFX} in include/constants/event_objects.h)")
+    data = maps.get_map(name)
+    made = []
+    for o in data.get("object_events", []):
+        if o.get("graphics_id") == gfx:
+            o["graphics_id"], o["trainer_sight_or_berry_tree_id"] = LIGHT_GFX, str(LIGHT_KINDS["ball"])
+            made.append({"x": o["x"], "y": o["y"], "kind": "ball"})
+    if made:
+        maps.save_map(name, data)
+    return made
+
+
+def blocks_showing(maps, map_name: str, bank: int, colour: int) -> list[tuple[int, int]]:
+    """The map's blocks that show palette ``bank``'s colour ``colour`` (e.g. a street lamp's glass: where its glow
+    goes), left to right, top to bottom."""
+    name = maps.resolve(map_name)
+    lay = maps.layout_of(name)
+    blocks = maps.read_blocks(lay)
+    where = maps.where(lay, blocks)
+    h, w = blocks.shape
+    hit = (where == bank * 16 + colour).reshape(h, 16, w, 16).any(axis=(1, 3))
+    return [(int(x), int(y)) for y, x in zip(*hit.nonzero())]
+
+
 def walkable(maps, map_name: str, surf: bool = False, avoid_objects: bool = False, avoid_sight: bool = False):
     """A [height][width] grid of blocks one can walk on (or surf on, with ``surf``); with ``avoid_objects``, not
     other objects' starting blocks, and with ``avoid_sight``, not the blocks trainers see (:func:`sight`)."""
