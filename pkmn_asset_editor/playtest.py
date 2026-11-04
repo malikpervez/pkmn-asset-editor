@@ -222,8 +222,9 @@ class Game:
     """A running ROM plus the symbols needed to drive it."""
 
     def __init__(self, root: Path, rom: Path | None = None, cache_dir: Path | None = None, log=None,
-                 save: Path | None = None):
+                 save: Path | None = None, clock: str | None = None):
         self.root = Path(root)
+        self.clock = clock  # the game's clock (see clock_env); None: $PAE_CLOCK, else 12:00
         self.rom = Path(rom) if rom else self.find_rom()
         self.save = Path(save) if save else None
         elf = self.rom.with_suffix(".elf")
@@ -236,7 +237,7 @@ class Game:
                 raise PlaytestError(f"symbol {need} not found in {elf.name}")
         self.cache_dir = cache_dir or self.root / ".pae" / "cache"
         self.log = log or (lambda *_: None)
-        self.emu = Emulator(driver_path(self.cache_dir), self.rom, self.save)
+        self.emu = Emulator(driver_path(self.cache_dir), self.rom, self.save, self.clock)
         self.rom_hash = hashlib.sha1(self.rom.read_bytes()).hexdigest()[:12]
         # where SaveBlock1's pos and location are; vanilla layout unless the session reads the real one
         self.sb1 = {"pos": 0, "location": 4}
@@ -271,7 +272,8 @@ class Game:
     # -- boot
     @property
     def boot_state(self) -> Path:
-        return self.cache_dir / f"boot-{self.rom_hash}-{self.save_hash}.state"
+        at = f"-{self.clock.replace(':', '')}" if self.clock else ""
+        return self.cache_dir / f"boot-{self.rom_hash}-{self.save_hash}{at}.state"
 
     def call(self, symbol: str, *args: int) -> int:
         if symbol not in self.sym:
@@ -290,7 +292,7 @@ class Game:
                 pass
             state.unlink(missing_ok=True)
             self.emu.close()
-            self.emu = Emulator(driver_path(self.cache_dir), self.rom, self.save)
+            self.emu = Emulator(driver_path(self.cache_dir), self.rom, self.save, self.clock)
         t0 = time.time()
         title = {v for k, v in self.sym.items() if k.startswith("CB2_TitleScreen")}
         if self.save_hash != "fresh":
@@ -726,7 +728,7 @@ class PlaySession:
             raise PlaytestError("start a play-test first")
         return self.game
 
-    def _game(self, checkpoint: str | None, save_file: Path | None = None) -> Game:
+    def _game(self, checkpoint: str | None, save_file: Path | None = None, clock: str | None = None) -> Game:
         rom = find_rom(self.root)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         if save_file:
@@ -738,12 +740,14 @@ class PlaySession:
             data = src.read_bytes()
         else:
             data = b""
-        stamp = (str(rom), rom.stat().st_mtime, hashlib.sha1(data).hexdigest())
+        if clock is not None:
+            clock_env(clock)  # a clock it can't read is an error now, not when the emulator starts
+        stamp = (str(rom), rom.stat().st_mtime, hashlib.sha1(data).hexdigest(), clock)
         if self.game is None or stamp != self._stamp:
             if self.game is not None:
                 self.game.close()
             self.scratch.write_bytes(data)
-            self.game = Game(self.root, rom, self.cache_dir, self.log, save=self.scratch)
+            self.game = Game(self.root, rom, self.cache_dir, self.log, save=self.scratch, clock=clock)
             self._stamp = stamp
             try:
                 self.game.sb1 = self.constants.offsets("SaveBlock1", ["pos", "location"], game_version(rom))
@@ -753,7 +757,7 @@ class PlaySession:
 
     def start(self, map_name: str | None = None, x: int | None = None, y: int | None = None,
               checkpoint: str | None = None, state=None, script: str | None = None,
-              save_file: Path | None = None) -> Image.Image:
+              save_file: Path | None = None, clock: str | None = None) -> Image.Image:
         """Start a play-test.
 
         * fresh game (Quickstart), or ``checkpoint`` = continue from a saved checkpoint (story progress, party…),
@@ -762,6 +766,7 @@ class PlaySession:
         * ``map_name``: warp there at (x, y) (default its first warp); with a checkpoint and no map, stay
           where the save was made
         * ``script``: start this script label once there
+        * ``clock``: the game's time of day, "HH:MM" (e.g. "22:00" for night); default $PAE_CLOCK, else 12:00
         """
         nums = map_numbers(self.root)
         if map_name is not None and map_name not in nums:
@@ -769,7 +774,7 @@ class PlaySession:
         if map_name is None and not (checkpoint or save_file):
             raise PlaytestError("give a map, or a checkpoint to continue from")
         self.started = None  # don't record the setup itself
-        g = self._game(checkpoint, save_file)
+        g = self._game(checkpoint, save_file, clock)
         g.boot()
         g.emu.load_state(g.boot_state)  # same starting state every time
         g.seed_random()  # same random numbers every time, even after a rebuild (for replay tests)
@@ -791,6 +796,8 @@ class PlaySession:
         self.started = {"map": map_name, "x": x, "y": y, "checkpoint": checkpoint,
                         "save_file": str(save_file) if save_file else None,
                         "state": [state] if isinstance(state, str) else list(state or []), "script": script}
+        if clock is not None:
+            self.started["clock"] = clock
         self.steps = []
         from .missions import note_activity
         note_activity(self.root, "played")

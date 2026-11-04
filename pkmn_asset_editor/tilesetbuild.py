@@ -28,6 +28,12 @@ BUILD_SPEC = """\
   "palettes": {"primary": ["a.pal", ...],   // JASC files (or lists of 16 [r,g,b]), bank by bank: the primary's
                "secondary": ["c.pal", ...]},//  start at bank 0, the secondary's after the primary's (bank 7 on FRLG)
   "reserve": {"primary": [[434, 441]]},     // global tile ids to leave blank (e.g. door animation slots)
+  "lights": {"5": [11, 12, 13],             // colours that glow at night (games with day/night tinting, e.g.
+             "9": {"colours": [6, 14],      //  OW_ENABLE_DNS): bank -> its colour indices (1-15); instead of
+                   "light": [232, 200, 248]}},  //  darkening they turn to the game's warm light, or to the bank's
+                                            //  own "light" (kept in its colour 0). Written as the palette's .pla;
+                                            //  with "lights" in the spec, a bank it writes without lights loses
+                                            //  its .pla. Give lit glass and lamps colours nothing else uses.
   "animations": [                           // animated tiles: every metatile drawn from "image" animates; the
     {"name": "Water", "image": "water.png", //  frames are images laid out like it (frame 0 is the image itself)
      "frames": ["water_f1.png", "water_f2.png"], "speed": 16}],  // game frames per animation frame
@@ -121,6 +127,43 @@ def _palette(spec_dir: Path, p) -> list[tuple[int, int, int]]:
     return cols + [(0, 0, 0)] * (16 - len(cols))
 
 
+def _lights(spec_lights: dict, pals: dict) -> dict[int, list[int]]:
+    """The spec's "lights": bank -> the colour indices that glow at night (0 first when the bank has its own light
+    colour, which goes into its colour 0)."""
+    out = {}
+    for key, v in (spec_lights or {}).items():
+        try:
+            bank = int(key)
+        except (TypeError, ValueError):
+            raise DecompError(f"lights: {key!r} is not a palette bank")
+        if bank not in pals:
+            raise DecompError(f"lights: bank {bank} isn't one of the palettes this spec writes")
+        cols, light = (v.get("colours", []), v.get("light")) if isinstance(v, dict) else (v, None)
+        if not cols or not all(isinstance(c, int) and 1 <= c <= 15 for c in cols):
+            raise DecompError(f"lights: bank {bank}'s colours are indices 1-15 (not {cols})")
+        idx = sorted(set(cols))
+        if light is not None:
+            if len(light) != 3 or not all(isinstance(c, int) and 0 <= c <= 255 for c in light):
+                raise DecompError(f"lights: bank {bank}'s light is [r, g, b] (0-255)")
+            pals[bank][0] = tuple(light)
+            idx = [0] + idx
+        out[bank] = idx
+    return out
+
+
+def _write_lights(maps, rel: str, cols: list[int] | None) -> None:
+    """The palette's .pla: the colours (by index) the game gives its light bit; none: no .pla."""
+    path = maps.root / rel
+    if not cols:
+        if path.exists():
+            maps.dp._backup(rel)
+            path.unlink()
+        return
+    maps.dp._backup(rel)
+    # gbagfx reads lines of up to 64 characters
+    path.write_text("# lit at night (pae tileset build)\n" + "".join(f"{c}\n" for c in cols))
+
+
 def _gba(c) -> tuple[int, int, int]:
     """The colour as the GBA shows it (5 bits per channel)."""
     return tuple((v >> 3) << 3 for v in c)
@@ -185,6 +228,7 @@ def build(maps, spec_path) -> dict:
             if key == "primary" and bank >= npp or bank >= 13:
                 raise DecompError(f"too many {key} palettes (banks {first}-{(npp if key == 'primary' else 13) - 1})")
             pals[bank] = _palette(sdir, p)
+    lights = _lights(spec["lights"], pals) if "lights" in spec else None
     reserved = {key: {t for a, b in spec.get("reserve", {}).get(key, []) for t in range(a, b + 1)}
                 for key in ("primary", "secondary")}
     tiles = {"primary": _Tiles(0, npt, reserved["primary"])}
@@ -383,6 +427,8 @@ def build(maps, spec_path) -> dict:
                 rel = rel if rel.endswith(".pal") else re.sub(r"\.gbapal$", ".pal", rel)
                 maps.dp._backup(rel)
                 write_jasc(maps.root / rel, cols)
+                if lights is not None:
+                    _write_lights(maps, re.sub(r"\.pal$", ".pla", rel), lights.get(b))
     anim_out = [_write_animation(maps, a, sides, version, pals) for a in anims]
     for effect, fx in spec.get("field_effects", {}).items():
         _write_field_effect(maps, effect, fx, sides, pals, image, names)
@@ -390,6 +436,8 @@ def build(maps, spec_path) -> dict:
            "tiles": {k: len(tiles[k].pixels) for k in sides}, "metatile_counts": {k: len(metas[k]) for k in sides}}
     if anim_out:
         out["animations"] = anim_out
+    if lights:
+        out["lights"] = {str(b): cols for b, cols in sorted(lights.items())}
     (sdir / "names.json").write_text(json.dumps(out, indent=1) + "\n")
     maps.dp._changed = None
     return out

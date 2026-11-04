@@ -167,7 +167,7 @@ def _start_play(proj, args):
         state = proj.maps.story.play_state(args.chapter - 1 if args.chapter else None, args.extras,
                                            team=args.team, clear_team=args.clear_team, state=args.state)
     first = proj.play.start(name, args.x, args.y, checkpoint=args.checkpoint, state=state,
-                            script=args.script)
+                            script=args.script, clock=args.clock)
     for line in proj.play.where.get("state") or []:
         print(f"state: {line}")
     if args.battle or args.wild:
@@ -197,6 +197,8 @@ def add_play_args(p):
     p.add_argument("--x", type=int)
     p.add_argument("--y", type=int)
     p.add_argument("--inputs", default="", help="e.g. 'UP, wait 10, A, wait 60' (KEY*N holds N frames)")
+    p.add_argument("--clock", help="the game's time of day, HH:MM (e.g. 22:00 for night; default $PAE_CLOCK, else "
+                                   "12:00); a test recorded with it replays at that time")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -330,6 +332,11 @@ def main(argv: list[str] | None = None) -> int:
     q.add_argument("x", type=int)
     q.add_argument("y", type=int)
     q.add_argument("--elevation", type=int)
+    q = with_project(msub.add_parser("lights", help="list or set a map's night lights (glows round blocks after dark)"))
+    q.add_argument("name")
+    q.add_argument("spots", nargs="*", help="x,y blocks (x,y:center or x,y:mart for the game's lit sign pictures; "
+                                            "the default is a round glow); they replace the map's lights")
+    q.add_argument("--clear", action="store_true", help="take all of the map's lights away")
     q = with_project(msub.add_parser("path", help="a walk between blocks as movement commands (around what's solid)"))
     q.add_argument("name")
     q.add_argument("points", nargs="+", help="x,y blocks to walk through in order (the first is where it starts)")
@@ -1026,6 +1033,22 @@ def _run(args) -> int:
             from .walk import place
             r = place(m, args.name, args.kind, args.which, args.x, args.y, args.elevation)
             print(f"moved {args.kind} {r['index']} from {r['from']} to {r['to']}")
+        elif args.map_cmd == "lights":
+            from .walk import lights
+            spots = None
+            if args.spots or args.clear:
+                if args.spots and args.clear:
+                    raise ProjectError("give the lights, or --clear, not both")
+                try:
+                    spots = []
+                    for sp in args.spots:
+                        xy, _, kind = sp.partition(":")
+                        x, y = (int(v) for v in xy.split(","))
+                        spots.append((x, y, kind or "ball"))
+                except ValueError:
+                    raise ProjectError("a light is x,y or x,y:kind (e.g. 14,9 or 20,11:mart)")
+            for lt in lights(m, args.name, spots):
+                print(f"{lt['x']},{lt['y']} {lt['kind']}")
         elif args.map_cmd == "path":
             from .walk import movement, walk, write_movement
             try:

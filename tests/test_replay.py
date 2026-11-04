@@ -21,13 +21,16 @@ class FakeSession:
     def _checkpoint_path(self, name):
         return self.root / ".pae" / "checkpoints" / f"{name}.sav"
 
-    def start(self, map_name, x=None, y=None, checkpoint=None, state=None, script=None, save_file=None):
+    def start(self, map_name, x=None, y=None, checkpoint=None, state=None, script=None, save_file=None, clock=None):
         self.game = object()
+        self.clock = clock
         self.x, self.y, self.map = x or 0, y or 0, map_name
         self.beaten = False
         self.flag = "FLAG_X" in (state or [])
         self.started = {"map": map_name, "x": x, "y": y, "checkpoint": checkpoint,
                         "save_file": str(save_file) if save_file else None, "state": list(state or []), "script": script}
+        if clock is not None:
+            self.started["clock"] = clock
         self.steps = []
         self.save_file = save_file
 
@@ -181,3 +184,22 @@ def test_workflow(tmp_path):
     with pytest.raises(PlaytestError):
         replay.write_workflow(tmp_path)
     replay.write_workflow(tmp_path, force=True)
+
+
+def test_a_test_replays_at_its_own_time(tmp_path):
+    """A test recorded at night (start.clock) replays at night, whatever the default clock is."""
+    tests = replay.ReplayTests(tmp_path)
+    s = FakeSession(tmp_path)
+    s.start("Town", 1, 1, clock="22:00")
+    s.press([(16, 2)])
+    tests.record(s, "at night")
+    assert tests.load("at night")["start"]["clock"] == "22:00"
+    run = FakeSession(tmp_path)
+    assert tests.run("at night", session=run)["ok"] and run.clock == "22:00"
+    s2 = FakeSession(tmp_path)
+    s2.start("Town", 1, 1)
+    tests.record(s2, "by day")
+    assert "clock" not in tests.load("by day")["start"]
+    run2 = FakeSession(tmp_path)
+    tests.run("by day", session=run2)
+    assert run2.clock is None

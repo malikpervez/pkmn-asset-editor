@@ -229,6 +229,14 @@ pae map path MyTown 14,9 21,16 --then walk_in_place_faster_up --write MyTown_Mov
   `src/data/pae_field_effects.h`, asked for once in `FldEff_TallGrass`). Several kinds of grass in one tileset can
   each have their own (`"metatiles": {"flowery_grass": "flowery_fx.png"}`): the block under the player picks it.
   `{"pick": ["grass_a", "grass_b"], "order": "checker"}` in the legend staggers two kinds in a field.
+* **Lights at night** (games that tint the overworld by the time of day, e.g. expansion's `OW_ENABLE_DNS`): give
+  the spec `"lights": {"5": [11, 12, 13]}`, a bank and the colours in it that glow (lit windows, lamp glass, a lit
+  sign), and at night they turn to the game's warm light instead of darkening; `{"9": {"colours": [6, 14],
+  "light": [232, 200, 248]}}` gives a bank a light colour of its own (kept in its colour 0). They're written as the
+  palette's `.pla`, which the game's build reads. Give lit glass colours nothing else in the bank uses: every pixel
+  of a light colour glows. `pae map lights MAP 27,11 31,11` puts a round glow round those blocks after dark (the
+  game's light sprite; `x,y:center` / `x,y:mart` its lit sign pictures), after the map's other objects so no local
+  id moves; with no blocks it lists them, `--clear` takes them away. To see it, replay at night (below).
 * **One kit for many maps**: maps that share a primary tileset (built the same in every map's spec, then each
   map's own secondary) can use each other's tiles at the joins; their seams copy only the secondary tiles and use
   the map's own palettes where the colours agree.
@@ -290,7 +298,8 @@ checkpoints happen between two frames.
 How it works: `make` runs, then the ROM boots in a headless libmgba driver
 (`native/pae_mgba.c`, compiled on first use). The game's clock reads 12:00 (UTC) when it boots, on every
 computer, so games with a day/night tint look the same in every replay; `PAE_CLOCK=20:30` picks another time of
-day and `PAE_CLOCK=wall` uses the real one. A new game starts with
+day and `PAE_CLOCK=wall` uses the real one. `--clock 22:00` on `pae play` or `pae test record` does it for one
+play, and a test recorded that way keeps its time (`"clock"` in its start) and replays at night every time. A new game starts with
 expansion's Quickstart, and `pae` **warps to the map** through `CB2_LoadMap`,
 the same path a door takes (symbol addresses come from the build's `.elf`), so
 people, map scripts and story triggers run as they do in a real game. Story
@@ -822,6 +831,7 @@ sheet of the results, then run `pae check`."*
 | `pae seam build MAP` · `pae door add MAP X Y --panel x0,y0,x1,y1` | connection strips across tilesets · door animations |
 | `pae map connect MAP up OTHER --align A,B` · `pae map place MAP KIND WHICH X Y` | join maps edge to edge (both ways) · move an event |
 | `pae map path MAP X,Y X,Y … [--avoid-objects] [--avoid-sight] [--stop-short N] [--then CMD…] [--write LABEL]` | walking movements around what's solid, for cutscenes; `--avoid-sight` keeps off trainers' lines of sight (for a play-through's walks) |
+| `pae map lights MAP [X,Y[:center\|:mart] …] [--clear]` | a map's glows at night (list, set or take away) |
 | `pae text check [MAP] / preview MAP LABEL -o PNG` | dialogue in the game's font |
 | `pae trainer list [Q] / show ID / set ID --mon … --field Key=Value` | trainer teams |
 | `pae wild show MAP / set MAP KIND SLOT… [--rate N]` | wild Pokémon (`land`, `water`, `rock_smash`, `fishing`) |
